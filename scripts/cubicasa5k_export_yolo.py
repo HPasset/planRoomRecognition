@@ -1,5 +1,6 @@
 import argparse
 import random
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -16,7 +17,6 @@ except Exception:  # pragma: no cover - optional dependency
 LABEL_SYNONYMS = {
     "door": ["door", "door swing", "threshold"],
     "window": ["window", "window regular", "glass", "fenetre"],
-    "bed": ["bed", "lit"],
 }
 
 
@@ -29,6 +29,71 @@ class Box:
 
     def scale(self, sx: float, sy: float) -> "Box":
         return Box(self.xmin * sx, self.ymin * sy, self.xmax * sx, self.ymax * sy)
+
+    def apply_matrix(self, m: Tuple[float, float, float, float, float, float]) -> "Box":
+        pts = (
+            _apply_matrix_point(self.xmin, self.ymin, m),
+            _apply_matrix_point(self.xmax, self.ymin, m),
+            _apply_matrix_point(self.xmax, self.ymax, m),
+            _apply_matrix_point(self.xmin, self.ymax, m),
+        )
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        return Box(min(xs), min(ys), max(xs), max(ys))
+
+
+IDENTITY_MATRIX = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def _apply_matrix_point(
+    x: float, y: float, m: Tuple[float, float, float, float, float, float]
+) -> Tuple[float, float]:
+    a, b, c, d, e, f = m
+    return a * x + c * y + e, b * x + d * y + f
+
+
+def _mul_matrix(
+    left: Tuple[float, float, float, float, float, float],
+    right: Tuple[float, float, float, float, float, float],
+) -> Tuple[float, float, float, float, float, float]:
+    la, lb, lc, ld, le, lf = left
+    ra, rb, rc, rd, re, rf = right
+    return (
+        la * ra + lc * rb,
+        lb * ra + ld * rb,
+        la * rc + lc * rd,
+        lb * rc + ld * rd,
+        la * re + lc * rf + le,
+        lb * re + ld * rf + lf,
+    )
+
+
+def _parse_floats(raw: str) -> List[float]:
+    nums = []
+    for token in re.split(r"[,\s]+", raw.strip()):
+        if not token:
+            continue
+        try:
+            nums.append(float(token))
+        except ValueError:
+            pass
+    return nums
+
+
+def parse_transform(transform: Optional[str]) -> Tuple[float, float, float, float, float, float]:
+    if not transform:
+        return IDENTITY_MATRIX
+    out = IDENTITY_MATRIX
+    for cmd, args in re.findall(r"([a-zA-Z]+)\(([^)]*)\)", transform):
+        values = _parse_floats(args)
+        cmd = cmd.lower()
+        if cmd == "matrix" and len(values) == 6:
+            out = _mul_matrix(out, tuple(values))  # type: ignore[arg-type]
+        elif cmd == "translate" and values:
+            tx = values[0]
+            ty = values[1] if len(values) > 1 else 0.0
+            out = _mul_matrix(out, (1.0, 0.0, 0.0, 1.0, tx, ty))
+    return out
 
 
 def iter_svgs(root: Path) -> List[Path]:
@@ -107,17 +172,22 @@ def parse_path_box(d: str) -> Optional[Box]:
     return Box(xmin, ymin, xmax, ymax)
 
 
-def get_svg_size(root) -> Tuple[float, float]:
+def get_svg_viewbox(root) -> Tuple[float, float, float, float]:
     viewbox = root.get("viewBox")
     if viewbox:
         parts = [p for p in viewbox.replace(",", " ").split() if p]
         if len(parts) == 4:
-            return float(parts[2]), float(parts[3])
+            return float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
     width = root.get("width")
     height = root.get("height")
     if width and height:
-        return float(width), float(height)
+        return 0.0, 0.0, float(width), float(height)
     raise ValueError("SVG size not found")
+
+
+def get_svg_size(root) -> Tuple[float, float]:
+    _, _, w, h = get_svg_viewbox(root)
+    return w, h
 
 
 def label_matches(candidates: Iterable[str], class_name: str) -> bool:
@@ -130,12 +200,43 @@ def label_matches(candidates: Iterable[str], class_name: str) -> bool:
     return False
 
 
-def extract_boxes(svg_path: Path, class_name: str) -> Tuple[List[Box], int]:
+def _is_door_subcomponent(candidates: Iterable[str], door_mode: str) -> bool:
+    for cand in candidates:
+        c = cand.lower()
+        if "threshold" in c:
+            return True
+        if door_mode == "robust" and "panel" in c:
+            return True
+    return False
+
+
+def _is_window_subcomponent(candidates: Iterable[str]) -> bool:
+    for cand in candidates:
+        c = cand.lower()
+        if "glass" in c:
+            return True
+    return False
+
+
+def extract_boxes(svg_path: Path, class_name: str, door_mode: str = "robust") -> Tuple[List[Box], int]:
     tree = ET.parse(svg_path)
     root = tree.getroot()
     parent_map = {c: p for p in root.iter() for c in p}
+    transform_cache = {root: parse_transform(root.get("transform"))}
     boxes = []
     skipped_paths = 0
+
+    def cumulative_transform(elem) -> Tuple[float, float, float, float, float, float]:
+        if elem in transform_cache:
+            return transform_cache[elem]
+        parent = parent_map.get(elem)
+        if parent is None:
+            transform_cache[elem] = parse_transform(elem.get("transform"))
+            return transform_cache[elem]
+        transform_cache[elem] = _mul_matrix(
+            cumulative_transform(parent), parse_transform(elem.get("transform"))
+        )
+        return transform_cache[elem]
 
     for elem in root.iter():
         candidates = []
@@ -154,7 +255,17 @@ def extract_boxes(svg_path: Path, class_name: str) -> Tuple[List[Box], int]:
         if not label_matches(candidates, class_name):
             continue
 
+        if class_name == "door" and not _is_door_subcomponent(candidates, door_mode):
+            # Keep threshold only (strict) or threshold+panel (robust).
+            continue
+        if class_name == "window" and not _is_window_subcomponent(candidates):
+            # Keep only glass to avoid shifted frame/panel boxes.
+            continue
+
         tag = elem.tag.split("}")[-1]
+        if class_name == "door" and tag == "path":
+            # Ignore door swing arcs.
+            continue
         box = None
         if tag == "polygon" and elem.get("points"):
             box = parse_points(elem.get("points"))
@@ -174,6 +285,7 @@ def extract_boxes(svg_path: Path, class_name: str) -> Tuple[List[Box], int]:
                     skipped_paths += 1
 
         if box:
+            box = box.apply_matrix(cumulative_transform(elem))
             boxes.append(box)
 
     return boxes, skipped_paths
@@ -219,6 +331,12 @@ def main():
     ap.add_argument("--out", default="data/processed/cubicasa5k_yolo", help="Output folder")
     ap.add_argument("--val_ratio", type=float, default=0.1, help="Validation split ratio")
     ap.add_argument("--seed", type=int, default=42, help="Shuffle seed")
+    ap.add_argument(
+        "--door_mode",
+        choices=("strict", "robust"),
+        default="robust",
+        help="Door label extraction: strict=threshold only, robust=threshold+panel (no arcs).",
+    )
     args = ap.parse_args()
 
     root = Path(args.root)
@@ -236,7 +354,7 @@ def main():
 
     train_svgs, val_svgs = split_paths(svgs, args.val_ratio, args.seed)
 
-    class_names = ["door", "window", "bed"]
+    class_names = ["door", "window"]
     class_to_id = {c: i for i, c in enumerate(class_names)}
 
     def export_one(svg_path: Path, split: str):
@@ -252,7 +370,7 @@ def main():
 
         tree = ET.parse(svg_path)
         svg_root = tree.getroot()
-        svg_w, svg_h = get_svg_size(svg_root)
+        svg_min_x, svg_min_y, svg_w, svg_h = get_svg_viewbox(svg_root)
         sx = w / svg_w
         sy = h / svg_h
 
@@ -260,10 +378,15 @@ def main():
         seen = set()
         skipped_paths = 0
         for class_name in class_names:
-            boxes, skipped = extract_boxes(svg_path, class_name)
+            boxes, skipped = extract_boxes(svg_path, class_name, door_mode=args.door_mode)
             skipped_paths += skipped
             for box in boxes:
-                box_scaled = box.scale(sx, sy)
+                box_scaled = Box(
+                    (box.xmin - svg_min_x) * sx,
+                    (box.ymin - svg_min_y) * sy,
+                    (box.xmax - svg_min_x) * sx,
+                    (box.ymax - svg_min_y) * sy,
+                )
                 cx, cy, bw, bh = to_yolo(box_scaled, w, h)
                 if bw <= 0 or bh <= 0:
                     continue
@@ -306,7 +429,7 @@ def main():
                 "train: images/train",
                 "val: images/val",
                 f"nc: {len(class_names)}",
-                "names: [door, window, bed]",
+                "names: [door, window]",
             ]
         ),
         encoding="utf-8",

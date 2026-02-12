@@ -13,6 +13,7 @@ def main():
     ap.add_argument("--project", default="runs")
     ap.add_argument("--name", default="predict")
     ap.add_argument("--save", action="store_true", help="Save annotated images")
+    ap.add_argument("--exist_ok", action="store_true", help="Overwrite existing project/name")
     args = ap.parse_args()
 
     model_path = Path(args.model)
@@ -27,6 +28,7 @@ def main():
         project=args.project,
         name=args.name,
         save=args.save,
+        exist_ok=args.exist_ok,
     )
 
 
