@@ -3,7 +3,7 @@ import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
 import cv2
@@ -94,6 +94,22 @@ def parse_transform(transform: Optional[str]) -> Tuple[float, float, float, floa
             ty = values[1] if len(values) > 1 else 0.0
             out = _mul_matrix(out, (1.0, 0.0, 0.0, 1.0, tx, ty))
     return out
+
+
+def _make_cumul_fn(root) -> Callable:
+    """Return a cumulative_transform(elem) function for the given SVG root."""
+    parent_map = {c: p for p in root.iter() for c in p}
+    cache: dict = {}
+
+    def cumulative_transform(elem):
+        if elem in cache:
+            return cache[elem]
+        parent = parent_map.get(elem)
+        base = cumulative_transform(parent) if parent is not None else IDENTITY_MATRIX
+        cache[elem] = _mul_matrix(base, parse_transform(elem.get("transform")))
+        return cache[elem]
+
+    return cumulative_transform
 
 
 def iter_svgs(root: Path) -> List[Path]:
@@ -190,6 +206,128 @@ def get_svg_size(root) -> Tuple[float, float]:
     return w, h
 
 
+def _align_to_frac(align: str) -> float:
+    key = align.lower()
+    if key in ("min", "xmin", "left", "xleft", "ymin", "top"):
+        return 0.0
+    if key in ("mid", "center", "middle", "xmid", "ymid"):
+        return 0.5
+    if key in ("max", "xmax", "right", "xright", "ymax", "bottom"):
+        return 1.0
+    raise ValueError(f"Unknown align: {align}")
+
+
+def svg_to_image_transform(
+    root,
+    img_w: int,
+    img_h: int,
+    fit: str,
+    align_x: str,
+    align_y: str,
+    offset_x: float,
+    offset_y: float,
+) -> tuple[float, float, float, float]:
+    """Map SVG viewBox coords -> image coords.
+
+    fit="stretch": non-uniform scale to fill (legacy behavior).
+    fit="meet": preserve aspect ratio, center with padding.
+    """
+    svg_min_x, svg_min_y, svg_w, svg_h = get_svg_viewbox(root)
+    if fit == "stretch":
+        sx = img_w / svg_w
+        sy = img_h / svg_h
+        ox = -svg_min_x * sx + offset_x
+        oy = -svg_min_y * sy + offset_y
+        return sx, sy, ox, oy
+    if fit == "meet":
+        s = min(img_w / svg_w, img_h / svg_h)
+        pad_x = (img_w - svg_w * s) * _align_to_frac(align_x)
+        pad_y = (img_h - svg_h * s) * _align_to_frac(align_y)
+        ox = pad_x - svg_min_x * s + offset_x
+        oy = pad_y - svg_min_y * s + offset_y
+        return s, s, ox, oy
+    raise ValueError(f"Unknown fit mode: {fit}")
+
+
+def get_floor_groups(root) -> dict:
+    """Return {floor_num: element} for all 'Floorplan Floor-N' groups in the SVG.
+
+    Falls back to {1: root} if no floor groups are found (single-floor SVGs).
+    """
+    floors = {}
+    for elem in root.iter():
+        cls = elem.get("class", "")
+        if "Floorplan Floor-" in cls:
+            try:
+                n = int(cls.split("Floor-")[1].split()[0])
+                floors[n] = elem
+            except (IndexError, ValueError):
+                pass
+    if not floors:
+        floors[1] = root
+    return floors
+
+
+def _collect_bbox_from_subtree(subtree, cumulative_transform, vx, vy, vw, vh):
+    """Collect element bboxes from *subtree*, clip to viewBox, return xs, ys lists."""
+    xs: List[float] = []
+    ys: List[float] = []
+    for elem in subtree.iter():
+        tag = elem.tag.split("}")[-1]
+        box: Optional[Box] = None
+        if tag == "polygon" and elem.get("points"):
+            box = parse_points(elem.get("points"))
+        elif tag == "rect":
+            box = parse_rect(elem)
+        elif tag == "circle":
+            box = parse_circle(elem)
+        elif tag == "ellipse":
+            box = parse_ellipse(elem)
+        elif tag == "line":
+            box = parse_line(elem)
+        if box is None:
+            continue
+        box = box.apply_matrix(cumulative_transform(elem))
+        for px, py in [(box.xmin, box.ymin), (box.xmax, box.ymin),
+                       (box.xmax, box.ymax), (box.xmin, box.ymax)]:
+            if vx <= px <= vx + vw and vy <= py <= vy + vh:
+                xs.append(px)
+                ys.append(py)
+    return xs, ys
+
+
+def compute_svg_content_bbox(
+    svg_path: Path, floor_num: Optional[int] = None
+) -> Tuple[float, float, float, float]:
+    """Return (xmin, ymin, xmax, ymax) of rendered elements, clipped to SVG viewBox.
+
+    If *floor_num* is given, only elements within that floor's group are considered.
+    Falls back to full viewBox if no elements are found.
+    """
+    tree = ET.parse(svg_path)
+    root = tree.getroot()
+    vx, vy, vw, vh = get_svg_viewbox(root)
+    cumulative_transform = _make_cumul_fn(root)
+
+    if floor_num is not None:
+        floors = get_floor_groups(root)
+        subtree = floors.get(floor_num, root)
+    else:
+        subtree = root
+
+    xs, ys = _collect_bbox_from_subtree(subtree, cumulative_transform, vx, vy, vw, vh)
+
+    if not xs:
+        return vx, vy, vx + vw, vy + vh  # fallback: full viewBox
+
+    return (
+        max(vx, min(xs)),
+        max(vy, min(ys)),
+        min(vx + vw, max(xs)),
+        min(vy + vh, max(ys)),
+    )
+
+
 def label_matches(candidates: Iterable[str], class_name: str) -> bool:
     synonyms = LABEL_SYNONYMS[class_name]
     for cand in candidates:
@@ -218,27 +356,23 @@ def _is_window_subcomponent(candidates: Iterable[str]) -> bool:
     return False
 
 
-def extract_boxes(svg_path: Path, class_name: str, door_mode: str = "robust") -> Tuple[List[Box], int]:
+def extract_boxes(
+    svg_path: Path, class_name: str, door_mode: str = "robust",
+    floor_num: Optional[int] = None,
+) -> Tuple[List[Box], int]:
     tree = ET.parse(svg_path)
     root = tree.getroot()
+    cumulative_transform = _make_cumul_fn(root)
     parent_map = {c: p for p in root.iter() for c in p}
-    transform_cache = {root: parse_transform(root.get("transform"))}
     boxes = []
     skipped_paths = 0
 
-    def cumulative_transform(elem) -> Tuple[float, float, float, float, float, float]:
-        if elem in transform_cache:
-            return transform_cache[elem]
-        parent = parent_map.get(elem)
-        if parent is None:
-            transform_cache[elem] = parse_transform(elem.get("transform"))
-            return transform_cache[elem]
-        transform_cache[elem] = _mul_matrix(
-            cumulative_transform(parent), parse_transform(elem.get("transform"))
-        )
-        return transform_cache[elem]
-
-    for elem in root.iter():
+    if floor_num is not None:
+        floors = get_floor_groups(root)
+        subtree = floors.get(floor_num, root)
+    else:
+        subtree = root
+    for elem in subtree.iter():
         candidates = []
         for attr in ("class", "id", "{http://www.inkscape.org/namespaces/inkscape}label"):
             val = elem.get(attr)
@@ -256,15 +390,12 @@ def extract_boxes(svg_path: Path, class_name: str, door_mode: str = "robust") ->
             continue
 
         if class_name == "door" and not _is_door_subcomponent(candidates, door_mode):
-            # Keep threshold only (strict) or threshold+panel (robust).
             continue
         if class_name == "window" and not _is_window_subcomponent(candidates):
-            # Keep only glass to avoid shifted frame/panel boxes.
             continue
 
         tag = elem.tag.split("}")[-1]
         if class_name == "door" and tag == "path":
-            # Ignore door swing arcs.
             continue
         box = None
         if tag == "polygon" and elem.get("points"):
@@ -306,6 +437,7 @@ def to_yolo(box: Box, w: int, h: int) -> Tuple[float, float, float, float]:
 
 
 def find_image(folder: Path) -> Optional[Path]:
+    """Legacy single-image finder kept for backward compatibility."""
     for name in ("image.png", "image.jpg", "image.jpeg", "original.png", "original.jpg"):
         path = folder / name
         if path.exists():
@@ -315,6 +447,64 @@ def find_image(folder: Path) -> Optional[Path]:
         if images:
             return images[0]
     return None
+
+
+def _floor_num_from_name(name: str) -> Optional[int]:
+    """Extract floor number from filename like 'F1_original.png' → 1."""
+    import re as _re
+    m = _re.match(r"[Ff](\d+)[_\-]", name)
+    return int(m.group(1)) if m else None
+
+
+def get_floor_images(folder: Path) -> dict:
+    """Return {floor_num: [candidate_paths...]} for all Fx_*.png/jpg in folder.
+
+    Prefers *_scaled.* before *_original.* within each floor.
+    """
+    result: dict = {}
+    for ext in ("*.png", "*.jpg", "*.jpeg"):
+        for p in folder.glob(ext):
+            n = _floor_num_from_name(p.name)
+            if n is None:
+                continue
+            result.setdefault(n, []).append(p)
+    # Sort each floor's candidates: _scaled first, then _original
+    for n in result:
+        result[n].sort(key=lambda p: (0 if "_scaled" in p.name else 1, p.name))
+    return result
+
+
+def select_best_image(folder: Path, content_w: float, content_h: float,
+                      floor_num: int = 1) -> Optional[Tuple[Path, float]]:
+    """Pick the best image for *floor_num* matching content_w/content_h aspect ratio.
+
+    Returns (image_path, aspect_diff) or None.
+    """
+    target_aspect = content_w / content_h if content_h > 0 else 1.0
+    floor_imgs = get_floor_images(folder)
+
+    # Try exact floor match first, then any floor
+    candidates_paths = floor_imgs.get(floor_num, [])
+    if not candidates_paths:
+        for paths in floor_imgs.values():
+            candidates_paths.extend(paths)
+
+    candidates = []
+    for img_path in candidates_paths:
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+        img_aspect = w / h if h > 0 else 1.0
+        aspect_diff = abs(img_aspect / target_aspect - 1.0)
+        priority = 0 if "_scaled" in img_path.name else 1
+        candidates.append((aspect_diff, priority, img_path))
+
+    if not candidates:
+        return None
+    candidates.sort()
+    best_diff, _, best_path = candidates[0]
+    return best_path, best_diff
 
 
 def split_paths(paths: List[Path], val_ratio: float, seed: int) -> Tuple[List[Path], List[Path]]:
@@ -337,6 +527,23 @@ def main():
         default="robust",
         help="Door label extraction: strict=threshold only, robust=threshold+panel (no arcs).",
     )
+    ap.add_argument(
+        "--max_aspect_diff",
+        type=float,
+        default=0.20,
+        help=(
+            "Maximum allowed aspect-ratio mismatch between SVG content bbox and chosen image "
+            "(|img_aspect/content_aspect - 1|). Images exceeding this are skipped. "
+            "Default 0.20 keeps high_quality/architectural (~5-8%%) and excludes colorful (~40%%)."
+        ),
+    )
+    # Legacy overlay arguments kept for backward compatibility with overlay_svg_boxes.py
+    ap.add_argument("--fit", choices=("meet", "stretch"), default="meet",
+                    help="[overlay only] SVG->image fit mode.")
+    ap.add_argument("--align_x", choices=("min", "mid", "max"), default="mid")
+    ap.add_argument("--align_y", choices=("min", "mid", "max"), default="mid")
+    ap.add_argument("--offset_x", type=float, default=0.0)
+    ap.add_argument("--offset_y", type=float, default=0.0)
     args = ap.parse_args()
 
     root = Path(args.root)
@@ -357,23 +564,50 @@ def main():
     class_names = ["door", "window"]
     class_to_id = {c: i for i, c in enumerate(class_names)}
 
+    skipped_aspect = 0
+    skipped_no_image = 0
+    skipped_no_boxes = 0
+
     def export_one(svg_path: Path, split: str):
+        nonlocal skipped_aspect, skipped_no_image, skipped_no_boxes
+
         folder = svg_path.parent
-        image_path = find_image(folder)
-        if image_path is None:
+
+        # --- Get SVG viewBox dimensions (the coordinate space of annotations) ---
+        try:
+            tree = ET.parse(svg_path)
+            svg_root = tree.getroot()
+            _, _, svg_w, svg_h = get_svg_viewbox(svg_root)
+        except Exception:
+            return 0, 0
+        if svg_w <= 0 or svg_h <= 0:
+            return 0, 0
+
+        # --- Select best image: prefer F1_scaled (closest aspect to SVG viewBox) ---
+        result = select_best_image(folder, svg_w, svg_h, floor_num=1)
+        if result is None:
+            skipped_no_image += 1
+            return 0, 0
+        image_path, aspect_diff = result
+
+        if aspect_diff > args.max_aspect_diff:
+            skipped_aspect += 1
             return 0, 0
 
         img = cv2.imread(str(image_path))
         if img is None:
+            skipped_no_image += 1
             return 0, 0
-        h, w = img.shape[:2]
+        img_h, img_w = img.shape[:2]
 
-        tree = ET.parse(svg_path)
-        svg_root = tree.getroot()
-        svg_min_x, svg_min_y, svg_w, svg_h = get_svg_viewbox(svg_root)
-        sx = w / svg_w
-        sy = h / svg_h
+        # --- Direct stretch: SVG viewBox coords -> image pixels ---
+        # CubiCasa5k annotations are in SVG viewBox coordinate space.
+        # F1_scaled is the closest rendering; distortion is typically <3%.
+        sx = img_w / svg_w
+        sy = img_h / svg_h
+        ox, oy = 0.0, 0.0
 
+        # --- Extract all doors/windows (all floors) ---
         lines = []
         seen = set()
         skipped_paths = 0
@@ -382,12 +616,12 @@ def main():
             skipped_paths += skipped
             for box in boxes:
                 box_scaled = Box(
-                    (box.xmin - svg_min_x) * sx,
-                    (box.ymin - svg_min_y) * sy,
-                    (box.xmax - svg_min_x) * sx,
-                    (box.ymax - svg_min_y) * sy,
+                    box.xmin * sx + ox,
+                    box.ymin * sy + oy,
+                    box.xmax * sx + ox,
+                    box.ymax * sy + oy,
                 )
-                cx, cy, bw, bh = to_yolo(box_scaled, w, h)
+                cx, cy, bw, bh = to_yolo(box_scaled, img_w, img_h)
                 if bw <= 0 or bh <= 0:
                     continue
                 key = (
@@ -403,6 +637,7 @@ def main():
                 lines.append(f"{key[0]} {key[1]:.6f} {key[2]:.6f} {key[3]:.6f} {key[4]:.6f}")
 
         if not lines:
+            skipped_no_boxes += 1
             return 0, skipped_paths
 
         out_img = (img_train if split == "train" else img_val) / f"{folder.name}.png"
@@ -436,6 +671,8 @@ def main():
     )
 
     print(f"Exported {total} images to {out}")
+    print(f"Skipped: {skipped_aspect} (aspect ratio > {args.max_aspect_diff:.0%}), "
+          f"{skipped_no_image} (no image), {skipped_no_boxes} (no annotations)")
     if total_skipped_paths and parse_path is None:
         print("WARNING: Some path elements were skipped. Install svgpathtools to handle paths.")
 
