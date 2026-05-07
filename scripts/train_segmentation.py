@@ -1,4 +1,10 @@
 """CLI: train_segmentation.py --config configs/segmentation/stage_a_cubicasa.yaml [--resume latest]"""
+import os
+# MUST be set before torch import: Mask2Former uses grid_sampler_2d whose
+# backward pass isn't implemented on MPS yet (PyTorch 2.x). Falls back to CPU
+# for that specific op (slower than native MPS but the only way to train).
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 import argparse
 import sys
 from pathlib import Path

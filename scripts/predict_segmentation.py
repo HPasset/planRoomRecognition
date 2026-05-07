@@ -1,4 +1,8 @@
 """CLI: predict_segmentation.py --image plan.png --checkpoint best.pt --out result.json"""
+import os
+# MUST be set before torch import (Mask2Former MPS fallback for grid_sampler_2d)
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 import argparse
 import sys
 from pathlib import Path
