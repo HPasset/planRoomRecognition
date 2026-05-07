@@ -55,6 +55,13 @@ def export_one(svg_path: Path, out_dir: Path, split: str,
     folder = svg_path.parent
     sample_id = folder.name
 
+    # Idempotent resume: check if all outputs already exist
+    img_out = out_dir / "images" / split / f"{sample_id}.png"
+    sem_out = out_dir / "semantic" / split / f"{sample_id}.png"
+    inst_out = out_dir / "instance" / split / f"{sample_id}.png"
+    if img_out.exists() and sem_out.exists() and inst_out.exists():
+        return True, "already_exported"
+
     try:
         tree = ET.parse(svg_path)
         root = tree.getroot()
@@ -76,7 +83,10 @@ def export_one(svg_path: Path, out_dir: Path, split: str,
         return False, "img_unreadable"
     img_h, img_w = img.shape[:2]
 
-    polygons = extract_room_polygons(svg_path)
+    try:
+        polygons = extract_room_polygons(svg_path)
+    except Exception as e:
+        return False, f"polygon_extract_err:{type(e).__name__}"
     if not polygons:
         return False, "no_polygons"
 
@@ -87,27 +97,32 @@ def export_one(svg_path: Path, out_dir: Path, split: str,
     sem, inst = rasterize_panoptic(polygons_scaled, image_size=(img_w, img_h))
 
     # Persist
-    img_out = out_dir / "images" / split / f"{sample_id}.png"
-    sem_out = out_dir / "semantic" / split / f"{sample_id}.png"
-    inst_out = out_dir / "instance" / split / f"{sample_id}.png"
-
-    cv2.imwrite(str(img_out), img)
-    cv2.imwrite(str(sem_out), sem)
-    # Save instance as uint16 PNG (room counts in CubiCasa stay <65535)
-    inst_u16 = inst.astype(np.uint16)
-    cv2.imwrite(str(inst_out), inst_u16)
+    try:
+        cv2.imwrite(str(img_out), img)
+        cv2.imwrite(str(sem_out), sem)
+        # Save instance as uint16 PNG (room counts in CubiCasa stay <65535)
+        inst_u16 = inst.astype(np.uint16)
+        cv2.imwrite(str(inst_out), inst_u16)
+    except Exception as e:
+        return False, f"write_err:{type(e).__name__}"
 
     return True, "ok"
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="data/raw/cubicasa5k")
-    ap.add_argument("--out", default="data/processed/cubicasa_panoptic")
-    ap.add_argument("--train_ratio", type=float, default=0.80)
-    ap.add_argument("--val_ratio", type=float, default=0.10)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--max_aspect_diff", type=float, default=0.20)
+    ap.add_argument("--root", default="data/raw/cubicasa5k",
+                    help="Path to CubiCasa5K root (contains <sample>/model.svg files)")
+    ap.add_argument("--out", default="data/processed/cubicasa_panoptic",
+                    help="Output directory for panoptic dataset")
+    ap.add_argument("--train_ratio", type=float, default=0.80,
+                    help="Fraction of SVGs to use for training (default 0.80)")
+    ap.add_argument("--val_ratio", type=float, default=0.10,
+                    help="Fraction of SVGs to use for validation (default 0.10)")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="Random seed for reproducible splits (default 42)")
+    ap.add_argument("--max_aspect_diff", type=float, default=0.20,
+                    help="Max allowed aspect ratio mismatch SVG/image (default 0.20)")
     args = ap.parse_args()
 
     out = Path(args.out).resolve()
