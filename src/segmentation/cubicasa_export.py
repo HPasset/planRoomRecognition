@@ -29,31 +29,55 @@ def _parse_points(pts: str) -> np.ndarray:
     coords: list[float] = []
     for part in pts.replace(",", " ").split():
         try:
-            coords.append(float(part))
+            v = float(part)
         except ValueError:
-            return np.empty((0, 2))
+            continue  # skip malformed token rather than discard whole polygon
+        if not np.isfinite(v):
+            continue  # skip NaN/Inf coordinates (silent corruption guard)
+        coords.append(v)
     coords = coords[: (len(coords) // 2) * 2]
+    if not coords:
+        return np.empty((0, 2))
     return np.asarray(coords, dtype=np.float64).reshape(-1, 2)
 
 
-def _candidate_labels(elem, parent_map: dict) -> list[str]:
-    out: list[str] = []
-    cur = elem
+def _candidate_labels(elem, parent_map: dict) -> tuple[list[str], list[str]]:
+    """Return (own_labels, ancestor_labels). Direct labels take priority over inherited."""
+    own: list[str] = []
+    for attr in ("class", "id"):
+        v = elem.get(attr)
+        if v:
+            own.extend(v.split())
+    ancestors: list[str] = []
+    cur = parent_map.get(elem)
     while cur is not None:
         for attr in ("class", "id"):
             v = cur.get(attr)
             if v:
-                out.extend(v.split())
+                ancestors.extend(v.split())
         cur = parent_map.get(cur)
-    return out
+    return own, ancestors
 
 
-def _label_to_class_id(labels: list[str]) -> int | None:
-    """First matching CubiCasa label wins. Walls take priority over rooms."""
-    for lbl in labels:
-        if lbl == "Wall":
-            return CLASS_ID["Wall"]
-    for lbl in labels:
+def _label_to_class_id(own: list[str], ancestors: list[str]) -> int | None:
+    """Resolve class id, prioritizing the polygon's own labels over ancestors.
+
+    Within own labels: Wall takes priority over rooms (Wall always wins if direct).
+    Then any direct room class.
+    Then fall back to ancestor labels (last resort).
+    """
+    # Pass 1: check own labels for Wall first
+    if "Wall" in own:
+        return CLASS_ID["Wall"]
+    # Pass 2: check own labels for any room class
+    for lbl in own:
+        cid = CUBICASA_TO_C2(lbl)
+        if cid != 0:
+            return cid
+    # Pass 3: fall back to ancestor labels (Wall first, then rooms)
+    if "Wall" in ancestors:
+        return CLASS_ID["Wall"]
+    for lbl in ancestors:
         cid = CUBICASA_TO_C2(lbl)
         if cid != 0:
             return cid
@@ -89,8 +113,8 @@ def extract_room_polygons(svg_path: str | Path) -> List[RoomPolygon]:
         pts = _parse_points(pts_attr)
         if pts.shape[0] < 3:
             continue
-        labels = _candidate_labels(elem, parent_map)
-        cid = _label_to_class_id(labels)
+        own, ancestors = _candidate_labels(elem, parent_map)
+        cid = _label_to_class_id(own, ancestors)
         if cid is None or cid == 0:
             continue
         out.append(RoomPolygon(class_id=cid, points=pts))
@@ -121,6 +145,8 @@ def rasterize_panoptic(
     for poly in polygons:
         if poly.class_id not in ROOM_CLASS_IDS:
             continue
+        if not np.all(np.isfinite(poly.points)):
+            continue  # silent corruption guard
         pts = np.round(poly.points).astype(np.int32)
         cv2.fillPoly(sem, [pts], int(poly.class_id))
         cv2.fillPoly(inst, [pts], int(next_inst_id))
@@ -129,6 +155,8 @@ def rasterize_panoptic(
     # Pass 2: walls overwrite rooms (a wall pixel is not in any room)
     for poly in polygons:
         if poly.class_id != CLASS_ID["Wall"]:
+            continue
+        if not np.all(np.isfinite(poly.points)):
             continue
         pts = np.round(poly.points).astype(np.int32)
         cv2.fillPoly(sem, [pts], int(poly.class_id))

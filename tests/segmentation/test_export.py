@@ -33,3 +33,31 @@ def test_rasterize_kitchen_pixels_present(fixtures_dir: Path):
     sem, _ = rasterize_panoptic(polygons, image_size=(200, 200))
     assert (sem == 2).sum() > 1000  # Kitchen pixels
     assert (sem == 1).sum() > 0  # Wall pixels
+
+
+def test_parse_points_skips_bad_tokens():
+    """Malformed tokens should be skipped, not discard the entire polygon."""
+    from src.segmentation.cubicasa_export import _parse_points
+    arr = _parse_points("10,10 100,10 abc 100,100 10,100")
+    # 4 valid pairs (the 'abc' token is dropped, total 8 floats = 4 points)
+    assert arr.shape == (4, 2)
+
+
+def test_parse_points_skips_nan_inf():
+    """NaN/Inf coordinates must not propagate to the rasterizer."""
+    from src.segmentation.cubicasa_export import _parse_points
+    arr = _parse_points("10,10 nan,inf 100,100 10,100")
+    # Only finite pairs survive
+    import numpy as np
+    assert np.all(np.isfinite(arr))
+
+
+def test_wall_priority_does_not_steal_room_polygon():
+    """A polygon with own class='Kitchen' nested under <g class='Wall'> must remain Kitchen."""
+    from src.segmentation.cubicasa_export import _label_to_class_id
+    # Direct Kitchen label, ancestor Wall label
+    cid = _label_to_class_id(own=["Kitchen"], ancestors=["Wall"])
+    assert cid == 2  # Kitchen, not Wall
+    # But a polygon with no own labels but ancestor Wall should be Wall
+    cid2 = _label_to_class_id(own=[], ancestors=["Wall"])
+    assert cid2 == 1  # Wall (fallback)
