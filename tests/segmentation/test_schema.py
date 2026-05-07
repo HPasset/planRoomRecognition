@@ -53,3 +53,18 @@ def test_segmentation_output_serializable():
     restored = SegmentationOutput.model_validate_json(json_str)
     assert restored.plan_id == "plan_001.png"
     assert restored.rooms[0].type == "Kitchen"
+    assert restored.image_size == [1024, 768]
+    assert restored.model_version == "mask2former-swin-s-batia-v0.1"
+    assert restored.inference_time_ms == 1500
+    assert restored.warnings == []
+    # Walls roundtrip
+    assert restored.walls.mask_rle == "abc"
+    assert restored.walls.mask_path == "/tmp/w.png"
+    assert restored.walls.skeleton_paths_count == 12
+    # Room geometry roundtrip
+    assert restored.rooms[0].id == "room_001"
+    assert restored.rooms[0].type_id == 2
+    assert restored.rooms[0].polygon == [[0, 0], [10, 0], [10, 10], [0, 10]]
+    assert restored.rooms[0].bbox == [0, 0, 10, 10]
+    assert restored.rooms[0].area_pixels == 100
+    assert restored.rooms[0].confidence == 0.9
