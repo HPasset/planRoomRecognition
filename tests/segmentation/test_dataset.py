@@ -17,7 +17,9 @@ def fake_dataset(tmp_path: Path) -> Path:
 
     # 2 fake samples in train
     for i, sid in enumerate(["a", "b"]):
-        img = np.full((400, 300, 3), 128 + i * 30, dtype=np.uint8)
+        # Textured image guarantees augmentations produce visible differences
+        rng = np.random.default_rng(seed=i)
+        img = rng.integers(0, 256, (400, 300, 3), dtype=np.uint8)
         sem = np.zeros((400, 300), dtype=np.uint8)
         sem[50:150, 50:150] = 2  # Kitchen
         sem[200:300, 100:200] = 5  # Bath
@@ -54,7 +56,7 @@ def test_dataset_returns_tensors(fake_dataset: Path):
 def test_dataset_train_mode_applies_aug(fake_dataset: Path):
     ds_train = PanopticDataset(fake_dataset, split="train", image_size=256, train=True)
     ds_eval = PanopticDataset(fake_dataset, split="train", image_size=256, train=False)
-    # Same sample, different transforms → different pixel content (high prob)
-    s_train = ds_train[0]["pixel_values"]
     s_eval = ds_eval[0]["pixel_values"]
-    assert not torch.equal(s_train, s_eval)
+    # Sample multiple train transforms to be robust against RNG coin flips
+    diffs = [not torch.equal(ds_train[0]["pixel_values"], s_eval) for _ in range(5)]
+    assert any(diffs), "train mode should produce a different output at least once in 5 attempts"
