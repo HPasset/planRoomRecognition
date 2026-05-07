@@ -70,3 +70,21 @@ def test_invalid_mixed_precision_rejected(tmp_path: Path):
     _write_yaml(p, VALID_YAML.replace("mixed_precision: bf16", "mixed_precision: fp64"))
     with pytest.raises(ValueError):
         load_config(p)
+
+
+def test_early_stop_patience_exceeds_epochs_rejected(tmp_path: Path):
+    p = tmp_path / "config.yaml"
+    bad = VALID_YAML.replace("epochs: 80", "epochs: 5")
+    # early_stop_patience: 10 in VALID_YAML, now > epochs: 5
+    _write_yaml(p, bad)
+    with pytest.raises(ValueError, match="early_stop_patience"):
+        load_config(p)
+
+
+def test_save_every_n_exceeds_epochs_rejected(tmp_path: Path):
+    p = tmp_path / "config.yaml"
+    bad = VALID_YAML.replace("save_every_n_epochs: 10", "save_every_n_epochs: 200")
+    # 200 > epochs: 80 in VALID_YAML
+    _write_yaml(p, bad)
+    with pytest.raises(ValueError, match="save_every_n_epochs"):
+        load_config(p)

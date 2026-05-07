@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class DataConfig(BaseModel):
@@ -57,6 +57,20 @@ class TrainingConfig(BaseModel):
     training: TrainingPhaseConfig
     logging: LoggingConfig
     checkpoint: CheckpointConfig
+
+    @model_validator(mode="after")
+    def _validate_cross_field_constraints(self):
+        if self.training.early_stop_patience > self.training.epochs:
+            raise ValueError(
+                f"early_stop_patience ({self.training.early_stop_patience}) "
+                f"must be <= epochs ({self.training.epochs})"
+            )
+        if self.checkpoint.save_every_n_epochs > self.training.epochs:
+            raise ValueError(
+                f"save_every_n_epochs ({self.checkpoint.save_every_n_epochs}) "
+                f"must be <= epochs ({self.training.epochs})"
+            )
+        return self
 
 
 def load_config(path: str | Path) -> TrainingConfig:
