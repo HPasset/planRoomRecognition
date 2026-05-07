@@ -29,26 +29,56 @@ ROOM_CLASS_IDS: Final[list[int]] = [CLASS_ID[n] for n in (
 STRUCTURAL_CLASS_IDS: Final[list[int]] = [CLASS_ID["Wall"]]
 
 
-# CubiCasa label → C2 class id
+# CubiCasa label → C2 class id.
+# Real CubiCasa SVG labels validated by inspection of 500 plans (2026-05-07).
 _CUBICASA_RAW_MAP: dict[str, str] = {
     "Background": "Background",
-    "Outdoor": "Outdoor",
     "Wall": "Wall",
+    # Kitchen
     "Kitchen": "Kitchen",
+    "Kitchenette": "Kitchen",
+    # LivingRoom (séjour, salon, salle à manger, den)
     "LivingRoom": "LivingRoom",
     "Living Room": "LivingRoom",
-    "BedRoom": "BedRoom",
-    "Bed Room": "BedRoom",
+    "Dining": "LivingRoom",
+    "Den": "LivingRoom",
+    # BedRoom (chambre, bureau privatif)
+    "Bedroom": "BedRoom",      # ← real CubiCasa label
+    "BedRoom": "BedRoom",       # legacy alias
+    "Bed Room": "BedRoom",      # legacy alias
+    # Bath (sdb + WC + douche)
     "Bath": "Bath",
-    "WC": "Bath",
     "Bathroom": "Bath",
-    "Hall": "Entry",
+    "WC": "Bath",
+    "Shower": "Bath",
+    # Entry (entrée, hall, couloir, vestibule)
     "Entry": "Entry",
+    "Hall": "Entry",
+    "Lobby": "Entry",
+    "DraughtLobby": "Entry",
+    "Corridor": "Entry",
+    # Storage (rangement, dressing, cellier, buanderie, technique)
     "Storage": "Storage",
     "Closet": "Storage",
+    "CoatCloset": "Storage",
+    "WalkIn": "Storage",
+    "DressingRoom": "Storage",
     "Pantry": "Storage",
+    "Utility": "Storage",
+    "Laundry": "Storage",
+    "TechnicalRoom": "Storage",
+    "Boiler": "Storage",
+    "Attic": "Storage",
+    "Basement": "Storage",
+    # Garage
     "Garage": "Garage",
-    # Tout le reste (Railing, Undefined, Other, ...) → Background
+    "CarPort": "Garage",
+    # Outdoor (balcon, terrasse, jardin attenant)
+    "Outdoor": "Outdoor",
+    "Balcony": "Outdoor",
+    "Terrace": "Outdoor",
+    "CoveredArea": "Outdoor",
+    # Everything else (Railing, Undefined, Room, UserDefined, Office, Sauna, ...) → Background
 }
 
 

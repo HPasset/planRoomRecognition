@@ -30,6 +30,43 @@ def test_cubicasa_mapping_handles_synonyms():
     assert CUBICASA_TO_C2("Unknown_label_xyz") == 0  # default fallback
 
 
+def test_cubicasa_real_labels_validated():
+    """Real CubiCasa SVG labels (audited from 500 plans, 2026-05-07)."""
+    # Critical fix: Bedroom (one word) — was previously missing
+    assert CUBICASA_TO_C2("Bedroom") == 4  # BedRoom
+    # Entry variants
+    assert CUBICASA_TO_C2("Lobby") == 6
+    assert CUBICASA_TO_C2("DraughtLobby") == 6
+    assert CUBICASA_TO_C2("Corridor") == 6
+    # Outdoor variants
+    assert CUBICASA_TO_C2("Balcony") == 9
+    assert CUBICASA_TO_C2("Terrace") == 9
+    assert CUBICASA_TO_C2("CoveredArea") == 9
+    # Storage variants
+    assert CUBICASA_TO_C2("WalkIn") == 7
+    assert CUBICASA_TO_C2("CoatCloset") == 7
+    assert CUBICASA_TO_C2("Utility") == 7
+    assert CUBICASA_TO_C2("Laundry") == 7
+    assert CUBICASA_TO_C2("DressingRoom") == 7
+    assert CUBICASA_TO_C2("TechnicalRoom") == 7
+    assert CUBICASA_TO_C2("Boiler") == 7
+    assert CUBICASA_TO_C2("Attic") == 7
+    assert CUBICASA_TO_C2("Basement") == 7
+    # Bath variants
+    assert CUBICASA_TO_C2("Shower") == 5
+    # LivingRoom variants
+    assert CUBICASA_TO_C2("Dining") == 3
+    assert CUBICASA_TO_C2("Den") == 3
+    # Kitchen variants
+    assert CUBICASA_TO_C2("Kitchenette") == 2
+    # Garage variants
+    assert CUBICASA_TO_C2("CarPort") == 8
+    # Ambiguous labels stay Background (intentional)
+    assert CUBICASA_TO_C2("Room") == 0
+    assert CUBICASA_TO_C2("UserDefined") == 0
+    assert CUBICASA_TO_C2("Office") == 0  # too ambiguous: study or workplace?
+
+
 def test_room_class_ids_excludes_background_and_wall():
     assert 0 not in ROOM_CLASS_IDS
     assert 1 not in ROOM_CLASS_IDS
