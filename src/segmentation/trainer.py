@@ -26,7 +26,10 @@ def _build_targets_for_mask2former(semantic: torch.Tensor, instance: torch.Tenso
       - mask_labels: list of binary masks (one per instance + one per stuff class present)
       - class_labels: corresponding class id (long)
 
-    We treat ROOM classes as 'things' (per-instance) and Wall as 'stuff' (single mask).
+    We treat ROOM classes as 'things' (per-instance) and Wall + Background as 'stuff'
+    (one mask per stuff class present in the image). Background MUST be included as
+    stuff so the model learns to predict it — otherwise pixels never match any query
+    that maps to class 0 and val/IoU_class_0 stays at 0 forever.
     """
     out_mask_labels: list[torch.Tensor] = []
     out_class_labels: list[int] = []
@@ -44,14 +47,20 @@ def _build_targets_for_mask2former(semantic: torch.Tensor, instance: torch.Tenso
             out_mask_labels.append(m.float())
             out_class_labels.append(cls)
 
-    # Stuff: walls (single mask if any pixels)
+    # Stuff: Background (class 0) — single mask covering all BG pixels
+    bg_mask = (semantic == 0)
+    if bg_mask.sum() > 0:
+        out_mask_labels.append(bg_mask.float())
+        out_class_labels.append(0)
+
+    # Stuff: Wall (class 1) — single mask covering all wall pixels
     wall_mask = (semantic == 1)
     if wall_mask.sum() > 0:
         out_mask_labels.append(wall_mask.float())
         out_class_labels.append(1)
 
     if not out_mask_labels:
-        # Empty image (very rare): single dummy background to avoid NaN
+        # Truly empty image (no background, no wall, no rooms — extremely rare)
         out_mask_labels.append(torch.zeros((H, W)))
         out_class_labels.append(0)
 
