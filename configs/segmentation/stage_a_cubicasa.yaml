@@ -14,7 +14,7 @@ optimizer:
   lr_head: 1.0e-4
   weight_decay: 0.05
   grad_accumulation: 4
-  grad_clip_norm: 0.01
+  grad_clip_norm: 1.0
 
 scheduler:
   type: cosine
@@ -23,7 +23,7 @@ scheduler:
 training:
   epochs: 80
   early_stop_patience: 10
-  mixed_precision: bf16
+  mixed_precision: "no"
   oversample_rare_classes: true
 
 logging:
