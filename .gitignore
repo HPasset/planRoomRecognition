@@ -10,3 +10,12 @@ models/exports/
 .DS_Store
 *.pt
 
+# Training/experiment outputs
+logs/
+wandb/
+
+# Claude Code per-machine config
+.claude/
+
+# Generated presentations (kept in docs/ via the .py generator + .md source)
+*.pptx

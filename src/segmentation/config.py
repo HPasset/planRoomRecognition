@@ -10,6 +10,9 @@ class DataConfig(BaseModel):
     dataset_root: str
     image_size: int = Field(ge=256, le=1536)
     batch_size: int = Field(ge=1, le=64)
+    # If set, train loader uses WeightedRandomSampler. Keys must match values in
+    # <dataset_root>/sample_origins.json (e.g. {"fr": 8.0, "cc": 1.0}).
+    oversample_origin: dict[str, float] | None = None
 
 
 class ModelConfig(BaseModel):
@@ -34,6 +37,10 @@ class TrainingPhaseConfig(BaseModel):
     early_stop_patience: int = Field(ge=0, le=50)
     mixed_precision: Literal["bf16", "fp16", "no"] = "bf16"
     oversample_rare_classes: bool = True
+    # Path to a Stage A checkpoint. Loaded ONLY when no local resume checkpoint
+    # exists in <output_dir>/checkpoints — pure weights init, optimizer/scheduler
+    # start fresh.
+    init_from_checkpoint: str | None = None
 
 
 class LoggingConfig(BaseModel):

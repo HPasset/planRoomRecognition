@@ -2,13 +2,14 @@
 from __future__ import annotations
 from contextlib import nullcontext
 from pathlib import Path
+import json
 import math
 import random
 
 import numpy as np
 import torch
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from src.segmentation.checkpoint import save_checkpoint, load_checkpoint, find_latest
 from src.segmentation.classes import NUM_CLASSES, ROOM_CLASS_IDS
@@ -87,9 +88,12 @@ class Trainer:
                                         cfg.data.image_size, train=True)
         self.val_ds = PanopticDataset(cfg.data.dataset_root, "val",
                                       cfg.data.image_size, train=False)
+
+        sampler = self._build_origin_sampler()
         self.train_loader = DataLoader(
             self.train_ds, batch_size=cfg.data.batch_size,
-            shuffle=True, num_workers=0, drop_last=True,
+            sampler=sampler, shuffle=(sampler is None),
+            num_workers=0, drop_last=True,
             collate_fn=self._collate,
         )
         self.val_loader = DataLoader(
@@ -146,6 +150,37 @@ class Trainer:
     def _set_seed(seed: int):
         random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
 
+    def _build_origin_sampler(self) -> WeightedRandomSampler | None:
+        """Build a WeightedRandomSampler from sample_origins.json if requested."""
+        oversample = self.cfg.data.oversample_origin
+        if not oversample:
+            return None
+        origins_path = Path(self.cfg.data.dataset_root) / "sample_origins.json"
+        if not origins_path.exists():
+            raise FileNotFoundError(
+                f"oversample_origin set but {origins_path} missing — "
+                f"run scripts/build_stage_b_dataset.py first."
+            )
+        origins = json.loads(origins_path.read_text())
+        weights = [oversample.get(origins[sid], 1.0) for sid in self.train_ds.ids]
+        n_per_origin: dict[str, int] = {}
+        for sid in self.train_ds.ids:
+            n_per_origin[origins[sid]] = n_per_origin.get(origins[sid], 0) + 1
+        total_w = sum(w * n_per_origin[origins[sid]] / len(self.train_ds.ids)
+                      for sid, w in zip(self.train_ds.ids, weights))
+        print(f"WeightedRandomSampler enabled — per-origin counts: {n_per_origin}")
+        print(f"  weights: {oversample}")
+        for origin, n in n_per_origin.items():
+            contribution = oversample.get(origin, 1.0) * n / sum(
+                oversample.get(o, 1.0) * c for o, c in n_per_origin.items()
+            ) * 100
+            print(f"    {origin}: ~{contribution:.1f}% of training steps")
+        return WeightedRandomSampler(
+            weights=torch.tensor(weights, dtype=torch.double),
+            num_samples=len(weights),
+            replacement=True,
+        )
+
     def _build_scheduler(self):
         steps_per_epoch = max(1, len(self.train_ds) // self.cfg.data.batch_size)
         total = self.cfg.training.epochs * steps_per_epoch
@@ -179,11 +214,13 @@ class Trainer:
         return mask_labels, class_labels
 
     def fit(self):
-        # Auto-resume
+        # Auto-resume (priority) or cold-start from a Stage A checkpoint
         latest = find_latest(self.ckpt_dir)
         if latest is not None:
             self._load_state(latest)
             print(f"Resumed from {latest} at epoch {self.epoch}")
+        elif self.cfg.training.init_from_checkpoint:
+            self._init_model_weights(Path(self.cfg.training.init_from_checkpoint))
 
         no_improve_epochs = 0
         for epoch in range(self.epoch, self.cfg.training.epochs):
@@ -289,3 +326,14 @@ class Trainer:
         self.epoch = ckpt["epoch"]
         self.global_step = ckpt["global_step"]
         self.best_metric = ckpt["best_metric"]
+
+    def _init_model_weights(self, path: Path):
+        """Load ONLY model weights from a checkpoint — optimizer/scheduler
+        start fresh, epoch=0, best_metric=-inf. Used to bootstrap Stage B from
+        Stage A best.pt."""
+        if not path.exists():
+            raise FileNotFoundError(f"init_from_checkpoint not found: {path}")
+        ckpt = load_checkpoint(path, map_location=str(self.device))
+        self.model.load_state_dict(ckpt["model_state_dict"])
+        print(f"Cold start: model weights loaded from {path} "
+              f"(prior best_metric={ckpt.get('best_metric', 'n/a')})")
