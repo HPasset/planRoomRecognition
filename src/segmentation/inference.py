@@ -78,11 +78,15 @@ class SegmentationInference:
         )
         rooms = [RoomDetection(**r) for r in rooms_dicts]
 
-        # Walls (binary mask of class id 1, in letterboxed space)
-        walls_mask_lb = np.zeros_like(panoptic_seg, dtype=np.uint8)
-        for seg in segments_info:
-            if seg.get("label_id") == CLASS_ID["Wall"]:
-                walls_mask_lb |= (panoptic_seg == seg["id"]).astype(np.uint8)
+        # Walls (binary mask of class id 1, in letterboxed space).
+        # Use SEMANTIC segmentation (per-pixel argmax) rather than panoptic
+        # because Wall queries often have confidence < panoptic threshold (0.5)
+        # on FR plans where Wall mIoU is only ~0.25 — panoptic would filter
+        # them all out, leaving an empty mask.
+        sem_pred_lb = self.processor.post_process_semantic_segmentation(
+            out, target_sizes=[(self.image_size, self.image_size)],
+        )[0].cpu().numpy()
+        walls_mask_lb = (sem_pred_lb == CLASS_ID["Wall"]).astype(np.uint8)
         walls = walls_mask_to_output(
             walls_mask_lb, info, plan_id=image_path.name, out_dir=self.walls_out_dir,
         )
