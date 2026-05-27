@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
 
@@ -18,22 +19,43 @@ _IGNORE_PHRASES = [
 _ROOM_ALIASES = {
     "cuisine": ["cuisine"],
     "salon": ["salon"],
-    "sejour": ["sejour", "sej", "sejour/salon", "piece de vie"],
-    "chambre": ["chambre", "ch", "chb"],
-    "salle_de_bain": ["sdb", "salle de bain", "salle de bains"],
+    "sejour": ["sejour", "sej", "sejour/salon", "piece de vie",
+                "espace de vie"],
+    "chambre": [
+        "chambre", "ch", "chb",
+        "suite", "suite parentale", "suite parents",
+    ],
+    "salle_de_bain": ["sdb", "salle de bain", "salle de bains",
+                       "bains", "salle de bain principale"],
     "salle_de_douche": ["sdd", "salle de douche"],
-    "salle_d_eau": ["salle d eau", "salle d'eau"],
+    "salle_d_eau": [
+        "salle d eau", "salle d'eau",
+        "sde", "s d e", "s.d.e",   # abréviations avec/sans ponctuation
+        "soe",                      # erreur OCR fréquente (D lu comme O)
+        "s eau", "s.eau",           # variante 'S.Eau'
+    ],
     "wc": ["wc", "toilette", "toilettes"],
-    "entree": ["entree"],
-    "couloir": ["couloir"],
-    "degagement": ["degagement", "dgm"],
+    "entree": ["entree", "vestibule"],
+    "couloir": ["couloir", "galerie"],
+    "degagement": ["degagement", "degag", "dgm", "dgt", "deg"],
     "bureau": ["bureau"],
-    "cellier": ["cellier"],
+    "cellier": [
+        "cellier",
+        # Alias multi-mots : Cellier/Buanderie souvent écrits sur 2 lignes
+        # désignent UNE seule pièce multi-usage. merge_multiline_aliases
+        # se charge de fusionner les 2 hits OCR adjacents avant matching.
+        "cellier buanderie",
+        "cellier / buanderie",
+        "buanderie cellier",
+        # Rangement / stockage — abréviations FR pour zone de stockage
+        "rang", "rangement", "rangements", "stockage",
+    ],
     "buanderie": ["buanderie", "lingerie"],
-    "dressing": ["dressing"],
+    "dressing": ["dressing", "dress"],
     "garage": ["garage"],
     "balcon": ["balcon", "loggia"],
-    "terrasse": ["terrasse"],
+    "terrasse": ["terrasse", "allee", "allee piétonne", "allee couverte",
+                  "porche", "auvent"],
     "palier": ["palier"],
     "nid": ["nid"],
 }
@@ -77,12 +99,45 @@ def _clean_for_matching(text_norm: str) -> str:
     return text_norm
 
 
-def _match_room_type(text_norm: str):
+def _match_room_type(text_norm: str, fuzzy: bool = False,
+                      fuzzy_cutoff: float = 0.80):
+    """Match a room_type in the text.
+
+    Strategy:
+      1. Exact word/phrase match (fast path).
+      2. If fuzzy=True and no exact match: fuzzy match each word in text
+         against single-word aliases. Multi-word aliases (e.g. "salle de bain")
+         skip the fuzzy fallback — they'd produce too many false positives.
+         Uses difflib.SequenceMatcher (stdlib). Cutoff 0.80 ≈ 1 char error
+         on a 5-7 letter word like "chambre"/"cuisine".
+    """
     text_clean = _clean_for_matching(text_norm)
+    # 1. Exact path
     for alias, room_type in _ALIAS_INDEX:
         pattern = r"\b" + re.escape(alias).replace(r"\ ", r"\s+") + r"\b"
         if re.search(pattern, text_clean):
             return room_type
+
+    if not fuzzy:
+        return None
+
+    # 2. Fuzzy fallback — only on single-token aliases, only for words >= 6
+    # chars. Pourquoi 6 chars min : sur des mots courts (4-5 chars), le ratio
+    # SequenceMatcher devient trompeur. Ex: "salle" vs "allee" → ratio 0.80
+    # (partagent "alle") → faux positif. À 6+ chars la robustesse est OK.
+    # Les vrais cas légitimes (chamgre/chambre, cuisine, garage...) font tous
+    # 6 chars ou plus.
+    single_aliases = [(a, rt) for a, rt in _ALIAS_INDEX if " " not in a]
+    words = re.findall(r"[a-z]+", text_clean)
+    for word in words:
+        if len(word) < 6:  # mots courts trop ambigus pour le fuzzy
+            continue
+        for alias, room_type in single_aliases:
+            if len(alias) < 6:
+                continue
+            ratio = difflib.SequenceMatcher(None, word, alias).ratio()
+            if ratio >= fuzzy_cutoff:
+                return room_type
     return None
 
 
@@ -111,7 +166,321 @@ def _should_skip(text_norm: str, confidence: float, confidence_min: float) -> bo
     return False
 
 
-def postprocess_ocr_items(items, confidence_min: float = 0.35):
+def _bbox_centroid(bbox: list[list[float]]) -> tuple[float, float]:
+    xs = [p[0] for p in bbox]
+    ys = [p[1] for p in bbox]
+    return sum(xs) / len(xs), sum(ys) / len(ys)
+
+
+def _bbox_height(bbox: list[list[float]]) -> float:
+    ys = [p[1] for p in bbox]
+    return max(ys) - min(ys)
+
+
+def _bbox_text_height(bbox: list[list[float]]) -> float:
+    """Hauteur réelle d'un texte OCR, robuste à l'orientation.
+
+    Pour un bbox de texte, la "hauteur des caractères" est toujours la PLUS
+    PETITE dimension du bbox — peu importe si le texte est horizontal,
+    vertical (rotation 90°/270°), ou en biais.
+
+    Ex: "Galerie" écrit verticalement, après remappage des coords vers l'image
+    originale, donne un bbox de ~25 × 80 px (étroit en x, long en y). On veut
+    bien 25 comme "hauteur du texte", pas 80.
+    """
+    xs = [p[0] for p in bbox]
+    ys = [p[1] for p in bbox]
+    return min(max(xs) - min(xs), max(ys) - min(ys))
+
+
+def _merge_bboxes(b1: list[list[float]], b2: list[list[float]]) -> list[list[float]]:
+    all_pts = b1 + b2
+    xs = [p[0] for p in all_pts]
+    ys = [p[1] for p in all_pts]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+    return [
+        [int(x_min), int(y_min)],
+        [int(x_max), int(y_min)],
+        [int(x_max), int(y_max)],
+        [int(x_min), int(y_max)],
+    ]
+
+
+def merge_multiline_aliases(items: list[dict], proximity_factor: float = 2.5) -> list[dict]:
+    """Fusionne les hits OCR adjacents qui forment ensemble un alias multi-mots.
+
+    Cas typique : "Salle d'eau" écrit sur 2 lignes ('Salle' au-dessus, 'd'eau'
+    en-dessous) → l'OCR sort 2 hits qui isolément ne matchent aucun alias.
+    Cette fonction détecte les paires de hits dont la concaténation forme un
+    alias multi-mots connu, et les fusionne en un seul hit.
+
+    Args:
+        items: liste de hits OCR bruts (avec keys 'text', 'bbox', 'confidence')
+        proximity_factor: distance max entre centroïdes en multiples de la
+                          hauteur moyenne des hits (2.5 = ~2-3 lignes d'écart max)
+
+    Returns:
+        Nouvelle liste de hits (potentiellement plus courte si fusions effectuées).
+    """
+    # Précompute multi-word aliases (normalized)
+    multi_word: list[tuple[str, str]] = []
+    for room_type, aliases in _ROOM_ALIASES.items():
+        for alias in aliases:
+            alias_norm = normalize_text(alias)
+            if " " in alias_norm and len(alias_norm.split()) >= 2:
+                multi_word.append((alias_norm, room_type))
+    if not multi_word:
+        return list(items)
+
+    out = list(items)
+    consumed: set[int] = set()
+    new_items: list[dict] = []
+
+    for i, hit_i in enumerate(out):
+        if i in consumed:
+            continue
+        text_i_norm = normalize_text(hit_i.get("text", ""))
+        if not text_i_norm or len(text_i_norm) < 2:
+            new_items.append(hit_i)
+            continue
+
+        bbox_i = hit_i.get("bbox")
+        if not bbox_i or len(bbox_i) < 3:
+            new_items.append(hit_i)
+            continue
+        cx_i, cy_i = _bbox_centroid(bbox_i)
+        h_i = _bbox_height(bbox_i)
+
+        merged_with_j: int | None = None
+        merged_combined: str | None = None
+        merged_raw: str | None = None
+
+        for j, hit_j in enumerate(out):
+            if j == i or j in consumed:
+                continue
+            text_j_norm = normalize_text(hit_j.get("text", ""))
+            if not text_j_norm or len(text_j_norm) < 2:
+                continue
+            bbox_j = hit_j.get("bbox")
+            if not bbox_j or len(bbox_j) < 3:
+                continue
+            cx_j, cy_j = _bbox_centroid(bbox_j)
+            h_j = _bbox_height(bbox_j)
+
+            avg_h = (h_i + h_j) / 2.0
+            if avg_h <= 0:
+                continue
+            dist = ((cx_i - cx_j) ** 2 + (cy_i - cy_j) ** 2) ** 0.5
+            if dist > avg_h * proximity_factor:
+                continue
+
+            # Essai des 2 ordres (i puis j, et j puis i)
+            for combined in (f"{text_i_norm} {text_j_norm}",
+                              f"{text_j_norm} {text_i_norm}"):
+                # Vérifie qu'un alias multi-mots est inclus dans la concat
+                for alias_norm, _room_type in multi_word:
+                    if alias_norm in combined:
+                        merged_with_j = j
+                        merged_combined = combined
+                        merged_raw = (
+                            f"{hit_i.get('text', '')} {hit_j.get('text', '')}"
+                            if combined.startswith(text_i_norm)
+                            else f"{hit_j.get('text', '')} {hit_i.get('text', '')}"
+                        )
+                        break
+                if merged_with_j is not None:
+                    break
+            if merged_with_j is not None:
+                break
+
+        if merged_with_j is not None:
+            consumed.add(i)
+            consumed.add(merged_with_j)
+            hit_j = out[merged_with_j]
+            new_items.append({
+                "text": merged_raw,
+                "bbox": _merge_bboxes(bbox_i, hit_j["bbox"]),
+                "confidence": min(
+                    float(hit_i.get("confidence", 0.0)),
+                    float(hit_j.get("confidence", 0.0)),
+                ),
+            })
+        else:
+            new_items.append(hit_i)
+
+    return new_items
+
+
+def deduplicate_hits(items: list[dict],
+                      distance_threshold: float = 50.0) -> list[dict]:
+    """Déduplique les hits OCR identiques (même texte normalisé + position proche).
+
+    Cas typique : le multi-rotation de PaddleOCR (3 passes : normal + 90°CW +
+    90°CCW) détecte le même texte horizontal 3 fois dans des bboxes très
+    proches. Cette fonction garde uniquement le hit de plus haute confidence
+    pour chaque cluster (même texte + proximité géographique).
+
+    Args:
+        items: hits OCR bruts
+        distance_threshold: distance max entre centroïdes (px) pour considérer
+                            2 hits comme doublons (50px convient sur plans
+                            ~1500px de large)
+
+    Returns:
+        Liste dédupliquée.
+    """
+    if not items:
+        return items
+
+    by_norm: dict[str, list[dict]] = {}
+    for hit in items:
+        norm = normalize_text(hit.get("text", ""))
+        if not norm:
+            continue
+        by_norm.setdefault(norm, []).append(hit)
+
+    out: list[dict] = []
+    for norm, hits in by_norm.items():
+        if len(hits) == 1:
+            out.append(hits[0])
+            continue
+        # Trie par confidence DESC pour donner la priorité aux hits sûrs
+        hits_sorted = sorted(hits, key=lambda h: -float(h.get("confidence", 0)))
+        # Clusters de proximité géographique
+        clusters: list[list[dict]] = []
+        for hit in hits_sorted:
+            bbox = hit.get("bbox", [])
+            if not bbox or len(bbox) < 3:
+                clusters.append([hit])
+                continue
+            cx, cy = _bbox_centroid(bbox)
+            placed = False
+            for cluster in clusters:
+                head_bbox = cluster[0].get("bbox", [])
+                if not head_bbox or len(head_bbox) < 3:
+                    continue
+                head_cx, head_cy = _bbox_centroid(head_bbox)
+                dist = ((cx - head_cx) ** 2 + (cy - head_cy) ** 2) ** 0.5
+                if dist < distance_threshold:
+                    cluster.append(hit)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([hit])
+        # Garde le 1er (plus confiant) de chaque cluster
+        for cluster in clusters:
+            out.append(cluster[0])
+    return out
+
+
+def deduplicate_detections_by_room_type(
+    detections: list[dict],
+    min_distance_threshold_px: float = 80.0,
+    height_multiplier: float = 5.0,
+) -> list[dict]:
+    """Déduplique les détections matchées partageant le même room_type ET
+    géographiquement proches.
+
+    Résout les cas typiques :
+      - "Chambre" + "Chambr" (lecture partielle) sur la même chambre
+      - "Garage" + "e Gara" (fragment) sur le même garage
+      - "Espace de Vie" + "Séjour" sur la MÊME pièce open-space
+      - Et PRÉSERVE : "Galerie" vs "Couloir" sur 2 zones distinctes,
+        3 chambres voisines avec labels "Chambre" identiques
+
+    Seuil adaptatif basé sur la hauteur du label OCR :
+      seuil = max(80 px, 5 × hauteur moyenne des 2 labels)
+
+    Logique : 2 labels OCR du même room_type sont "dans la même pièce" si
+    leur distance est < 5× la hauteur du texte (un label fait typiquement
+    20-30 px de haut, donc seuil 100-150 px = ~1 pièce). Sur plans avec
+    pièces resserrées, ce seuil adaptatif évite les faux merges.
+
+    Args:
+        detections: liste de détections post-matching
+        min_distance_threshold_px: plancher absolu (80 px par défaut), pour
+                                    éviter un seuil ridiculement petit si
+                                    labels minuscules
+        height_multiplier: combien de hauteurs de texte = même pièce (5 par
+                           défaut, ajuster si pièces très serrées ou très grandes)
+
+    Returns:
+        Liste dédupliquée — garde le plus confiant de chaque cluster.
+    """
+    if not detections:
+        return detections
+
+    by_type: dict[str, list[dict]] = {}
+    for det in detections:
+        rt = det.get("room_type")
+        if not rt:
+            continue
+        by_type.setdefault(rt, []).append(det)
+
+    out: list[dict] = []
+    for room_type, dets in by_type.items():
+        if len(dets) == 1:
+            out.append(dets[0])
+            continue
+        dets_sorted = sorted(
+            dets, key=lambda d: -float(d.get("confidence", 0))
+        )
+        clusters: list[list[dict]] = []
+        for det in dets_sorted:
+            bbox = det.get("bbox", [])
+            if not bbox or len(bbox) < 3:
+                clusters.append([det])
+                continue
+            cx, cy = _bbox_centroid(bbox)
+            # Utilise text_height (= min dim du bbox) au lieu de height
+            # pour être robuste aux textes verticaux (remappés du multi-rotation)
+            h_det = _bbox_text_height(bbox)
+            placed = False
+            for cluster in clusters:
+                head_bbox = cluster[0].get("bbox", [])
+                if not head_bbox or len(head_bbox) < 3:
+                    continue
+                head_cx, head_cy = _bbox_centroid(head_bbox)
+                head_h = _bbox_text_height(head_bbox)
+                # Seuil adaptatif : max(plancher, k × hauteur moyenne texte)
+                avg_h = (h_det + head_h) / 2.0
+                threshold = max(
+                    min_distance_threshold_px, height_multiplier * avg_h,
+                )
+                dist = ((cx - head_cx) ** 2 + (cy - head_cy) ** 2) ** 0.5
+                if dist < threshold:
+                    cluster.append(det)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([det])
+        for cluster in clusters:
+            out.append(cluster[0])
+    return out
+
+
+def postprocess_ocr_items(items, confidence_min: float = 0.35,
+                           fuzzy: bool = False, fuzzy_cutoff: float = 0.80,
+                           fuzzy_min_confidence: float = 0.50):
+    """Pipeline complet OCR brut → détections de pièces.
+
+    Args:
+        items: hits OCR bruts
+        confidence_min: filtre les hits avec confidence < ce seuil
+        fuzzy: active le fuzzy matching pour gérer les erreurs OCR de 1-2 chars
+        fuzzy_cutoff: cutoff du fuzzy matching (0.72 = ~2 erreurs tolérées)
+        fuzzy_min_confidence: le fuzzy matching n'est appliqué QUE si la
+            confidence OCR du hit est ≥ ce seuil. Empêche les bruits OCR
+            faibles (ex: 'ereee' conf 0.30) de matcher par hasard 'entree'.
+    """
+    # Étape 1 : déduplication des hits du multi-rotation (PaddleOCR 3-pass
+    # détecte les textes horizontaux 3 fois)
+    items = deduplicate_hits(items)
+    # Étape 2 : fusion des hits adjacents formant un alias multi-mots
+    # (ex: "Salle"+"d'eau" sur 2 lignes → "Salle d'eau")
+    items = merge_multiline_aliases(items)
+
     detections = []
     for item in items:
         text = item.get("text", "")
@@ -121,7 +490,12 @@ def postprocess_ocr_items(items, confidence_min: float = 0.35):
         if _should_skip(text_norm, confidence, confidence_min):
             continue
 
-        room_type = _match_room_type(text_norm)
+        # Le fuzzy n'est activé que pour les hits avec confidence raisonnable.
+        # En dessous (genre 0.30), le hit est probablement du bruit OCR pur
+        # et le fuzzy matchera par hasard un alias (ex: 'ereee' → 'entree').
+        use_fuzzy = fuzzy and confidence >= fuzzy_min_confidence
+        room_type = _match_room_type(text_norm, fuzzy=use_fuzzy,
+                                       fuzzy_cutoff=fuzzy_cutoff)
         if not room_type:
             continue
 
@@ -138,4 +512,8 @@ def postprocess_ocr_items(items, confidence_min: float = 0.35):
 
         detections.append(detection)
 
+    # Étape finale : déduplication par room_type + proximité géographique
+    # (gère "Chambre"+"Chambr" sur même pièce, "Espace de Vie"+"Séjour"
+    # sur même open-space, etc.)
+    detections = deduplicate_detections_by_room_type(detections)
     return detections

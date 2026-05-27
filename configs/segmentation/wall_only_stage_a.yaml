@@ -1,0 +1,43 @@
+# Wall-only Mask2Former — dedicated model for snap-to-walls.
+# Pragmatic approach: keep NUM_CLASSES=10, dataset only contains classes 0 (BG)
+# and 1 (Wall). Model learns that classes 2-9 never appear → outputs 0 or 1
+# everywhere. Slightly wasteful (10 query channels for 2 real classes) but
+# zero refactor of the existing pipeline.
+run_name: wall_only_stage_a_v1
+seed: 42
+
+data:
+  dataset_root: data/processed/cubicasa_wall_only
+  image_size: 768
+  batch_size: 8  # Swin-T is lighter than Swin-S → can fit 2x batch
+
+model:
+  # Swin-Tiny is sufficient for binary Wall detection (vs the 10-class
+  # complexity that needed Swin-S). ~270 MB vs 788 MB.
+  backbone: facebook/mask2former-swin-tiny-coco-panoptic
+
+optimizer:
+  lr_backbone: 1.0e-5
+  lr_head: 1.0e-4
+  weight_decay: 0.05
+  grad_accumulation: 2  # effective batch = 16
+  grad_clip_norm: 1.0  # NOT 0.01 — see Stage A bug history
+
+scheduler:
+  type: cosine
+  warmup_steps: 500
+
+training:
+  epochs: 30  # Wall is a simple binary task, converges fast
+  early_stop_patience: 5
+  mixed_precision: "no"  # FP32 — BF16 produces NaN on MPS (Stage A learning)
+  oversample_rare_classes: false
+
+logging:
+  tracker: wandb
+  project: batia-segmentation
+  log_image_count: 5
+
+checkpoint:
+  output_dir: runs/segmentation/wall_only_stage_a_v1
+  save_every_n_epochs: 5

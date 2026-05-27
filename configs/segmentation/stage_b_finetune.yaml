@@ -1,0 +1,42 @@
+run_name: stage_b_finetune_v1
+seed: 42
+
+data:
+  dataset_root: data/processed/stage_b_combined
+  image_size: 768
+  batch_size: 4
+  # FR plans oversampled ×8 → ~13% of training steps despite being <2% of files
+  oversample_origin:
+    fr: 8.0
+    cc: 1.0
+
+model:
+  backbone: facebook/mask2former-swin-small-coco-panoptic
+
+optimizer:
+  # Lower than Stage A (1e-5 / 1e-4) — fine-tuning, want to preserve features
+  lr_backbone: 5.0e-6
+  lr_head: 5.0e-5
+  weight_decay: 0.05
+  grad_accumulation: 4
+  grad_clip_norm: 1.0  # NOT 0.01 — see Stage A bug history
+
+scheduler:
+  type: cosine
+  warmup_steps: 200
+
+training:
+  epochs: 30
+  early_stop_patience: 5
+  mixed_precision: "no"  # FP32 — BF16 produces NaN on MPS (see Stage A bug)
+  oversample_rare_classes: true
+  init_from_checkpoint: runs/segmentation/stage_a_cubicasa_v1/checkpoints/best.pt
+
+logging:
+  tracker: wandb
+  project: batia-segmentation
+  log_image_count: 5
+
+checkpoint:
+  output_dir: runs/segmentation/stage_b_finetune_v1
+  save_every_n_epochs: 5

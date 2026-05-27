@@ -1,0 +1,37 @@
+# Template Stage B fine-tune — à compléter une fois les 80 plans FR annotés
+run_name: stage_b_finetune_v1
+seed: 42
+
+data:
+  dataset_root: data/processed/cubicasa_panoptic_plus_fr  # à créer dans Plan 2
+  image_size: 768
+  batch_size: 4
+
+model:
+  backbone: facebook/mask2former-swin-small-coco-panoptic
+
+optimizer:
+  lr_backbone: 5.0e-6
+  lr_head: 5.0e-5
+  weight_decay: 0.05
+  grad_accumulation: 4
+  grad_clip_norm: 0.01
+
+scheduler:
+  type: cosine
+  warmup_steps: 0
+
+training:
+  epochs: 30
+  early_stop_patience: 5
+  mixed_precision: bf16
+  oversample_rare_classes: true
+
+logging:
+  tracker: wandb
+  project: batia-segmentation
+  log_image_count: 5
+
+checkpoint:
+  output_dir: runs/segmentation/stage_b_finetune_v1
+  save_every_n_epochs: 5

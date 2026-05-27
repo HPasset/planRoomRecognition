@@ -1,0 +1,44 @@
+# Brique A YOLO meubles — config training
+# Fine-tune yolo11m from COCO pretrained on FR plans (9 NFC classes).
+# Run with:
+#   python scripts/train_yolo.py --config configs/yolo/brique_a.yaml
+
+run_name: brique_a_v1
+seed: 42
+
+# ultralytics-compatible dataset.yaml (output of scripts/cvat_to_yolo.py)
+data: data/processed/datasets/brique_a/dataset.yaml
+
+# Start from yolo11m COCO weights (medium = good speed/accuracy tradeoff
+# for fine-tuning on small dataset; yolo11s = lighter if needed)
+model: yolo11m.pt
+
+# Training params
+epochs: 100
+batch: 8           # M5 Pro 48GB peut probablement faire 16, ajuster si OOM
+imgsz: 1024        # YOLO door/window v3 a marché à 1024, on garde
+device: mps        # Mac M5 — fallback CPU si MPS instable
+
+# Early stopping (ultralytics)
+patience: 20       # stop si val/mAP50 ne progresse pas pendant 20 epochs
+
+# Output
+project: runs/detect
+name: brique_a_v1
+
+# Hyperparams critiques pour fine-tuning sur petit dataset
+lr0: 0.001         # 10x plus petit que default (0.01) — on part de poids COCO
+lrf: 0.01          # final LR = lr0 * lrf (cosine schedule)
+warmup_epochs: 3
+weight_decay: 0.0005
+
+# Augmentations (defaults YOLO sont bons pour plans architecturaux)
+hsv_h: 0.015       # variations couleur faibles (plans souvent noir/blanc/gris)
+hsv_s: 0.3
+hsv_v: 0.2
+degrees: 0.0       # PAS de rotation aléatoire (plans architecturaux orientés)
+translate: 0.1
+scale: 0.3
+fliplr: 0.5        # flip horizontal OK (plan peut être miroir)
+flipud: 0.0        # pas de flip vertical (sol/plafond cohérence)
+mosaic: 1.0        # mosaic augmentation utile pour petit dataset
