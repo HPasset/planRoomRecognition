@@ -1,0 +1,5 @@
+frontend/node_modules/
+frontend/.vite/
+*.log
+# Note : frontend/dist/ EST commité pour que l'app marche sans npm install/build.
+# À chaque modification du frontend, rebuild via : cd frontend && npm run build
