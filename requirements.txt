@@ -1,6 +1,5 @@
 annotated-types==0.7.0
 colorama==0.4.6
-easyocr==1.7.2
 filelock==3.20.3
 fsspec==2026.1.0
 ImageIO==2.37.2
