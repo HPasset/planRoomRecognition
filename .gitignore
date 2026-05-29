@@ -19,3 +19,4 @@ wandb/
 
 # Generated presentations (kept in docs/ via the .py generator + .md source)
 *.pptx
+.superpowers/
