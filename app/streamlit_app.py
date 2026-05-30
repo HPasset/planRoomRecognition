@@ -240,6 +240,7 @@ def build_devis_lines_initial(
                 "Qté": int(qty),
                 "Prix HT (€)": float(prices_ht.get(eq, 0.0)),
                 "_manual": False,  # généré par le moteur NFC (vs ajout manuel)
+                "_equip_ids": [],  # IDs équipements drag-droppés (Phase 4+)
             })
             next_id += 1
     return lines, next_id
@@ -482,6 +483,21 @@ def render_overlay(
                      WALL_LINE_COLOR_BGR, thickness=3, lineType=cv2.LINE_AA)
 
     return blended
+
+
+def _find_devis_line_idx(
+    df_devis: pd.DataFrame,
+    room: str,
+    equip_type: str,
+) -> int | None:
+    """Cherche l'index de la ligne (Pièce=room, Équipement=label) dans df_devis."""
+    equip_label = EQUIP_TYPES[equip_type]["label"]
+    matches = df_devis[
+        (df_devis["Pièce"] == room) & (df_devis["Équipement"] == equip_label)
+    ]
+    if len(matches) == 0:
+        return None
+    return matches.index[0]
 
 
 def main():
@@ -1081,10 +1097,60 @@ def main():
         # Update session_state avec les nouvelles positions / suppressions / ajouts
         st.session_state[pastilles_state_key] = new_pastilles
 
-        # Sync équipements (Phase 3) : positions + suppressions hors-image.
-        # Ajouts via palette en Phase 4. Persiste AVANT tout st.rerun().
+        # Sync équipements (Phase 3+4) : positions, suppressions hors-image,
+        # ajouts via palette. Persiste AVANT tout st.rerun().
         new_equipments = canvas_state.get("equipments", [])
+        current_equipments = st.session_state[equipments_state_key]
+        current_eq_ids = {e["id"] for e in current_equipments}
+        new_eq_ids = {e["id"] for e in new_equipments}
+
+        added_palette_eqs = [
+            e for e in new_equipments
+            if e["id"] not in current_eq_ids and e["id"].startswith("new_")
+        ]
+        removed_eq_ids = current_eq_ids - new_eq_ids
+
         st.session_state[equipments_state_key] = new_equipments
+
+        # Phase 4 : sync devis pour ajouts (palette) et suppressions
+        devis_lines_key = f"devis_lines_{img_hash}"
+
+        if added_palette_eqs and devis_lines_key in st.session_state:
+            df_devis = st.session_state[devis_lines_key].copy()
+            for eq in added_palette_eqs:
+                line_idx = _find_devis_line_idx(df_devis, eq["room"], eq["type"])
+                if line_idx is not None:
+                    df_devis.at[line_idx, "Qté"] = int(
+                        df_devis.at[line_idx, "Qté"]
+                    ) + 1
+                    if "_equip_ids" in df_devis.columns:
+                        ids_list = list(df_devis.at[line_idx, "_equip_ids"] or [])
+                        ids_list.append(eq["id"])
+                        df_devis.at[line_idx, "_equip_ids"] = ids_list
+                else:
+                    st.warning(
+                        f"Équipement ajouté pour pièce '{eq['room']}' qui n'a "
+                        "pas de ligne devis correspondante. Ajoute-la d'abord "
+                        "via le tableau devis."
+                    )
+            st.session_state[devis_lines_key] = df_devis
+            st.rerun()
+
+        if removed_eq_ids and devis_lines_key in st.session_state:
+            df_devis = st.session_state[devis_lines_key].copy()
+            for line_idx in df_devis.index:
+                if "_equip_ids" not in df_devis.columns:
+                    break
+                ids_list = list(df_devis.at[line_idx, "_equip_ids"] or [])
+                kept_ids = [i for i in ids_list if i not in removed_eq_ids]
+                n_removed = len(ids_list) - len(kept_ids)
+                if n_removed > 0:
+                    df_devis.at[line_idx, "_equip_ids"] = kept_ids
+                    df_devis.at[line_idx, "Qté"] = int(
+                        df_devis.at[line_idx, "Qté"]
+                    ) - n_removed
+            st.session_state[devis_lines_key] = df_devis
+            st.rerun()
 
         # Phase 2 : sync DataFrame éditeur : drop rows dont pastille supprimée
         if removed_pids and df_editor_current is not None \
@@ -1256,6 +1322,11 @@ def main():
                         if not bool(existing_devis.loc[idx, "_manual"]):
                             continue
                         rid = int(existing_devis.loc[idx, "_id"])
+                        backup_ids = []
+                        if "_equip_ids" in existing_devis.columns:
+                            backup_ids = list(
+                                existing_devis.loc[idx, "_equip_ids"] or []
+                            )
                         manual_rows.append({
                             "Pièce": st.session_state.get(
                                 f"{dl_key}_piece_{rid}",
@@ -1273,6 +1344,7 @@ def main():
                                 f"{dl_key}_ht_{rid}",
                                 float(existing_devis.loc[idx, "Prix HT (€)"]),
                             )),
+                            "_equip_ids": backup_ids,
                         })
                     if manual_rows:
                         st.session_state[manual_backup_key] = manual_rows
@@ -1544,6 +1616,7 @@ def main():
                         "Qté": 1,
                         "Prix HT (€)": float(DEFAULT_PRICES_HT[first_eq_enum]),
                         "_manual": True,
+                        "_equip_ids": [],
                     }])
                     # Insertion intelligente : après la DERNIÈRE ligne de
                     # cette pièce dans le tableau

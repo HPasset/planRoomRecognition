@@ -585,31 +585,98 @@ const EquipmentChip = memo(function EquipmentChip({
 });
 
 /**
- * Chip palette équipement (statique pour Phase 2, drag-in en Phase 4).
+ * Chip palette équipement — drag-in actif depuis Phase 4.
  */
 interface EquipmentPaletteChipProps {
   pt: EquipmentPaletteType;
+  onDropOnCanvas: (
+    pt: EquipmentPaletteType,
+    clientX: number,
+    clientY: number,
+  ) => void;
 }
 
 const EquipmentPaletteChip = memo(function EquipmentPaletteChip({
-  pt,
+  pt, onDropOnCanvas,
 }: EquipmentPaletteChipProps) {
+  const elRef = useRef<HTMLDivElement>(null);
+  const ptRef = useRef(pt);
+  ptRef.current = pt;
+  const onDropRef = useRef(onDropOnCanvas);
+  onDropRef.current = onDropOnCanvas;
+
+  useEffect(() => {
+    const el = elRef.current;
+    if (!el) return;
+    let isDragging = false;
+    let ghost: HTMLDivElement | null = null;
+
+    const createGhost = (cx: number, cy: number) => {
+      const g = document.createElement("div");
+      g.style.cssText = `
+        position: fixed; left: ${cx}px; top: ${cy}px;
+        transform: translate(-50%, -50%);
+        padding: 5px; border-radius: 50%;
+        background: rgba(255,255,255,0.85);
+        border: 2px dashed ${ptRef.current.color};
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 9999; pointer-events: none; opacity: 0.85;
+      `;
+      g.innerHTML = `<svg width="22" height="22" viewBox="0 0 40 40">
+        <circle cx="20" cy="20" r="13" fill="white"
+                stroke="${ptRef.current.color}" stroke-width="2.5"/>
+      </svg>`;
+      document.body.appendChild(g);
+      return g;
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      e.preventDefault(); e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      isDragging = true;
+      ghost = createGhost(e.clientX, e.clientY);
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isDragging || !ghost) return;
+      ghost.style.left = `${e.clientX}px`;
+      ghost.style.top = `${e.clientY}px`;
+    };
+    const cleanup = (e: PointerEvent) => {
+      if (!isDragging) return;
+      isDragging = false;
+      try { el.releasePointerCapture(e.pointerId); } catch {}
+      if (ghost) { ghost.remove(); ghost = null; }
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (!isDragging) return;
+      const finalX = e.clientX, finalY = e.clientY;
+      cleanup(e);
+      onDropRef.current(ptRef.current, finalX, finalY);
+    };
+
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("pointercancel", cleanup);
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("pointercancel", cleanup);
+      if (ghost) ghost.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div
+      ref={elRef}
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
+        display: "flex", alignItems: "center", gap: 6,
         padding: "6px 10px",
-        border: `2px solid ${pt.color}`,
-        borderRadius: 18,
-        background: "white",
-        cursor: "grab",
-        touchAction: "none",
-        fontSize: 11,
-        fontWeight: 600,
-        color: "#333",
-        whiteSpace: "nowrap",
+        border: `2px solid ${pt.color}`, borderRadius: 18,
+        background: "white", cursor: "grab", touchAction: "none",
+        fontSize: 11, fontWeight: 600, color: "#333", whiteSpace: "nowrap",
       }}
       title={`Drag sur le plan pour ajouter un(e) ${pt.label}`}
     >
@@ -743,6 +810,40 @@ function PastilleCanvas({ args }: ComponentProps) {
       }
     },
     [],
+  );
+
+  // Handler drop depuis palette équipement (ajout instance équipement)
+  const handlePaletteEquipDrop = useCallback(
+    (pt: EquipmentPaletteType, clientX: number, clientY: number) => {
+      const img = imgRef.current;
+      if (!img) return;
+      const rect = img.getBoundingClientRect();
+      const insideX = clientX >= rect.left && clientX <= rect.right;
+      const insideY = clientY >= rect.top && clientY <= rect.bottom;
+      if (!insideX || !insideY) return;
+      const scaleX = rect.width / image_width;
+      const scaleY = rect.height / image_height;
+      const x = Math.round((clientX - rect.left) / scaleX);
+      const y = Math.round((clientY - rect.top) / scaleY);
+      let closestRoom = "";
+      let minDist = Infinity;
+      for (const p of pastilles) {
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (d < minDist) { minDist = d; closestRoom = p.label; }
+      }
+      const newId = `new_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      setEquipmentsState((prev) => [
+        ...prev,
+        {
+          id: newId,
+          type: pt.type,
+          room: closestRoom || "Autre",
+          x, y,
+          color: pt.color,
+        },
+      ]);
+    },
+    [image_width, image_height, pastilles],
   );
 
   // Handler drop depuis palette (ajout nouvelle pastille)
@@ -913,7 +1014,11 @@ function PastilleCanvas({ args }: ComponentProps) {
             🔌 Drag depuis cette palette pour ajouter un équipement :
           </div>
           {equip_palette.map((pt) => (
-            <EquipmentPaletteChip key={pt.type} pt={pt} />
+            <EquipmentPaletteChip
+              key={pt.type}
+              pt={pt}
+              onDropOnCanvas={handlePaletteEquipDrop}
+            />
           ))}
         </div>
       )}
