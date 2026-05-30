@@ -126,6 +126,26 @@ def _bbox_center(bbox: list[list[int]]) -> tuple[int, int]:
 
 
 DEFAULT_CHECKPOINT = "runs/segmentation/stage_b_finetune_v1/checkpoints/best.pt"
+
+# === YOLO Brique A (détection meubles, 9 classes NFC) — purement visuel ===
+YOLO_BRIQUE_A_CHECKPOINT = "runs/detect/runs/detect/brique_a_v1/weights/best.pt"
+BATIA_YOLO_CLASSES = [
+    "Bathtub", "Shower", "WashBasin", "Toilet", "KitchenSink",
+    "Cooktop", "Refrigerator", "WashingMachine", "Bed",
+]
+# Palette distincte de DEVIS_LABEL_TO_COLOR (qui colore les pièces) — ici on
+# colore les MEUBLES. Couleurs vives pour bien voir les bbox sur le plan.
+YOLO_BRIQUE_A_COLORS: dict[str, str] = {
+    "Bathtub":        _rgb_to_css((70, 130, 180)),    # bleu acier
+    "Shower":         _rgb_to_css((0, 191, 255)),     # bleu ciel
+    "WashBasin":      _rgb_to_css((64, 224, 208)),    # turquoise
+    "Toilet":         _rgb_to_css((138, 43, 226)),    # violet
+    "KitchenSink":    _rgb_to_css((50, 205, 50)),     # vert lime
+    "Cooktop":        _rgb_to_css((220, 20, 60)),     # rouge crimson
+    "Refrigerator":   _rgb_to_css((105, 105, 105)),   # gris foncé
+    "WashingMachine": _rgb_to_css((255, 140, 0)),     # orange
+    "Bed":            _rgb_to_css((160, 82, 45)),     # marron
+}
 ALPHA = 0.40
 CONFLICT_COLOR_BGR = (0, 0, 255)        # red for conflict outlines
 OCR_BOX_COLOR_BGR = (0, 200, 0)         # green for OCR bboxes
@@ -144,6 +164,40 @@ def load_seg_model(checkpoint_path: str, image_size: int) -> SegmentationInferen
 @st.cache_resource(show_spinner=False)
 def load_paddleocr_engine() -> PaddleOCREngine:
     return PaddleOCREngine(langs=["fr"])
+
+
+@st.cache_resource(show_spinner=False)
+def load_yolo_brique_a_model(checkpoint_path: str):
+    """Lazy-load YOLO Brique A (Ultralytics). Cached resource = chargé une fois."""
+    from ultralytics import YOLO
+    return YOLO(checkpoint_path)
+
+
+@st.cache_data(show_spinner=False)
+def run_yolo_brique_a(image_bytes: bytes, conf_threshold: float) -> list[dict]:
+    """Inférence YOLO Brique A sur l'image. Retourne liste de bbox + classes.
+
+    Cached sur (image bytes, conf) → re-run uniquement si l'image ou le seuil
+    change (les filtres par classe sont appliqués côté UI APRÈS l'inférence).
+    """
+    model = load_yolo_brique_a_model(YOLO_BRIQUE_A_CHECKPOINT)
+    img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    results = model.predict(source=img, conf=conf_threshold, verbose=False)
+    out: list[dict] = []
+    for r in results:
+        if r.boxes is None:
+            continue
+        for box in r.boxes:
+            cls_id = int(box.cls.item())
+            cls_name = model.names[cls_id]
+            conf_score = float(box.conf.item())
+            x1, y1, x2, y2 = [float(v) for v in box.xyxy[0].cpu().numpy()]
+            out.append({
+                "class_name": cls_name,
+                "confidence": conf_score,
+                "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+            })
+    return out
 
 
 def build_devis_lines_initial(
@@ -612,6 +666,34 @@ def main():
                      "et la ligne de mur candidate."
             )
 
+        # === Détection meubles YOLO (Brique A) — purement visuel ===
+        st.markdown("---")
+        st.header("🛠 Détection meubles YOLO (optionnel)")
+        enable_yolo = st.checkbox(
+            "Activer la détection des meubles",
+            value=False,
+            help="Lance YOLO11m Brique A pour détecter les meubles "
+                 "(Bathtub, Toilet, Bed, etc.) en overlay sur le plan. "
+                 "Purement visuel, n'affecte pas le devis ni les pastilles."
+        )
+        yolo_conf_threshold = 0.25
+        yolo_class_checks: dict[str, bool] = {
+            name: True for name in BATIA_YOLO_CLASSES
+        }
+        if enable_yolo:
+            yolo_conf_threshold = st.slider(
+                "Seuil confiance YOLO", 0.05, 1.0, 0.25, 0.05,
+                help="Masque les détections YOLO sous ce seuil."
+            )
+            st.markdown("**Classes à afficher**")
+            cols = st.columns(2)
+            for i, cls_name in enumerate(BATIA_YOLO_CLASSES):
+                with cols[i % 2]:
+                    yolo_class_checks[cls_name] = st.checkbox(
+                        cls_name, value=True, key=f"yolo_cls_{cls_name}"
+                    )
+        yolo_allowed_classes = {n for n, on in yolo_class_checks.items() if on}
+
         st.markdown("---")
         st.header("💡 Devis NFC")
         st.caption(
@@ -932,6 +1014,34 @@ def main():
                 "stroke": f"rgb({r},{g},{b})",
             })
 
+    # YOLO Brique A — bbox meubles (purement visuel, n'affecte pas devis).
+    # Si activé : run inference (cached), filtre par classes cochées + couleur.
+    # Si checkpoint absent : warning discret + skip (pas de crash).
+    yolo_boxes: list[dict] = []
+    if enable_yolo:
+        yolo_ckpt = Path(YOLO_BRIQUE_A_CHECKPOINT)
+        if not yolo_ckpt.exists():
+            st.warning(
+                f"⚠ Checkpoint YOLO Brique A introuvable : `{yolo_ckpt}`. "
+                "Train le modèle (`python scripts/train_yolo.py "
+                "--config configs/yolo/brique_a.yaml`) ou décoche l'option."
+            )
+        else:
+            raw_boxes = run_yolo_brique_a(img_bytes, yolo_conf_threshold)
+            yolo_boxes = [
+                {
+                    "class_name": b["class_name"],
+                    "x1": int(b["x1"]), "y1": int(b["y1"]),
+                    "x2": int(b["x2"]), "y2": int(b["y2"]),
+                    "confidence": round(float(b["confidence"]), 2),
+                    "color": YOLO_BRIQUE_A_COLORS.get(
+                        b["class_name"], "rgb(255,0,255)",
+                    ),
+                }
+                for b in raw_boxes
+                if b["class_name"] in yolo_allowed_classes
+            ]
+
     canvas_state = pastille_canvas(
         image_bytes=encoded.tobytes(),
         image_width=image_w,
@@ -939,6 +1049,7 @@ def main():
         initial_pastilles=st.session_state[pastilles_state_key],
         palette=palette,
         seg_polygons=seg_polygons,
+        yolo_boxes=yolo_boxes,
         key=f"pastille_canvas_{img_hash}",
     )
 
@@ -1440,7 +1551,74 @@ def main():
                     )
                     st.rerun()
 
-            # Headers (8 cols : Pièce, ✏️, Équipement, Qté, HT, TTC, Total, Suppr.)
+            df_devis = st.session_state[devis_lines_key]
+
+            # === Groupement par pièce (préserve l'ordre d'apparition dans df) ===
+            pieces_in_order: list[str] = []
+            _seen: set[str] = set()
+            for idx in df_devis.index:
+                p = str(df_devis.loc[idx, "Pièce"])
+                if p not in _seen:
+                    pieces_in_order.append(p)
+                    _seen.add(p)
+
+            # State expanded/collapsed par pièce (default = tout déroulé)
+            expanded_key = f"{devis_lines_key}_expanded"
+            if expanded_key not in st.session_state:
+                st.session_state[expanded_key] = {}
+            # Ajoute les nouvelles pièces / supprime les obsolètes
+            st.session_state[expanded_key] = {
+                p: st.session_state[expanded_key].get(p, True)
+                for p in pieces_in_order
+            }
+
+            # === Toggle global au-dessus du tableau ===
+            # Pattern on_change : le callback ne fire QUE quand l'user clique
+            # explicitement sur la checkbox. Les autres interactions (chevron
+            # individuel, ajout/suppression de ligne, etc.) ne déclenchent PAS
+            # le callback → pas d'override silencieux des états individuels.
+            #
+            # Le state de la checkbox est force-sync à l'état réel AVANT le
+            # render : si toutes les pièces sont déroulées → cochée, sinon
+            # décochée. Cohérence visuelle automatique.
+            toggle_key = f"{devis_lines_key}_all_expand"
+            all_expanded_now = (
+                bool(pieces_in_order)
+                and all(st.session_state[expanded_key].values())
+            )
+            st.session_state[toggle_key] = all_expanded_now
+
+            # Callback fired uniquement sur click utilisateur sur la checkbox
+            _pieces_for_cb = list(pieces_in_order)
+            _exp_key_for_cb = expanded_key
+
+            def _on_global_toggle():
+                new_val = bool(st.session_state[toggle_key])
+                for p in _pieces_for_cb:
+                    st.session_state[_exp_key_for_cb][p] = new_val
+
+            st.checkbox(
+                "📂 Tout dérouler  /  📁 Tout enrouler",
+                key=toggle_key,
+                on_change=_on_global_toggle,
+                help="Coche pour afficher tous les équipements de toutes les "
+                     "pièces. Décoche pour ne voir que les noms de pièces "
+                     "(plus lisible si beaucoup de pièces). Tu peux aussi "
+                     "replier/déplier chaque pièce individuellement via le "
+                     "chevron ▶/▼ devant son nom.",
+            )
+
+            # === Calcul totaux GLOBAUX (depuis DataFrame, inclut pièces collapsed) ===
+            total_ht = 0.0
+            total_ttc = 0.0
+            for idx in df_devis.index:
+                qty_i = int(df_devis.loc[idx, "Qté"])
+                ht_i = float(df_devis.loc[idx, "Prix HT (€)"])
+                ttc_i = compute_ttc(ht_i, devis_tva_rate)
+                total_ht += qty_i * ht_i
+                total_ttc += qty_i * ttc_i
+
+            # === Headers (8 cols : Pièce, ✏️, Équipement, Qté, HT, TTC, Total, Suppr.) ===
             COL_PROPS_DEVIS = [2, 0.3, 3, 1, 1, 1, 1, 1]
             h = st.columns(COL_PROPS_DEVIS)
             h[0].markdown("**Pièce**")
@@ -1453,83 +1631,142 @@ def main():
             h[7].markdown("**Suppr.**")
             st.divider()
 
-            df_devis = st.session_state[devis_lines_key]
             ids_to_delete: list[int] = []
-            total_ht = 0.0
-            total_ttc = 0.0
 
-            for idx in df_devis.index:
-                row = df_devis.loc[idx]
-                rid = int(row["_id"])
-                is_manual = bool(row.get("_manual", False))
-                cols = st.columns(COL_PROPS_DEVIS)
-                # Widgets avec on_change → DataFrame est sync instantanément
-                with cols[0]:
-                    st.selectbox(
-                        "Pièce", existing_pieces,
-                        key=f"{devis_lines_key}_piece_{rid}",
-                        on_change=_on_devis_edit,
-                        args=(rid, "piece", "Pièce", str),
-                        label_visibility="collapsed",
-                    )
-                with cols[1]:
-                    if is_manual:
+            # === Rendering : un header par pièce + (conditionnellement) ses rows ===
+            for piece_name in pieces_in_order:
+                is_expanded = st.session_state[expanded_key].get(piece_name, True)
+                piece_rows = df_devis[df_devis["Pièce"] == piece_name]
+                n_equipts = len(piece_rows)
+
+                # Sous-total TTC de la pièce
+                piece_total_ttc = 0.0
+                for idx in piece_rows.index:
+                    qty_i = int(piece_rows.loc[idx, "Qté"])
+                    ht_i = float(piece_rows.loc[idx, "Prix HT (€)"])
+                    piece_total_ttc += qty_i * compute_ttc(ht_i, devis_tva_rate)
+
+                # --- Row "header pièce" (chevron bouton tertiary + nom texte) ---
+                hcols = st.columns(COL_PROPS_DEVIS)
+                chevron = "▼" if is_expanded else "▶"
+                with hcols[0]:
+                    # Sous-colonnes : chevron (bouton sans bordure) + nom (texte)
+                    btn_col, name_col = st.columns([1, 4])
+                    with btn_col:
+                        if st.button(
+                            chevron,
+                            key=f"toggle_{devis_lines_key}_{piece_name}",
+                            type="tertiary",  # pas de bordure ni fond
+                            help=("Replier" if is_expanded else "Déplier")
+                                 + f" les {n_equipts} équipement(s)",
+                        ):
+                            st.session_state[expanded_key][piece_name] = not is_expanded
+                            st.rerun()
+                    with name_col:
                         st.markdown(
-                            "<div style='padding-top: 0.5rem; "
-                            "text-align: center; color: #888;' "
-                            "title='Ajouté manuellement'>✏️</div>",
+                            f"<div style='padding-top: 0.5rem;'>"
+                            f"<b>{piece_name}</b></div>",
                             unsafe_allow_html=True,
                         )
-                    else:
-                        st.markdown("")
-                with cols[2]:
-                    st.selectbox(
-                        "Équipement", EQUIPMENT_LABELS_LIST,
-                        key=f"{devis_lines_key}_eq_{rid}",
-                        on_change=_on_devis_edit,
-                        args=(rid, "eq", "Équipement", str),
-                        label_visibility="collapsed",
-                    )
-                with cols[3]:
-                    qty = st.number_input(
-                        "Qté", min_value=0, max_value=99, step=1,
-                        key=f"{devis_lines_key}_qty_{rid}",
-                        on_change=_on_devis_edit,
-                        args=(rid, "qty", "Qté", int),
-                        label_visibility="collapsed",
-                    )
-                with cols[4]:
-                    prix_ht = st.number_input(
-                        "HT", min_value=0.0, max_value=10000.0, step=1.0,
-                        format="%.2f",
-                        key=f"{devis_lines_key}_ht_{rid}",
-                        on_change=_on_devis_edit,
-                        args=(rid, "ht", "Prix HT (€)", float),
-                        label_visibility="collapsed",
-                    )
-                prix_ttc = compute_ttc(prix_ht, devis_tva_rate)
-                total_line_ht = qty * prix_ht
-                total_line_ttc = qty * prix_ttc
-                with cols[5]:
+                with hcols[2]:
+                    plural = "s" if n_equipts > 1 else ""
                     st.markdown(
-                        f"<div style='padding-top: 0.5rem;'>{prix_ttc:.2f}</div>",
+                        f"<div style='padding-top: 0.5rem; color: #666;'>"
+                        f"<em>{n_equipts} équipement{plural}</em></div>",
                         unsafe_allow_html=True,
                     )
-                with cols[6]:
-                    st.markdown(
-                        f"<div style='padding-top: 0.5rem;'>"
-                        f"<b>{total_line_ttc:.2f}</b></div>",
-                        unsafe_allow_html=True,
-                    )
-                with cols[7]:
-                    if st.button(
-                        "🗑️", key=f"{devis_lines_key}_del_{rid}",
-                        help="Supprimer cette ligne du devis",
-                    ):
-                        ids_to_delete.append(rid)
 
-                total_ht += total_line_ht
-                total_ttc += total_line_ttc
+                # --- Rows équipement (uniquement si pièce déroulée) ---
+                if not is_expanded:
+                    continue
+
+                for idx in piece_rows.index:
+                    row = piece_rows.loc[idx]
+                    rid = int(row["_id"])
+                    is_manual = bool(row.get("_manual", False))
+                    cols = st.columns(COL_PROPS_DEVIS)
+                    # Widgets avec on_change → DataFrame est sync instantanément
+                    with cols[0]:
+                        st.selectbox(
+                            "Pièce", existing_pieces,
+                            key=f"{devis_lines_key}_piece_{rid}",
+                            on_change=_on_devis_edit,
+                            args=(rid, "piece", "Pièce", str),
+                            label_visibility="collapsed",
+                        )
+                    with cols[1]:
+                        if is_manual:
+                            st.markdown(
+                                "<div style='padding-top: 0.5rem; "
+                                "text-align: center; color: #888;' "
+                                "title='Ajouté manuellement'>✏️</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown("")
+                    with cols[2]:
+                        st.selectbox(
+                            "Équipement", EQUIPMENT_LABELS_LIST,
+                            key=f"{devis_lines_key}_eq_{rid}",
+                            on_change=_on_devis_edit,
+                            args=(rid, "eq", "Équipement", str),
+                            label_visibility="collapsed",
+                        )
+                    with cols[3]:
+                        st.number_input(
+                            "Qté", min_value=0, max_value=99, step=1,
+                            key=f"{devis_lines_key}_qty_{rid}",
+                            on_change=_on_devis_edit,
+                            args=(rid, "qty", "Qté", int),
+                            label_visibility="collapsed",
+                        )
+                    with cols[4]:
+                        st.number_input(
+                            "HT", min_value=0.0, max_value=10000.0, step=1.0,
+                            format="%.2f",
+                            key=f"{devis_lines_key}_ht_{rid}",
+                            on_change=_on_devis_edit,
+                            args=(rid, "ht", "Prix HT (€)", float),
+                            label_visibility="collapsed",
+                        )
+                    # Lecture depuis le DataFrame (sync via on_change) — évite
+                    # de dépendre de la valeur de retour des widgets, qui peut
+                    # être désynchronisée transitoirement après un toggle.
+                    qty_disp = int(df_devis.loc[idx, "Qté"])
+                    ht_disp = float(df_devis.loc[idx, "Prix HT (€)"])
+                    prix_ttc = compute_ttc(ht_disp, devis_tva_rate)
+                    total_line_ttc = qty_disp * prix_ttc
+                    with cols[5]:
+                        st.markdown(
+                            f"<div style='padding-top: 0.5rem;'>{prix_ttc:.2f}</div>",
+                            unsafe_allow_html=True,
+                        )
+                    with cols[6]:
+                        st.markdown(
+                            f"<div style='padding-top: 0.5rem;'>"
+                            f"<b>{total_line_ttc:.2f}</b></div>",
+                            unsafe_allow_html=True,
+                        )
+                    with cols[7]:
+                        if st.button(
+                            "🗑️", key=f"{devis_lines_key}_del_{rid}",
+                            help="Supprimer cette ligne du devis",
+                        ):
+                            ids_to_delete.append(rid)
+
+                # --- Sous-total pièce, aligné dans la col Total TTC ---
+                # Affiché APRÈS les équipements (donc visible uniquement quand
+                # la pièce est déroulée). Alignement = même colonne que les
+                # Total TTC des lignes (col 6) → s'aligne verticalement avec
+                # les valeurs 180.00, 60.00, etc.
+                stcols = st.columns(COL_PROPS_DEVIS)
+                with stcols[6]:
+                    st.markdown(
+                        f"<div style='padding-top: 0.3rem; padding-bottom: 0.3rem; "
+                        f"color: #1f3a5f;'>"
+                        f"<b>{piece_total_ttc:.2f} €</b></div>",
+                        unsafe_allow_html=True,
+                    )
 
             # Process deletions
             if ids_to_delete:
