@@ -89,3 +89,36 @@ def generate_equipments_from_devis_global(
                     "color": color,
                 })
     return instances
+
+
+def smart_placement_fallback_cluster(
+    room_center: tuple[int, int],
+    n_equipments: int,
+    image_size: tuple[int, int],
+    spacing: int = 30,
+    drift: int = 5,
+    random_seed: int | None = None,
+) -> list[tuple[int, int]]:
+    """Placement fallback en grille compacte autour de room_center.
+
+    Utilisé quand la segmentation Mask2Former n'est pas active (pas de
+    polygone disponible pour la pièce). Grille carrée centrée sur
+    room_center, espacement `spacing`, drift aléatoire ±`drift` par
+    instance. Positions clampées dans la bbox image.
+    """
+    rng = random.Random(random_seed)
+    image_w, image_h = image_size
+    cx, cy = room_center
+    grid_side = max(1, math.ceil(math.sqrt(n_equipments)))
+    positions: list[tuple[int, int]] = []
+    for i in range(n_equipments):
+        col = i % grid_side
+        row = i // grid_side
+        ox = (col - (grid_side - 1) / 2) * spacing
+        oy = (row - (grid_side - 1) / 2) * spacing
+        dx = rng.randint(-drift, drift)
+        dy = rng.randint(-drift, drift)
+        x = max(0, min(image_w, int(cx + ox + dx)))
+        y = max(0, min(image_h, int(cy + oy + dy)))
+        positions.append((x, y))
+    return positions

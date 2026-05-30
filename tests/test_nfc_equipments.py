@@ -1,5 +1,6 @@
 """Tests pour le module nfc_equipments (logique métier équipements électriques)."""
 from __future__ import annotations
+import math
 import re
 from collections import Counter
 
@@ -8,6 +9,7 @@ from src.planrec.nfc_equipments import (
     NFC_TO_EQUIP_TYPE,
     generate_equipment_id,
     generate_equipments_from_devis_global,
+    smart_placement_fallback_cluster,
 )
 from src.planrec.nfc_rules import EquipmentType, compute_devis_global
 
@@ -93,3 +95,44 @@ def test_generate_equipments_room_label_with_index():
     assert room_counts["Chambre 1"] > 0
     assert room_counts["Chambre 2"] > 0
     assert room_counts["Chambre 1"] == room_counts["Chambre 2"]
+
+
+def test_fallback_cluster_inside_image_bbox():
+    """Les positions générées sont toutes dans la bbox image."""
+    image_w, image_h = 1000, 800
+    room_center = (500, 400)
+    n_equipments = 10
+    positions = smart_placement_fallback_cluster(
+        room_center=room_center,
+        n_equipments=n_equipments,
+        image_size=(image_w, image_h),
+        random_seed=42,
+    )
+    assert len(positions) == n_equipments
+    for x, y in positions:
+        assert 0 <= x <= image_w
+        assert 0 <= y <= image_h
+
+
+def test_fallback_cluster_is_deterministic_with_seed():
+    """Même seed → mêmes positions (reproductibilité tests)."""
+    args = {"room_center": (500, 400), "n_equipments": 5,
+            "image_size": (1000, 800), "random_seed": 123}
+    p1 = smart_placement_fallback_cluster(**args)
+    p2 = smart_placement_fallback_cluster(**args)
+    assert p1 == p2
+
+
+def test_fallback_cluster_close_to_room_center():
+    """Les positions sont dans un rayon raisonnable autour du centre."""
+    room_center = (500, 400)
+    positions = smart_placement_fallback_cluster(
+        room_center=room_center,
+        n_equipments=5,
+        image_size=(1000, 800),
+        random_seed=42,
+    )
+    for x, y in positions:
+        dist = math.hypot(x - room_center[0], y - room_center[1])
+        # Grille 3x3 spacing 30px + drift 5px → max ~50px du centre
+        assert dist < 100
