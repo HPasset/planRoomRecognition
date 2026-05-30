@@ -31,6 +31,19 @@ export interface SegPolygon {
   stroke: string;        // ex: "rgb(255,200,100)"
 }
 
+/**
+ * Bbox YOLO Brique A (meubles). Coords image originale (px). Non interactif.
+ */
+export interface YoloBox {
+  class_name: string;    // ex: "Bed", "Toilet"
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  confidence: number;    // 0-1
+  color: string;         // ex: "rgb(160,82,45)"
+}
+
 interface Args {
   image_data: string;
   image_width: number;
@@ -38,6 +51,7 @@ interface Args {
   initial_pastilles: Pastille[];
   palette: PaletteType[];
   seg_polygons?: SegPolygon[];
+  yolo_boxes?: YoloBox[];
 }
 
 interface DropResult {
@@ -350,6 +364,7 @@ function PastilleCanvas({ args }: ComponentProps) {
     initial_pastilles,
     palette,
     seg_polygons,
+    yolo_boxes,
   } = typedArgs;
 
   const [pastilles, setPastilles] = useState<Pastille[]>(initial_pastilles ?? []);
@@ -482,6 +497,67 @@ function PastilleCanvas({ args }: ComponentProps) {
                 vectorEffect="non-scaling-stroke"
               />
             ))}
+          </svg>
+        )}
+        {/* SVG overlay YOLO meubles (au-dessus segmentation, sous pastilles).
+            Rectangles + labels. Non interactif (pointer-events: none). */}
+        {yolo_boxes && yolo_boxes.length > 0 && (
+          <svg
+            className="pc-yolo-overlay"
+            viewBox={`0 0 ${image_width} ${image_height}`}
+            preserveAspectRatio="none"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              pointerEvents: "none",
+              zIndex: 0,
+            }}
+          >
+            {yolo_boxes.map((b, idx) => {
+              const w = b.x2 - b.x1;
+              const h = b.y2 - b.y1;
+              const label = `${b.class_name} ${b.confidence.toFixed(2)}`;
+              // Hauteur du fond du label proportionnelle à la taille image
+              // (les coords sont en image px, le SVG scale auto)
+              const labelH = Math.max(14, image_height * 0.018);
+              const labelFontSize = Math.max(10, image_height * 0.013);
+              return (
+                <g key={`yolo_${idx}`}>
+                  <rect
+                    x={b.x1}
+                    y={b.y1}
+                    width={w}
+                    height={h}
+                    fill="none"
+                    stroke={b.color}
+                    strokeWidth={2}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {/* Fond du label pour lisibilité */}
+                  <rect
+                    x={b.x1}
+                    y={b.y1 - labelH}
+                    width={Math.min(w, label.length * labelFontSize * 0.6)}
+                    height={labelH}
+                    fill={b.color}
+                    opacity={0.85}
+                  />
+                  <text
+                    x={b.x1 + 3}
+                    y={b.y1 - labelH * 0.25}
+                    fontSize={labelFontSize}
+                    fill="white"
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                  >
+                    {label}
+                  </text>
+                </g>
+              );
+            })}
           </svg>
         )}
         {pastilles.map((p) => (

@@ -56,6 +56,7 @@ def pastille_canvas(
     initial_pastilles: list[dict],
     palette: list[dict],
     seg_polygons: list[dict] | None = None,
+    yolo_boxes: list[dict] | None = None,
     key: str | None = None,
 ) -> dict | None:
     """Render le canvas pastilles + palette.
@@ -70,6 +71,10 @@ def pastille_canvas(
         seg_polygons: optionnel, liste de dicts {type_name, points, fill,
             stroke} où points = [[x,y], ...] en coord image originale.
             Dessinés en overlay SVG sous les pastilles (non interactifs).
+        yolo_boxes: optionnel, liste de dicts {class_name, x1, y1, x2, y2,
+            confidence, color} en coord image originale. Dessinés en overlay
+            SVG (rectangles + labels) au-dessus des polygones segmentation
+            mais SOUS les pastilles. Non interactifs. Purement visuel.
         key: clé Streamlit unique pour le component
 
     Returns:
@@ -97,6 +102,7 @@ def pastille_canvas(
         initial_pastilles=initial_pastilles,
         palette=palette,
         seg_polygons=seg_polygons or [],
+        yolo_boxes=yolo_boxes or [],
         key=key,
         default=None,
     )
