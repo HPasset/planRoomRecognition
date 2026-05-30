@@ -20,7 +20,9 @@ _ROOM_ALIASES = {
     "cuisine": ["cuisine"],
     "salon": ["salon"],
     "sejour": ["sejour", "sej", "sejour/salon", "piece de vie",
-                "espace de vie"],
+                "espace de vie",
+                "espace a vivre", "espaces a vivre",  # "Espace à vivre"
+                ],
     "chambre": [
         "chambre", "ch", "chb",
         "suite", "suite parentale", "suite parents",
@@ -37,7 +39,9 @@ _ROOM_ALIASES = {
     "wc": ["wc", "toilette", "toilettes"],
     "entree": ["entree", "vestibule"],
     "couloir": ["couloir", "galerie"],
-    "degagement": ["degagement", "degag", "dgm", "dgt", "deg"],
+    "degagement": ["degagement", "degag", "dgm", "dgt", "deg",
+                    "hall", "hall d entree", "hall d'entree",
+                    ],
     "bureau": ["bureau"],
     "cellier": [
         "cellier",
@@ -49,13 +53,18 @@ _ROOM_ALIASES = {
         "buanderie cellier",
         # Rangement / stockage — abréviations FR pour zone de stockage
         "rang", "rangement", "rangements", "stockage",
+        # Abri de jardin (annexe extérieure servant de stockage)
+        "abri de jardin", "abri jardin", "abris de jardin",
     ],
     "buanderie": ["buanderie", "lingerie"],
     "dressing": ["dressing", "dress"],
     "garage": ["garage"],
     "balcon": ["balcon", "loggia"],
     "terrasse": ["terrasse", "allee", "allee piétonne", "allee couverte",
-                  "porche", "auvent"],
+                  "porche", "auvent",
+                  # Annexe extérieure (mappe à Outdoor via FR_TO_C2)
+                  "carport", "car port",
+                  ],
     "palier": ["palier"],
     "nid": ["nid"],
 }
