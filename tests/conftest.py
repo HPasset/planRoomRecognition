@@ -207,3 +207,25 @@ def find_button_by_label(at, label_substr: str):
 def find_selectboxes_by_label(at, exact_label: str):
     """Retourne tous les selectbox dont le label matche exactement."""
     return [s for s in at.selectbox if s.label == exact_label]
+
+
+def get_equipments_state(at):
+    """Return equipments_state list in session_state, or None if absent."""
+    try:
+        img_hash = find_img_hash(at)
+    except ValueError:
+        return None
+    key = f"equipments_state_{img_hash}"
+    try:
+        return at.session_state[key]
+    except KeyError:
+        return None
+
+
+def enable_equipments_toggle(at):
+    """Activate the 'Afficher les équipements sur le plan' sidebar checkbox."""
+    cb = next(
+        c for c in at.checkbox
+        if "Afficher les équipements" in c.label
+    )
+    cb.set_value(True).run()

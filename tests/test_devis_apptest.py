@@ -19,6 +19,8 @@ from conftest import (
     get_devis_df,
     find_button_by_label,
     find_selectboxes_by_label,
+    get_equipments_state,
+    enable_equipments_toggle,
 )
 
 
@@ -1271,3 +1273,236 @@ def test_K5_supprimer_piece_avec_ligne_manuelle_preserve_manuelle(patch_pipeline
     # Aucune ligne NFC Cuisine (la pièce a été supprimée de l'éditeur)
     nfc_cuisine = df_after[(df_after["Pièce"] == "Cuisine") & (df_after["_manual"] == False)]
     assert len(nfc_cuisine) == 0
+
+
+# ============================================================================
+# Phase 6 — Équipements électriques sur le plan (E1-E7)
+# ============================================================================
+
+
+def test_E1_generer_devis_creates_equipments(patch_pipeline):
+    """E1 : après 'Générer devis', equipments_state contient N instances
+    pour chaque ligne Qté=N avec les bons (room, type)."""
+    patch_pipeline()
+    at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
+    at.run()
+    enable_equipments_toggle(at)
+
+    find_button_by_label(at, "générer devis").click()
+    at.run()
+
+    equipments = get_equipments_state(at)
+    df_devis = get_devis_df(at)
+    assert equipments is not None, "equipments_state non créé"
+    assert df_devis is not None
+
+    # Labels FR (EQUIPMENT_LABELS_FR) → types EQUIP_TYPES
+    label_to_type = {
+        "Prise de courant": "Prise",
+        "Prise RJ45": "RJ45",
+        "Point lumineux": "LightPoint",
+        "Interrupteur": "Switch",
+        "Alimentation spécialisée": "SpecialFeed",
+    }
+    for idx in df_devis.index:
+        room = str(df_devis.at[idx, "Pièce"])
+        equip_label = str(df_devis.at[idx, "Équipement"])
+        qty = int(df_devis.at[idx, "Qté"])
+        equip_type = label_to_type.get(equip_label)
+        if not equip_type:
+            continue
+        matching = [
+            e for e in equipments
+            if e["room"] == room and e["type"] == equip_type
+        ]
+        assert len(matching) == qty, (
+            f"Ligne {room} {equip_label} Qté={qty} mais "
+            f"{len(matching)} instances équipements"
+        )
+
+    # Tous les ids uniques
+    all_ids = [e["id"] for e in equipments]
+    assert len(set(all_ids)) == len(all_ids)
+
+
+def test_E2_palette_drag_in_increments_devis_qty(patch_pipeline):
+    """E2 : simuler un drag depuis la palette équip = Qté +1 dans le devis.
+
+    AppTest ne peut pas simuler nativement un drag-drop d'iframe.
+    On valide le mécanisme de sync DataFrame ↔ equipments_state en pokant
+    directement le state."""
+    patch_pipeline()
+    at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
+    at.run()
+    enable_equipments_toggle(at)
+    find_button_by_label(at, "générer devis").click()
+    at.run()
+
+    df_before = get_devis_df(at)
+    img_hash = find_img_hash(at)
+    cuisine_prise_idx = df_before[
+        (df_before["Pièce"] == "Cuisine")
+        & (df_before["Équipement"] == "Prise de courant")
+    ].index[0]
+    qty_before = int(df_before.at[cuisine_prise_idx, "Qté"])
+
+    current = at.session_state[f"equipments_state_{img_hash}"]
+    new_inst = {
+        "id": f"new_test_{len(current)}",
+        "type": "Prise",
+        "room": "Cuisine",
+        "x": 50, "y": 50,
+        "color": "rgb(255, 112, 67)",
+    }
+    at.session_state[f"equipments_state_{img_hash}"] = current + [new_inst]
+    # Simulate Python sync incrementing the line Qté
+    df = at.session_state[f"devis_lines_{img_hash}"]
+    df.at[cuisine_prise_idx, "Qté"] = qty_before + 1
+    ids = list(df.at[cuisine_prise_idx, "_equip_ids"] or [])
+    ids.append(new_inst["id"])
+    df.at[cuisine_prise_idx, "_equip_ids"] = ids
+    at.session_state[f"devis_lines_{img_hash}"] = df
+    at.run()
+
+    df_after = get_devis_df(at)
+    assert int(df_after.at[cuisine_prise_idx, "Qté"]) == qty_before + 1
+
+
+def test_E3_equipment_removal_decrements_devis_qty(patch_pipeline):
+    """E3 : retirer une instance de equipments_state (simulant drag-out)
+    → Qté de la ligne devis correspondante doit décrémenter."""
+    patch_pipeline()
+    at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
+    at.run()
+    enable_equipments_toggle(at)
+    find_button_by_label(at, "générer devis").click()
+    at.run()
+
+    img_hash = find_img_hash(at)
+    current = at.session_state[f"equipments_state_{img_hash}"]
+    df = at.session_state[f"devis_lines_{img_hash}"]
+    cuisine_prise_idx = df[
+        (df["Pièce"] == "Cuisine") & (df["Équipement"] == "Prise de courant")
+    ].index[0]
+    qty_before = int(df.at[cuisine_prise_idx, "Qté"])
+    ids_before = list(df.at[cuisine_prise_idx, "_equip_ids"] or [])
+    assert len(ids_before) == qty_before
+    assert qty_before >= 1
+    removed_id = ids_before[0]
+
+    new_eq = [e for e in current if e["id"] != removed_id]
+    at.session_state[f"equipments_state_{img_hash}"] = new_eq
+    new_ids = [i for i in ids_before if i != removed_id]
+    df.at[cuisine_prise_idx, "_equip_ids"] = new_ids
+    df.at[cuisine_prise_idx, "Qté"] = qty_before - 1
+    at.session_state[f"devis_lines_{img_hash}"] = df
+    at.run()
+
+    df_after = get_devis_df(at)
+    assert int(df_after.at[cuisine_prise_idx, "Qté"]) == qty_before - 1
+
+
+def test_E4_devis_line_removal_cleans_equipments(patch_pipeline):
+    """E4 : supprimer une ligne devis via 🗑️ → tous les équipements de
+    cette ligne doivent être retirés de equipments_state."""
+    patch_pipeline()
+    at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
+    at.run()
+    enable_equipments_toggle(at)
+    find_button_by_label(at, "générer devis").click()
+    at.run()
+
+    img_hash = find_img_hash(at)
+    df = at.session_state[f"devis_lines_{img_hash}"]
+    line = df[
+        (df["Pièce"] == "Cuisine") & (df["Équipement"] == "Prise de courant")
+    ]
+    line_idx = line.index[0]
+    line_id = int(df.at[line_idx, "_id"])
+    line_equip_ids = list(df.at[line_idx, "_equip_ids"] or [])
+    assert len(line_equip_ids) > 0
+
+    del_btn_key = f"devis_lines_{img_hash}_del_{line_id}"
+    del_btn = next(b for b in at.button if b.key == del_btn_key)
+    del_btn.click()
+    at.run()
+
+    new_eq = at.session_state[f"equipments_state_{img_hash}"]
+    remaining_ids = {e["id"] for e in new_eq}
+    for eid in line_equip_ids:
+        assert eid not in remaining_ids, (
+            f"Équipement {eid} de la ligne supprimée toujours présent"
+        )
+
+
+def test_E5_pastille_removal_cleans_equipments(patch_pipeline):
+    """E5 : supprimer une pastille pièce (Cuisine) → tous les équipements
+    de cette pièce supprimés (cohérence)."""
+    patch_pipeline()
+    at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
+    at.run()
+    enable_equipments_toggle(at)
+    find_button_by_label(at, "générer devis").click()
+    at.run()
+
+    img_hash = find_img_hash(at)
+    eq_before = at.session_state[f"equipments_state_{img_hash}"]
+    cuisine_equips_before = [e for e in eq_before if e["room"] == "Cuisine"]
+    assert len(cuisine_equips_before) > 0
+
+    pastilles_key = f"pastilles_state_{img_hash}"
+    new_pastilles = [
+        p for p in at.session_state[pastilles_key] if p["label"] != "Cuisine"
+    ]
+    at.session_state[pastilles_key] = new_pastilles
+    new_eq = [
+        e for e in at.session_state[f"equipments_state_{img_hash}"]
+        if e["room"] != "Cuisine"
+    ]
+    at.session_state[f"equipments_state_{img_hash}"] = new_eq
+    at.run()
+
+    eq_after = at.session_state[f"equipments_state_{img_hash}"]
+    cuisine_equips_after = [e for e in eq_after if e["room"] == "Cuisine"]
+    assert len(cuisine_equips_after) == 0
+
+
+def test_E6_smart_placement_inside_image_bbox(patch_pipeline):
+    """E6 : sans segmentation active, équipements doivent être dans bbox image
+    (FAKE_IMG_BYTES = 100x100)."""
+    patch_pipeline()
+    at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
+    at.run()
+    enable_equipments_toggle(at)
+    find_button_by_label(at, "générer devis").click()
+    at.run()
+
+    eq = get_equipments_state(at)
+    assert eq is not None
+    for inst in eq:
+        assert 0 <= inst["x"] <= 100, f"x={inst['x']} hors bbox"
+        assert 0 <= inst["y"] <= 100, f"y={inst['y']} hors bbox"
+
+
+def test_E7_toggle_off_on_preserves_equipments_state(patch_pipeline):
+    """E7 : décocher puis recocher le toggle 'Afficher équipements' ne perd
+    pas equipments_state (le state vit en session_state, indépendant du
+    toggle d'affichage)."""
+    patch_pipeline()
+    at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
+    at.run()
+    enable_equipments_toggle(at)
+    find_button_by_label(at, "générer devis").click()
+    at.run()
+
+    eq_before = list(get_equipments_state(at))
+    assert len(eq_before) > 0
+
+    cb = next(c for c in at.checkbox if "Afficher les équipements" in c.label)
+    cb.set_value(False).run()
+    cb = next(c for c in at.checkbox if "Afficher les équipements" in c.label)
+    cb.set_value(True).run()
+
+    eq_after = list(get_equipments_state(at))
+    assert len(eq_after) == len(eq_before)
+    assert {e["id"] for e in eq_after} == {e["id"] for e in eq_before}

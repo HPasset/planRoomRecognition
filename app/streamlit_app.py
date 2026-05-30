@@ -35,7 +35,7 @@ from src.planrec.nfc_pricing import (
     TVA_OPTIONS,
     compute_ttc,
 )
-from src.planrec.nfc_equipments import EQUIP_TYPES
+from src.planrec.nfc_equipments import EQUIP_TYPES, NFC_TO_EQUIP_TYPE
 from src.planrec.nfc_rules import compute_devis_global
 from src.planrec.ocr.engine_paddle import PaddleOCREngine
 from src.planrec.ocr.postprocess import postprocess_ocr_items
@@ -485,13 +485,26 @@ def render_overlay(
     return blended
 
 
+_EQUIP_TYPE_TO_DEVIS_LABEL: dict[str, str] = {
+    equip_key: EQUIPMENT_LABELS_FR[nfc_enum]
+    for nfc_enum, equip_key in NFC_TO_EQUIP_TYPE.items()
+}
+
+
 def _find_devis_line_idx(
     df_devis: pd.DataFrame,
     room: str,
     equip_type: str,
 ) -> int | None:
-    """Cherche l'index de la ligne (Pièce=room, Équipement=label) dans df_devis."""
-    equip_label = EQUIP_TYPES[equip_type]["label"]
+    """Cherche l'index de la ligne (Pièce=room, Équipement=label) dans df_devis.
+
+    Le devis utilise les libellés longs FR (EQUIPMENT_LABELS_FR : "Prise de
+    courant"…), pas les libellés courts d'EQUIP_TYPES ("Prise courant"). On
+    fait le mapping via NFC_TO_EQUIP_TYPE inverse.
+    """
+    equip_label = _EQUIP_TYPE_TO_DEVIS_LABEL.get(equip_type)
+    if equip_label is None:
+        return None
     matches = df_devis[
         (df_devis["Pièce"] == room) & (df_devis["Équipement"] == equip_label)
     ]
@@ -773,6 +786,30 @@ def main():
                         cls_name, value=True, key=f"yolo_cls_{cls_name}"
                     )
         yolo_allowed_classes = {n for n, on in yolo_class_checks.items() if on}
+
+        # === Affichage équipements électriques sur le plan (Phase 6) ===
+        st.markdown("---")
+        st.header("🔌 Équipements électriques (optionnel)")
+        enable_equipments = st.checkbox(
+            "Afficher les équipements sur le plan",
+            value=False,
+            help="Affiche les icônes équipements (style NF EN 60617 stylisé) "
+                 "sur le plan, avec drag-drop pour ajuster leurs positions. "
+                 "Purement visuel, sync avec le devis quantitatif.",
+        )
+        equip_type_filter: dict[str, bool] = {
+            name: True for name in EQUIP_TYPES.keys()
+        }
+        if enable_equipments:
+            st.markdown("**Types à afficher**")
+            cols = st.columns(2)
+            for i, _equip_key in enumerate(EQUIP_TYPES.keys()):
+                with cols[i % 2]:
+                    equip_type_filter[_equip_key] = st.checkbox(
+                        EQUIP_TYPES[_equip_key]["label"], value=True,
+                        key=f"equip_show_{_equip_key}",
+                    )
+        equip_allowed_types = {k for k, on in equip_type_filter.items() if on}
 
         st.markdown("---")
         st.header("💡 Devis NFC")
@@ -1141,7 +1178,13 @@ def main():
         palette=palette,
         seg_polygons=seg_polygons,
         yolo_boxes=yolo_boxes,
-        equipments=st.session_state[equipments_state_key],
+        equipments=(
+            [
+                e for e in st.session_state[equipments_state_key]
+                if e["type"] in equip_allowed_types
+            ]
+            if enable_equipments else []
+        ),
         equip_palette=equip_palette_for_canvas,
         key=f"pastille_canvas_{img_hash}",
     )
@@ -2052,6 +2095,18 @@ def main():
 
             # Process deletions
             if ids_to_delete:
+                # Phase 6 : cleanup équipements liés aux lignes supprimées
+                equip_ids_to_remove: set[str] = set()
+                for rid in ids_to_delete:
+                    rows = df_devis[df_devis["_id"] == rid]
+                    for _, row in rows.iterrows():
+                        equip_ids_to_remove.update(row.get("_equip_ids", []) or [])
+                if equip_ids_to_remove and equipments_state_key in st.session_state:
+                    st.session_state[equipments_state_key] = [
+                        e for e in st.session_state[equipments_state_key]
+                        if e["id"] not in equip_ids_to_remove
+                    ]
+
                 new_df = df_devis[~df_devis["_id"].isin(ids_to_delete)].reset_index(drop=True)
                 st.session_state[devis_lines_key] = new_df
                 for rid in ids_to_delete:
