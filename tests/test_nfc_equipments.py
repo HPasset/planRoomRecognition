@@ -1,10 +1,12 @@
 """Tests pour le module nfc_equipments (logique métier équipements électriques)."""
 from __future__ import annotations
+import re
 import pytest
 
 from src.planrec.nfc_equipments import (
     EQUIP_TYPES,
     NFC_TO_EQUIP_TYPE,
+    generate_equipment_id,
 )
 from src.planrec.nfc_rules import EquipmentType
 
@@ -28,3 +30,15 @@ def test_nfc_to_equip_type_covers_all_enums():
     assert NFC_TO_EQUIP_TYPE[EquipmentType.SPECIAL_FEED] == "SpecialFeed"
     # Tous les enums sont mappés
     assert len(NFC_TO_EQUIP_TYPE) == 5
+
+
+def test_generate_equipment_id_format():
+    """ID = 'eq_' + 8 hex chars."""
+    eid = generate_equipment_id()
+    assert re.fullmatch(r"eq_[0-9a-f]{8}", eid)
+
+
+def test_generate_equipment_id_unique():
+    """100 appels successifs → 100 IDs distincts (proba collision négligeable)."""
+    ids = {generate_equipment_id() for _ in range(100)}
+    assert len(ids) == 100

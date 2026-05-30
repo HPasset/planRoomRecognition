@@ -43,3 +43,8 @@ NFC_TO_EQUIP_TYPE: dict[EquipmentType, str] = {
     EquipmentType.SWITCH: "Switch",
     EquipmentType.SPECIAL_FEED: "SpecialFeed",
 }
+
+
+def generate_equipment_id() -> str:
+    """Génère un ID unique 'eq_<8 hex>' (~4 milliards de valeurs distinctes)."""
+    return f"eq_{secrets.token_hex(4)}"
