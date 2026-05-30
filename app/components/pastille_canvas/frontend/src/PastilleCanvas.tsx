@@ -440,23 +440,130 @@ function SvgEquipIcon({ svgId, color, size = 22 }: SvgEquipIconProps) {
 }
 
 /**
+ * Résultat d'un drop d'équipement (passé au handler Python via onEquipDrop).
+ */
+interface EquipDropResult {
+  finalImgX: number;
+  finalImgY: number;
+  insideImage: boolean;
+}
+
+/**
  * Chip équipement positionné sur le plan (en % image, comme les pastilles).
- * Pour l'instant statique — drag ajouté en Phase 3.
+ * Drag activé en Phase 3 — pattern pointer events natifs (idem PastilleChip).
  */
 interface EquipmentChipProps {
   equipment: EquipmentInstance;
   svgId: string;
   imageWidth: number;
   imageHeight: number;
+  imgRef: React.RefObject<HTMLImageElement>;
+  onDrop: (id: string, drop: EquipDropResult) => void;
 }
 
 const EquipmentChip = memo(function EquipmentChip({
-  equipment, svgId, imageWidth, imageHeight,
+  equipment, svgId, imageWidth, imageHeight, imgRef, onDrop,
 }: EquipmentChipProps) {
+  const elRef = useRef<HTMLDivElement>(null);
+  const equipmentRef = useRef(equipment);
+  equipmentRef.current = equipment;
+  const onDropRef = useRef(onDrop);
+  onDropRef.current = onDrop;
+  const imgRefRef = useRef(imgRef);
+  imgRefRef.current = imgRef;
+  const imageWidthRef = useRef(imageWidth);
+  imageWidthRef.current = imageWidth;
+  const imageHeightRef = useRef(imageHeight);
+  imageHeightRef.current = imageHeight;
+
+  useEffect(() => {
+    const el = elRef.current;
+    if (!el) return;
+    let isDragging = false;
+    let startClientX = 0, startClientY = 0;
+    let lastDx = 0, lastDy = 0;
+
+    const onPointerDown = (e: PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      isDragging = true;
+      startClientX = e.clientX;
+      startClientY = e.clientY;
+      lastDx = 0; lastDy = 0;
+      el.style.zIndex = "20";
+      el.style.opacity = "0.85";
+      el.style.cursor = "grabbing";
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isDragging) return;
+      lastDx = e.clientX - startClientX;
+      lastDy = e.clientY - startClientY;
+      el.style.transform =
+        `translate3d(${lastDx}px, ${lastDy}px, 0) translate(-50%, -50%)`;
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (!isDragging) return;
+      isDragging = false;
+      try { el.releasePointerCapture(e.pointerId); } catch {}
+      const img = imgRefRef.current.current;
+      const imgW = imageWidthRef.current;
+      const imgH = imageHeightRef.current;
+      if (!img) {
+        el.style.zIndex = "2"; el.style.opacity = "1";
+        el.style.cursor = "grab"; el.style.transform = "translate(-50%, -50%)";
+        return;
+      }
+      const rect = img.getBoundingClientRect();
+      const scaleX = rect.width / imgW;
+      const scaleY = rect.height / imgH;
+      const dxImg = lastDx / scaleX;
+      const dyImg = lastDy / scaleY;
+      const finalImgX = Math.round(equipmentRef.current.x + dxImg);
+      const finalImgY = Math.round(equipmentRef.current.y + dyImg);
+      const insideImage =
+        finalImgX >= 0 && finalImgX <= imgW
+        && finalImgY >= 0 && finalImgY <= imgH;
+      if (insideImage) {
+        const newLeftPct = (finalImgX / imgW) * 100;
+        const newTopPct = (finalImgY / imgH) * 100;
+        el.style.left = `${newLeftPct}%`;
+        el.style.top = `${newTopPct}%`;
+      }
+      el.style.transform = "translate(-50%, -50%)";
+      el.style.zIndex = "2";
+      el.style.opacity = "1";
+      el.style.cursor = "grab";
+      onDropRef.current(equipmentRef.current.id, {
+        finalImgX, finalImgY, insideImage,
+      });
+    };
+    const onPointerCancel = (e: PointerEvent) => {
+      if (!isDragging) return;
+      isDragging = false;
+      try { el.releasePointerCapture(e.pointerId); } catch {}
+      el.style.zIndex = "2"; el.style.opacity = "1";
+      el.style.cursor = "grab"; el.style.transform = "translate(-50%, -50%)";
+    };
+
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("pointercancel", onPointerCancel);
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("pointercancel", onPointerCancel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const leftPercent = (equipment.x / imageWidth) * 100;
   const topPercent = (equipment.y / imageHeight) * 100;
   return (
     <div
+      ref={elRef}
       style={{
         position: "absolute",
         left: `${leftPercent}%`,
@@ -531,6 +638,9 @@ function PastilleCanvas({ args }: ComponentProps) {
   } = typedArgs;
 
   const [pastilles, setPastilles] = useState<Pastille[]>(initial_pastilles ?? []);
+  const [equipmentsState, setEquipmentsState] = useState<EquipmentInstance[]>(
+    equipments ?? []
+  );
 
   const imgRef = useRef<HTMLImageElement>(null);
   const lastSentJsonRef = useRef<string>("");
@@ -543,15 +653,16 @@ function PastilleCanvas({ args }: ComponentProps) {
   // setFrameHeight : seulement quand contenu change vraiment
   useEffect(() => {
     Streamlit.setFrameHeight();
-  }, [pastilles.length, palette.length, image_data]);
+  }, [pastilles.length, equipmentsState.length, palette.length, image_data]);
 
-  // Notify Python à chaque changement réel de pastilles
+  // Notify Python à chaque changement réel de pastilles ou équipements
   useEffect(() => {
-    const json = JSON.stringify(pastilles);
+    const payload = { pastilles, equipments: equipmentsState };
+    const json = JSON.stringify(payload);
     if (json === lastSentJsonRef.current) return;
     lastSentJsonRef.current = json;
-    Streamlit.setComponentValue({ pastilles });
-  }, [pastilles]);
+    Streamlit.setComponentValue(payload);
+  }, [pastilles, equipmentsState]);
 
   // Re-sync depuis Python : SEULEMENT add/remove, jamais les positions.
   // React owns les positions des pastilles. Si Python overwrite, il ré-injecte
@@ -593,6 +704,40 @@ function PastilleCanvas({ args }: ComponentProps) {
         setPastilles((prev) =>
           prev.map((p) =>
             p.id === id ? { ...p, x: drop.finalImgX, y: drop.finalImgY } : p,
+          ),
+        );
+      }
+    },
+    [],
+  );
+
+  // Re-sync équipements depuis Python : SEULEMENT add/remove, jamais les
+  // positions (React owns positions, idem pastilles). Voir commentaire détaillé
+  // sur le sync pastilles ci-dessus.
+  useEffect(() => {
+    const incoming = equipments ?? [];
+    const incomingIds = new Set(incoming.map((e) => e.id));
+    setEquipmentsState((prev) => {
+      const currentIds = new Set(prev.map((e) => e.id));
+      if (incomingIds.size === currentIds.size
+          && [...incomingIds].every((id) => currentIds.has(id))) {
+        return prev;
+      }
+      const filtered = prev.filter((e) => incomingIds.has(e.id));
+      const added = incoming.filter((e) => !currentIds.has(e.id));
+      return [...filtered, ...added];
+    });
+  }, [equipments]);
+
+  // Handler drop équipement existant (commit position ou suppression hors plan)
+  const handleEquipmentDrop = useCallback(
+    (id: string, drop: EquipDropResult) => {
+      if (!drop.insideImage) {
+        setEquipmentsState((prev) => prev.filter((e) => e.id !== id));
+      } else {
+        setEquipmentsState((prev) =>
+          prev.map((e) =>
+            e.id === id ? { ...e, x: drop.finalImgX, y: drop.finalImgY } : e,
           ),
         );
       }
@@ -738,14 +883,16 @@ function PastilleCanvas({ args }: ComponentProps) {
             onDrop={handlePastilleDrop}
           />
         ))}
-        {/* Équipements électriques (statiques, drag à venir Phase 3) */}
-        {equipments && equipments.length > 0 && equipments.map((eq) => (
+        {/* Équipements électriques (drag actif Phase 3) */}
+        {equipmentsState.length > 0 && equipmentsState.map((eq) => (
           <EquipmentChip
             key={eq.id}
             equipment={eq}
             svgId={equipSvgMap[eq.type] ?? eq.type}
             imageWidth={image_width}
             imageHeight={image_height}
+            imgRef={imgRef}
+            onDrop={handleEquipmentDrop}
           />
         ))}
       </div>

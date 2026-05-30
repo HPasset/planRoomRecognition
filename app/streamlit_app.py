@@ -1050,6 +1050,10 @@ def main():
                 if b["class_name"] in yolo_allowed_classes
             ]
 
+    equipments_state_key = f"equipments_state_{img_hash}"
+    if equipments_state_key not in st.session_state:
+        st.session_state[equipments_state_key] = []
+
     canvas_state = pastille_canvas(
         image_bytes=encoded.tobytes(),
         image_width=image_w,
@@ -1058,7 +1062,7 @@ def main():
         palette=palette,
         seg_polygons=seg_polygons,
         yolo_boxes=yolo_boxes,
-        equipments=[],
+        equipments=st.session_state[equipments_state_key],
         equip_palette=equip_palette_for_canvas,
         key=f"pastille_canvas_{img_hash}",
     )
@@ -1076,6 +1080,11 @@ def main():
 
         # Update session_state avec les nouvelles positions / suppressions / ajouts
         st.session_state[pastilles_state_key] = new_pastilles
+
+        # Sync équipements (Phase 3) : positions + suppressions hors-image.
+        # Ajouts via palette en Phase 4. Persiste AVANT tout st.rerun().
+        new_equipments = canvas_state.get("equipments", [])
+        st.session_state[equipments_state_key] = new_equipments
 
         # Phase 2 : sync DataFrame éditeur : drop rows dont pastille supprimée
         if removed_pids and df_editor_current is not None \
