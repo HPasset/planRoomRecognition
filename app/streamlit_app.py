@@ -500,6 +500,69 @@ def _find_devis_line_idx(
     return matches.index[0]
 
 
+def _make_smart_placer(
+    seg_result,
+    image_size: tuple[int, int],
+    pastilles_by_room: dict[str, tuple[int, int]],
+):
+    """Build a smart_placer(equip_type, room, idx, n_of_type) → (x, y) callback.
+
+    Uses polygon-based placement (smart_placement_with_polygon) when a
+    segmentation polygon contains the room's pastille position. Falls back
+    to a compact grid cluster around the pastille (smart_placement_fallback_cluster)
+    when no polygon is available (segmentation off or no containing polygon).
+
+    The polygon→room mapping is computed by point-in-polygon test : for each
+    pastille (x, y) of a known devis room label, we search seg_result.rooms
+    for the first polygon containing that point. This is robust because we
+    do NOT need to align rooms_input with seg_result.rooms by index/order.
+    """
+    from src.planrec.nfc_equipments import (
+        smart_placement_with_polygon,
+        smart_placement_fallback_cluster,
+    )
+
+    poly_by_room: dict[str, list[tuple[int, int]]] = {}
+    if seg_result is not None and getattr(seg_result, "rooms", None):
+        for room_label, (px, py) in pastilles_by_room.items():
+            for seg_room in seg_result.rooms:
+                poly = [(int(p[0]), int(p[1])) for p in seg_room.polygon]
+                if len(poly) < 3:
+                    continue
+                contour = np.array(poly, dtype=np.int32)
+                inside = cv2.pointPolygonTest(
+                    contour, (float(px), float(py)), False,
+                )
+                if inside >= 0:
+                    poly_by_room[room_label] = poly
+                    break
+
+    def placer(equip_type: str, room: str, idx: int, n_of_type: int):
+        polygon = poly_by_room.get(room)
+        if polygon and len(polygon) >= 3:
+            return smart_placement_with_polygon(
+                equip_type=equip_type,
+                polygon=polygon,
+                room_pastille_pos=pastilles_by_room.get(
+                    room, (image_size[0] // 2, image_size[1] // 2),
+                ),
+                instance_index=idx,
+                n_of_type=n_of_type,
+            )
+        center = pastilles_by_room.get(
+            room, (image_size[0] // 2, image_size[1] // 2),
+        )
+        positions = smart_placement_fallback_cluster(
+            room_center=center,
+            n_equipments=n_of_type,
+            image_size=image_size,
+            random_seed=hash((room, equip_type)) & 0xFFFFFFFF,
+        )
+        return positions[min(idx, len(positions) - 1)]
+
+    return placer
+
+
 def main():
     st.set_page_config(
         page_title="batIA — Détection de pièces",
@@ -1112,6 +1175,27 @@ def main():
 
         st.session_state[equipments_state_key] = new_equipments
 
+        # Phase 5 : sync pastille supprimée → suppr équipements de cette pièce.
+        # Quand l'utilisateur sort une pastille du plan, React ne cascade-pas
+        # la suppression des équipements de la pièce. On le fait ici côté
+        # Python (avant tout st.rerun()) en utilisant la map
+        # pastille_id → devis room label (indexée "Chambre 1", "Chambre 2")
+        # persistée à la génération du devis.
+        if removed_pids and equipments_state_key in st.session_state:
+            pid_to_room_map: dict[str, str] = st.session_state.get(
+                f"pastille_to_devis_room_{img_hash}", {}
+            )
+            removed_rooms: set[str] = {
+                pid_to_room_map[pid]
+                for pid in removed_pids
+                if pid in pid_to_room_map
+            }
+            if removed_rooms:
+                st.session_state[equipments_state_key] = [
+                    e for e in st.session_state[equipments_state_key]
+                    if e.get("room") not in removed_rooms
+                ]
+
         # Phase 4 : sync devis pour ajouts (palette) et suppressions
         devis_lines_key = f"devis_lines_{img_hash}"
 
@@ -1551,6 +1635,103 @@ def main():
                 st.session_state[devis_lines_key] = pd.DataFrame(lines)
                 st.session_state[devis_lines_nid_key] = next_id_after
 
+                # === Phase 5 : génération équipements + smart placement ===
+                # 1. Génère les instances équipements depuis devis (1 par unité Qté)
+                # 2. Calcule pastilles_by_room en reproduisant l'indexation
+                #    cat ("Chambre 1", "Chambre 2", …) faite par
+                #    generate_equipments_from_devis_global, en pairant
+                #    devis.per_room[i] avec rooms_input[i] (préservation d'ordre
+                #    garantie par compute_devis_global) → pastille_id via edited_df
+                # 3. Place chaque équipement via _make_smart_placer
+                # 4. Persiste equipments_state + remplit _equip_ids du DataFrame
+                from src.planrec.nfc_equipments import (
+                    generate_equipments_from_devis_global,
+                )
+
+                instances_raw = generate_equipments_from_devis_global(devis)
+
+                # Re-itère edited_df dans le MÊME ordre que la construction de
+                # rooms_input pour récupérer les _pastille_id alignés
+                rooms_input_pids: list[str | None] = []
+                for _idx, _row in edited_df.iterrows():
+                    if not _row.get("Inclure", False):
+                        continue
+                    _label = _row.get("Type")
+                    if not _label or _label not in DEVIS_LABEL_TO_PARAMS:
+                        continue
+                    _pid = _row.get("_pastille_id")
+                    rooms_input_pids.append(
+                        str(_pid) if _pid is not None and not pd.isna(_pid)
+                        else None
+                    )
+
+                # Pos par pastille_id depuis session_state
+                pastille_pos_by_pid: dict[str, tuple[int, int]] = {
+                    str(p["id"]): (int(p["x"]), int(p["y"]))
+                    for p in st.session_state[pastilles_state_key]
+                }
+
+                # Reproduit l'indexation NFCCategory.value ("Chambre 1", …)
+                # appliquée par generate_equipments_from_devis_global
+                _cat_total: dict[str, int] = {}
+                for _rd in devis.per_room:
+                    _c = _rd.nfc_category.value
+                    _cat_total[_c] = _cat_total.get(_c, 0) + 1
+                _cat_seen: dict[str, int] = {}
+                pastilles_by_room: dict[str, tuple[int, int]] = {}
+                # Mapping pastille_id → devis room label, persisté pour la
+                # cascade-suppression (Phase 5.3) lors d'un drag-out pastille
+                pid_to_devis_room: dict[str, str] = {}
+                for _i, _rd in enumerate(devis.per_room):
+                    _c = _rd.nfc_category.value
+                    _cat_seen[_c] = _cat_seen.get(_c, 0) + 1
+                    _room_label = (
+                        f"{_c} {_cat_seen[_c]}" if _cat_total[_c] > 1 else _c
+                    )
+                    _pid = rooms_input_pids[_i] if _i < len(rooms_input_pids) else None
+                    if _pid and _pid in pastille_pos_by_pid:
+                        pastilles_by_room[_room_label] = pastille_pos_by_pid[_pid]
+                        pid_to_devis_room[_pid] = _room_label
+                st.session_state[f"pastille_to_devis_room_{img_hash}"] = (
+                    pid_to_devis_room
+                )
+
+                placer = _make_smart_placer(
+                    seg_result=result if enable_segmentation else None,
+                    image_size=(image_w, image_h),
+                    pastilles_by_room=pastilles_by_room,
+                )
+
+                type_seen: dict[tuple[str, str], int] = {}
+                type_total: dict[tuple[str, str], int] = {}
+                for _inst in instances_raw:
+                    _k = (_inst["room"], _inst["type"])
+                    type_total[_k] = type_total.get(_k, 0) + 1
+                for _inst in instances_raw:
+                    _k = (_inst["room"], _inst["type"])
+                    _idx_t = type_seen.get(_k, 0)
+                    type_seen[_k] = _idx_t + 1
+                    _x, _y = placer(
+                        _inst["type"], _inst["room"], _idx_t, type_total[_k],
+                    )
+                    _inst["x"] = int(_x)
+                    _inst["y"] = int(_y)
+
+                st.session_state[equipments_state_key] = instances_raw
+
+                # Remplit _equip_ids sur les lignes auto-générées du devis
+                df_devis_new = st.session_state[devis_lines_key]
+                ids_by_line: dict[int, list[str]] = {}
+                for _inst in instances_raw:
+                    _line_idx = _find_devis_line_idx(
+                        df_devis_new, _inst["room"], _inst["type"],
+                    )
+                    if _line_idx is not None:
+                        ids_by_line.setdefault(_line_idx, []).append(_inst["id"])
+                for _line_idx, _ids in ids_by_line.items():
+                    df_devis_new.at[_line_idx, "_equip_ids"] = _ids
+                st.session_state[devis_lines_key] = df_devis_new
+
             # Liste des pièces existantes dans le devis (pour selectbox Pièce)
             df_devis_current = st.session_state[devis_lines_key]
             existing_pieces = sorted(
@@ -1589,6 +1770,15 @@ def main():
                 mask = df_cur["_id"] == rid
                 df_cur.loc[mask, df_field] = caster(st.session_state[wkey])
                 st.session_state[devis_lines_key] = df_cur
+
+            # Astuce UX V1 : auto-reconcile équipements après modif Qté
+            # reporté en V2 (simplification — éviter les surprises de
+            # repositionnement automatique en cours d'édition).
+            st.caption(
+                "ℹ Astuce : après modification de Qté, cliquer à nouveau sur "
+                "'Générer devis' pour repositionner les nouvelles icônes "
+                "équipements."
+            )
 
             # Layout "Ajouter une ligne" : selectbox pièce + bouton
             col_add_piece, col_add_btn, _ = st.columns([2, 1, 2])
