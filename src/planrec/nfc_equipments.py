@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import random
 import secrets
-from typing import TypedDict
+from typing import Callable, TypedDict
 
 from src.planrec.nfc_rules import EquipmentType, DevisGlobal
 
@@ -217,3 +217,51 @@ def smart_placement_with_polygon(
         return _point_on_perimeter_offset_inward(polygon, 0.55)
 
     return _polygon_centroid(polygon)
+
+
+def reconcile_equipments_for_line(
+    current_state: list[EquipmentInstance],
+    line_room: str,
+    line_type: str,
+    new_qty: int,
+    smart_placer: Callable[[str, str, int, int], tuple[int, int]],
+) -> tuple[list[EquipmentInstance], list[str]]:
+    """Synchronise les instances pour UNE ligne devis (pièce × type) après
+    changement de Qté.
+
+    smart_placer(equip_type, room, instance_index, n_of_type) → (x, y)
+
+    Returns:
+        (new_state, line_ids) où line_ids = liste des UUIDs pour cette ligne
+        après reconciliation (à écrire dans la colonne _equip_ids du DataFrame).
+    """
+    line_existing = [
+        i for i in current_state
+        if i["room"] == line_room and i["type"] == line_type
+    ]
+    others = [
+        i for i in current_state
+        if not (i["room"] == line_room and i["type"] == line_type)
+    ]
+
+    if new_qty >= len(line_existing):
+        keep = list(line_existing)
+        n_to_add = new_qty - len(line_existing)
+        color = EQUIP_TYPES[line_type]["color"]
+        for i in range(n_to_add):
+            idx_in_type = len(keep) + i
+            x, y = smart_placer(line_type, line_room, idx_in_type, new_qty)
+            keep.append({
+                "id": generate_equipment_id(),
+                "type": line_type,
+                "room": line_room,
+                "x": x,
+                "y": y,
+                "color": color,
+            })
+    else:
+        keep = line_existing[:new_qty]
+
+    new_state = others + keep
+    line_ids = [i["id"] for i in keep]
+    return (new_state, line_ids)

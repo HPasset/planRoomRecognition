@@ -7,8 +7,10 @@ from collections import Counter
 from src.planrec.nfc_equipments import (
     EQUIP_TYPES,
     NFC_TO_EQUIP_TYPE,
+    EquipmentInstance,
     generate_equipment_id,
     generate_equipments_from_devis_global,
+    reconcile_equipments_for_line,
     smart_placement_fallback_cluster,
     smart_placement_with_polygon,
 )
@@ -184,3 +186,90 @@ def test_switch_near_pastille():
         n_of_type=1,
     )
     assert pos[1] < 250
+
+
+def _make_inst(id_suffix: str, type_: str, room: str) -> EquipmentInstance:
+    return {
+        "id": f"eq_{id_suffix}",
+        "type": type_, "room": room, "x": 0, "y": 0,
+        "color": EQUIP_TYPES[type_]["color"],
+    }
+
+
+def test_reconcile_add_when_qty_increases():
+    """Qté 2 → 5 : 3 nouvelles instances ajoutées avec smart_placer."""
+    current = [
+        _make_inst("aaa", "Prise", "Cuisine"),
+        _make_inst("bbb", "Prise", "Cuisine"),
+    ]
+    placer_calls = []
+    def fake_placer(typ, room, idx, n):
+        placer_calls.append((typ, room, idx, n))
+        return (idx * 10, idx * 10)
+
+    new_state, line_ids = reconcile_equipments_for_line(
+        current_state=current,
+        line_room="Cuisine",
+        line_type="Prise",
+        new_qty=5,
+        smart_placer=fake_placer,
+    )
+    line_instances = [i for i in new_state if i["room"] == "Cuisine" and i["type"] == "Prise"]
+    assert len(line_instances) == 5
+    assert len(line_ids) == 5
+    assert len(placer_calls) == 3
+
+
+def test_reconcile_remove_when_qty_decreases():
+    """Qté 5 → 2 : 3 instances retirées (les dernières)."""
+    current = [
+        _make_inst("a", "Prise", "Cuisine"),
+        _make_inst("b", "Prise", "Cuisine"),
+        _make_inst("c", "Prise", "Cuisine"),
+        _make_inst("d", "Prise", "Cuisine"),
+        _make_inst("e", "Prise", "Cuisine"),
+    ]
+    new_state, line_ids = reconcile_equipments_for_line(
+        current_state=current,
+        line_room="Cuisine",
+        line_type="Prise",
+        new_qty=2,
+        smart_placer=lambda *args: (0, 0),
+    )
+    line_instances = [i for i in new_state if i["room"] == "Cuisine" and i["type"] == "Prise"]
+    assert len(line_instances) == 2
+    assert {i["id"] for i in line_instances} == {"eq_a", "eq_b"}
+
+
+def test_reconcile_preserves_other_lines():
+    """La reconciliation ne touche pas les autres lignes (autre room ou autre type)."""
+    current = [
+        _make_inst("a", "Prise", "Cuisine"),
+        _make_inst("b", "Prise", "Chambre 1"),
+        _make_inst("c", "LightPoint", "Cuisine"),
+    ]
+    new_state, _ = reconcile_equipments_for_line(
+        current_state=current,
+        line_room="Cuisine",
+        line_type="Prise",
+        new_qty=3,
+        smart_placer=lambda *args: (0, 0),
+    )
+    assert any(i["id"] == "eq_b" for i in new_state)
+    assert any(i["id"] == "eq_c" for i in new_state)
+
+
+def test_reconcile_qty_zero_removes_all():
+    current = [
+        _make_inst("a", "Prise", "Cuisine"),
+        _make_inst("b", "Prise", "Cuisine"),
+    ]
+    new_state, line_ids = reconcile_equipments_for_line(
+        current_state=current,
+        line_room="Cuisine",
+        line_type="Prise",
+        new_qty=0,
+        smart_placer=lambda *args: (0, 0),
+    )
+    assert all(not (i["room"] == "Cuisine" and i["type"] == "Prise") for i in new_state)
+    assert line_ids == []
