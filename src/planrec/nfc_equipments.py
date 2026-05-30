@@ -122,3 +122,97 @@ def smart_placement_fallback_cluster(
         y = max(0, min(image_h, int(cy + oy + dy)))
         positions.append((x, y))
     return positions
+
+
+def _polygon_centroid(polygon: list[tuple[int, int]]) -> tuple[int, int]:
+    """Barycentre simple (moyenne des sommets) — suffisant pour nos polygones convexes."""
+    n = len(polygon)
+    cx = sum(p[0] for p in polygon) // n
+    cy = sum(p[1] for p in polygon) // n
+    return (cx, cy)
+
+
+def _point_on_perimeter_offset_inward(
+    polygon: list[tuple[int, int]],
+    t: float,
+    offset_px: int = 15,
+) -> tuple[int, int]:
+    """Point à la position t (0..1) sur le périmètre, décalé `offset_px` vers
+    l'intérieur (vers le barycentre).
+
+    t = 0   → premier sommet
+    t = 0.5 → milieu du polygone
+    t = 1   → revient au premier sommet (boucle)
+    """
+    segs = []
+    total_len = 0.0
+    n = len(polygon)
+    for i in range(n):
+        a = polygon[i]
+        b = polygon[(i + 1) % n]
+        seg_len = math.hypot(b[0] - a[0], b[1] - a[1])
+        segs.append((a, b, seg_len))
+        total_len += seg_len
+    target = (t % 1.0) * total_len
+    cumul = 0.0
+    for a, b, seg_len in segs:
+        if cumul + seg_len >= target:
+            ratio = (target - cumul) / seg_len if seg_len > 0 else 0.0
+            px = a[0] + (b[0] - a[0]) * ratio
+            py = a[1] + (b[1] - a[1]) * ratio
+            break
+        cumul += seg_len
+    cx, cy = _polygon_centroid(polygon)
+    vx = cx - px
+    vy = cy - py
+    v_len = math.hypot(vx, vy)
+    if v_len > 0:
+        px += (vx / v_len) * offset_px
+        py += (vy / v_len) * offset_px
+    return (int(px), int(py))
+
+
+def smart_placement_with_polygon(
+    equip_type: str,
+    polygon: list[tuple[int, int]],
+    room_pastille_pos: tuple[int, int],
+    instance_index: int,
+    n_of_type: int,
+) -> tuple[int, int]:
+    """Placement intelligent basé sur le polygone de la pièce (segmentation).
+
+    - LightPoint : barycentre du polygone
+    - Switch : sur périmètre, position la plus proche de room_pastille_pos
+    - Prise : distribuée uniformément sur le périmètre
+    - RJ45 : sur le périmètre, à côté de la 1ère prise (t=0.05)
+    - SpecialFeed : sur le périmètre, à l'opposé de l'interrupteur (t=0.55)
+    """
+    if equip_type == "LightPoint":
+        return _polygon_centroid(polygon)
+
+    if equip_type == "Switch":
+        best = None
+        best_dist = float("inf")
+        for i in range(60):
+            t = i / 60.0
+            p = _point_on_perimeter_offset_inward(polygon, t)
+            d = math.hypot(
+                p[0] - room_pastille_pos[0],
+                p[1] - room_pastille_pos[1],
+            )
+            if d < best_dist:
+                best_dist = d
+                best = p
+        return best if best else _polygon_centroid(polygon)
+
+    if equip_type == "Prise":
+        t = (instance_index + 0.5) / max(1, n_of_type)
+        return _point_on_perimeter_offset_inward(polygon, t)
+
+    if equip_type == "RJ45":
+        return _point_on_perimeter_offset_inward(polygon, 0.05)
+
+    if equip_type == "SpecialFeed":
+        return _point_on_perimeter_offset_inward(polygon, 0.55)
+
+    return _polygon_centroid(polygon)

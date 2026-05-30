@@ -136,3 +136,53 @@ def test_fallback_cluster_close_to_room_center():
         dist = math.hypot(x - room_center[0], y - room_center[1])
         # Grille 3x3 spacing 30px + drift 5px → max ~50px du centre
         assert dist < 100
+
+
+from src.planrec.nfc_equipments import smart_placement_with_polygon
+
+
+# Polygone rectangulaire simple pour tests (cuisine 100×100 à partir de (200, 200))
+SIMPLE_RECT = [(200, 200), (300, 200), (300, 300), (200, 300)]
+
+
+def test_light_point_at_centroid():
+    """Le point lumineux est placé au barycentre du polygone."""
+    pos = smart_placement_with_polygon(
+        equip_type="LightPoint",
+        polygon=SIMPLE_RECT,
+        room_pastille_pos=(250, 210),
+        instance_index=0,
+        n_of_type=1,
+    )
+    assert pos == (250, 250)
+
+
+def test_sockets_distributed_on_perimeter():
+    """Les prises sont placées sur le périmètre du polygone."""
+    n = 4
+    positions = [
+        smart_placement_with_polygon(
+            equip_type="Prise",
+            polygon=SIMPLE_RECT,
+            room_pastille_pos=(250, 210),
+            instance_index=i,
+            n_of_type=n,
+        )
+        for i in range(n)
+    ]
+    for x, y in positions:
+        assert 200 - 20 <= x <= 300 + 20
+        assert 200 - 20 <= y <= 300 + 20
+    assert len(set(positions)) == n
+
+
+def test_switch_near_pastille():
+    """L'interrupteur est placé sur le périmètre, proche du centre pastille."""
+    pos = smart_placement_with_polygon(
+        equip_type="Switch",
+        polygon=SIMPLE_RECT,
+        room_pastille_pos=(250, 195),
+        instance_index=0,
+        n_of_type=1,
+    )
+    assert pos[1] < 250
