@@ -48,3 +48,44 @@ NFC_TO_EQUIP_TYPE: dict[EquipmentType, str] = {
 def generate_equipment_id() -> str:
     """Génère un ID unique 'eq_<8 hex>' (~4 milliards de valeurs distinctes)."""
     return f"eq_{secrets.token_hex(4)}"
+
+
+def generate_equipments_from_devis_global(
+    devis_global: DevisGlobal,
+) -> list[EquipmentInstance]:
+    """Pour chaque ligne (pièce × type) du devis, génère Qté instances.
+
+    Le room label utilise l'auto-indice (Chambre 1, Chambre 2…) SI plusieurs
+    pièces de la même catégorie NFC sont présentes — même logique que
+    `build_devis_lines_initial` côté streamlit_app.py.
+
+    Positions initiales : x=0, y=0 (le caller utilise smart_placement pour
+    les remplir avant rendu).
+    """
+    # Compte les pièces par catégorie pour l'auto-indice
+    cat_total: dict[str, int] = {}
+    for d in devis_global.per_room:
+        cat = d.nfc_category.value
+        cat_total[cat] = cat_total.get(cat, 0) + 1
+    cat_seen: dict[str, int] = {}
+
+    instances: list[EquipmentInstance] = []
+    for d in devis_global.per_room:
+        cat = d.nfc_category.value
+        cat_seen[cat] = cat_seen.get(cat, 0) + 1
+        room_label = (
+            f"{cat} {cat_seen[cat]}" if cat_total[cat] > 1 else cat
+        )
+        for nfc_type, qty in d.items.items():
+            equip_key = NFC_TO_EQUIP_TYPE[nfc_type]
+            color = EQUIP_TYPES[equip_key]["color"]
+            for _ in range(qty):
+                instances.append({
+                    "id": generate_equipment_id(),
+                    "type": equip_key,
+                    "room": room_label,
+                    "x": 0,
+                    "y": 0,
+                    "color": color,
+                })
+    return instances
