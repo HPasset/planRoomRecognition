@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, memo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import {
   Streamlit,
   withStreamlitConnection,
@@ -535,6 +535,11 @@ function PastilleCanvas({ args }: ComponentProps) {
   const imgRef = useRef<HTMLImageElement>(null);
   const lastSentJsonRef = useRef<string>("");
 
+  const equipSvgMap = useMemo(
+    () => Object.fromEntries((equip_palette ?? []).map((pt) => [pt.type, pt.svg_id])),
+    [equip_palette]
+  );
+
   // setFrameHeight : seulement quand contenu change vraiment
   useEffect(() => {
     Streamlit.setFrameHeight();
@@ -734,19 +739,15 @@ function PastilleCanvas({ args }: ComponentProps) {
           />
         ))}
         {/* Équipements électriques (statiques, drag à venir Phase 3) */}
-        {equipments && equipments.length > 0 && (() => {
-          const svgMap: Record<string, string> = {};
-          (equip_palette ?? []).forEach((pt) => { svgMap[pt.type] = pt.svg_id; });
-          return equipments.map((eq) => (
-            <EquipmentChip
-              key={eq.id}
-              equipment={eq}
-              svgId={svgMap[eq.type] ?? "socket"}
-              imageWidth={image_width}
-              imageHeight={image_height}
-            />
-          ));
-        })()}
+        {equipments && equipments.length > 0 && equipments.map((eq) => (
+          <EquipmentChip
+            key={eq.id}
+            equipment={eq}
+            svgId={equipSvgMap[eq.type] ?? eq.type}
+            imageWidth={image_width}
+            imageHeight={image_height}
+          />
+        ))}
       </div>
 
       {/* Palette équipements (sous le canvas, drag-in Phase 4) */}
