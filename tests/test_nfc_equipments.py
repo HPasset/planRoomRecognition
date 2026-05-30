@@ -1,7 +1,7 @@
 """Tests pour le module nfc_equipments (logique métier équipements électriques)."""
 from __future__ import annotations
 import re
-import pytest
+from collections import Counter
 
 from src.planrec.nfc_equipments import (
     EQUIP_TYPES,
@@ -89,5 +89,7 @@ def test_generate_equipments_room_label_with_index():
     ]
     devis = compute_devis_global(rooms_input, handicap=False)
     instances = generate_equipments_from_devis_global(devis)
-    rooms_in_instances = {i["room"] for i in instances}
-    assert rooms_in_instances == {"Chambre 1", "Chambre 2"}
+    room_counts = Counter(inst["room"] for inst in instances)
+    assert room_counts["Chambre 1"] > 0
+    assert room_counts["Chambre 2"] > 0
+    assert room_counts["Chambre 1"] == room_counts["Chambre 2"]

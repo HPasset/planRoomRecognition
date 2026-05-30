@@ -64,19 +64,19 @@ def generate_equipments_from_devis_global(
     """
     # Compte les pièces par catégorie pour l'auto-indice
     cat_total: dict[str, int] = {}
-    for d in devis_global.per_room:
-        cat = d.nfc_category.value
+    for room_devis in devis_global.per_room:
+        cat = room_devis.nfc_category.value
         cat_total[cat] = cat_total.get(cat, 0) + 1
     cat_seen: dict[str, int] = {}
 
     instances: list[EquipmentInstance] = []
-    for d in devis_global.per_room:
-        cat = d.nfc_category.value
+    for room_devis in devis_global.per_room:
+        cat = room_devis.nfc_category.value
         cat_seen[cat] = cat_seen.get(cat, 0) + 1
         room_label = (
             f"{cat} {cat_seen[cat]}" if cat_total[cat] > 1 else cat
         )
-        for nfc_type, qty in d.items.items():
+        for nfc_type, qty in room_devis.items.items():
             equip_key = NFC_TO_EQUIP_TYPE[nfc_type]
             color = EQUIP_TYPES[equip_key]["color"]
             for _ in range(qty):
