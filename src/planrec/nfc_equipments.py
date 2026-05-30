@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import random
 import secrets
-from typing import Callable, TypedDict
+from typing import TypedDict
 
 from src.planrec.nfc_rules import EquipmentType, DevisGlobal
 
@@ -154,6 +154,7 @@ def _point_on_perimeter_offset_inward(
         segs.append((a, b, seg_len))
         total_len += seg_len
     target = (t % 1.0) * total_len
+    px = py = 0.0
     cumul = 0.0
     for a, b, seg_len in segs:
         if cumul + seg_len >= target:

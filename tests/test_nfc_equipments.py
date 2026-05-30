@@ -10,6 +10,7 @@ from src.planrec.nfc_equipments import (
     generate_equipment_id,
     generate_equipments_from_devis_global,
     smart_placement_fallback_cluster,
+    smart_placement_with_polygon,
 )
 from src.planrec.nfc_rules import EquipmentType, compute_devis_global
 
@@ -136,9 +137,6 @@ def test_fallback_cluster_close_to_room_center():
         dist = math.hypot(x - room_center[0], y - room_center[1])
         # Grille 3x3 spacing 30px + drift 5px → max ~50px du centre
         assert dist < 100
-
-
-from src.planrec.nfc_equipments import smart_placement_with_polygon
 
 
 # Polygone rectangulaire simple pour tests (cuisine 100×100 à partir de (200, 200))
