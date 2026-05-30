@@ -35,6 +35,7 @@ from src.planrec.nfc_pricing import (
     TVA_OPTIONS,
     compute_ttc,
 )
+from src.planrec.nfc_equipments import EQUIP_TYPES
 from src.planrec.nfc_rules import compute_devis_global
 from src.planrec.ocr.engine_paddle import PaddleOCREngine
 from src.planrec.ocr.postprocess import postprocess_ocr_items
@@ -974,6 +975,13 @@ def main():
         for lbl, color in DEVIS_LABEL_TO_COLOR.items()
     ]
 
+    # Palette équipements (Phase 2 : statique, drag-in en Phase 4)
+    equip_palette_for_canvas: list[dict] = [
+        {"type": key, "label": info["label"], "color": info["color"],
+         "svg_id": info["svg_id"]}
+        for key, info in EQUIP_TYPES.items()
+    ]
+
     # Encode l'image originale en PNG pour transit au component
     _, encoded = cv2.imencode(".png", image_bgr)
     image_h, image_w = image_bgr.shape[:2]
@@ -1050,6 +1058,8 @@ def main():
         palette=palette,
         seg_polygons=seg_polygons,
         yolo_boxes=yolo_boxes,
+        equipments=[],
+        equip_palette=equip_palette_for_canvas,
         key=f"pastille_canvas_{img_hash}",
     )
 

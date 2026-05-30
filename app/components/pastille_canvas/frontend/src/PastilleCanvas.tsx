@@ -44,6 +44,29 @@ export interface YoloBox {
   color: string;         // ex: "rgb(160,82,45)"
 }
 
+/**
+ * Instance unique d'équipement électrique sur le plan (1 prise = 1 instance,
+ * même si la ligne devis a Qté=6). Coords image originale (px).
+ */
+export interface EquipmentInstance {
+  id: string;
+  type: string;
+  room: string;
+  x: number;
+  y: number;
+  color: string;
+}
+
+/**
+ * Chip palette équipement (5 entrées, une par type) pour drag-in.
+ */
+export interface EquipmentPaletteType {
+  type: string;
+  label: string;
+  color: string;
+  svg_id: string;
+}
+
 interface Args {
   image_data: string;
   image_width: number;
@@ -52,6 +75,8 @@ interface Args {
   palette: PaletteType[];
   seg_polygons?: SegPolygon[];
   yolo_boxes?: YoloBox[];
+  equipments?: EquipmentInstance[];
+  equip_palette?: EquipmentPaletteType[];
 }
 
 interface DropResult {
@@ -351,6 +376,142 @@ const PaletteChip = memo(function PaletteChip({ pt, onDropOnCanvas }: PaletteChi
   );
 });
 
+/**
+ * Rend l'icône SVG d'un équipement par son svg_id. Style NF EN 60617 stylisé.
+ */
+interface SvgEquipIconProps {
+  svgId: string;
+  color: string;
+  size?: number;
+}
+
+function SvgEquipIcon({ svgId, color, size = 22 }: SvgEquipIconProps) {
+  const sw = 2.5;
+  switch (svgId) {
+    case "socket":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="13" fill="white" stroke={color} strokeWidth={sw}/>
+          <line x1="20" y1="7" x2="20" y2="20" stroke={color} strokeWidth={sw}/>
+        </svg>
+      );
+    case "switch":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <circle cx="10" cy="20" r="3" fill={color}/>
+          <circle cx="30" cy="20" r="3" fill={color}/>
+          <line x1="10" y1="20" x2="28" y2="10" stroke={color} strokeWidth={sw}/>
+        </svg>
+      );
+    case "light":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="12" fill="#fff9c4" stroke={color} strokeWidth={sw}/>
+          <line x1="13" y1="13" x2="27" y2="27" stroke={color} strokeWidth={2}/>
+          <line x1="27" y1="13" x2="13" y2="27" stroke={color} strokeWidth={2}/>
+        </svg>
+      );
+    case "specfeed":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="14" fill="white" stroke={color} strokeWidth={sw}/>
+          <line x1="20" y1="4" x2="20" y2="20" stroke={color} strokeWidth={sw}/>
+          <line x1="14" y1="2" x2="20" y2="6" stroke={color} strokeWidth={2}/>
+          <line x1="26" y1="2" x2="20" y2="6" stroke={color} strokeWidth={2}/>
+        </svg>
+      );
+    case "rj45":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <rect x="10" y="14" width="20" height="12" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
+          <line x1="14" y1="14" x2="14" y2="9" stroke={color} strokeWidth={2}/>
+          <line x1="20" y1="14" x2="20" y2="9" stroke={color} strokeWidth={2}/>
+          <line x1="26" y1="14" x2="26" y2="9" stroke={color} strokeWidth={2}/>
+        </svg>
+      );
+    default:
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="14" fill="white" stroke={color} strokeWidth={sw}/>
+          <text x="20" y="25" textAnchor="middle" fontSize="14" fill={color}>?</text>
+        </svg>
+      );
+  }
+}
+
+/**
+ * Chip équipement positionné sur le plan (en % image, comme les pastilles).
+ * Pour l'instant statique — drag ajouté en Phase 3.
+ */
+interface EquipmentChipProps {
+  equipment: EquipmentInstance;
+  svgId: string;
+  imageWidth: number;
+  imageHeight: number;
+}
+
+const EquipmentChip = memo(function EquipmentChip({
+  equipment, svgId, imageWidth, imageHeight,
+}: EquipmentChipProps) {
+  const leftPercent = (equipment.x / imageWidth) * 100;
+  const topPercent = (equipment.y / imageHeight) * 100;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: `${leftPercent}%`,
+        top: `${topPercent}%`,
+        transform: "translate(-50%, -50%)",
+        zIndex: 2,
+        touchAction: "none",
+        cursor: "grab",
+        padding: 5,
+        background: "rgba(255,255,255,0.6)",
+        borderRadius: "50%",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
+      }}
+      title={`${equipment.type} (${equipment.room})`}
+    >
+      <SvgEquipIcon svgId={svgId} color={equipment.color} size={22} />
+    </div>
+  );
+});
+
+/**
+ * Chip palette équipement (statique pour Phase 2, drag-in en Phase 4).
+ */
+interface EquipmentPaletteChipProps {
+  pt: EquipmentPaletteType;
+}
+
+const EquipmentPaletteChip = memo(function EquipmentPaletteChip({
+  pt,
+}: EquipmentPaletteChipProps) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 10px",
+        border: `2px solid ${pt.color}`,
+        borderRadius: 18,
+        background: "white",
+        cursor: "grab",
+        touchAction: "none",
+        fontSize: 11,
+        fontWeight: 600,
+        color: "#333",
+        whiteSpace: "nowrap",
+      }}
+      title={`Drag sur le plan pour ajouter un(e) ${pt.label}`}
+    >
+      <SvgEquipIcon svgId={pt.svg_id} color={pt.color} size={18} />
+      {pt.label}
+    </div>
+  );
+});
+
 // ============================================================================
 // Composant principal
 // ============================================================================
@@ -365,6 +526,8 @@ function PastilleCanvas({ args }: ComponentProps) {
     palette,
     seg_polygons,
     yolo_boxes,
+    equipments,
+    equip_palette,
   } = typedArgs;
 
   const [pastilles, setPastilles] = useState<Pastille[]>(initial_pastilles ?? []);
@@ -570,7 +733,42 @@ function PastilleCanvas({ args }: ComponentProps) {
             onDrop={handlePastilleDrop}
           />
         ))}
+        {/* Équipements électriques (statiques, drag à venir Phase 3) */}
+        {equipments && equipments.length > 0 && (() => {
+          const svgMap: Record<string, string> = {};
+          (equip_palette ?? []).forEach((pt) => { svgMap[pt.type] = pt.svg_id; });
+          return equipments.map((eq) => (
+            <EquipmentChip
+              key={eq.id}
+              equipment={eq}
+              svgId={svgMap[eq.type] ?? "socket"}
+              imageWidth={image_width}
+              imageHeight={image_height}
+            />
+          ));
+        })()}
       </div>
+
+      {/* Palette équipements (sous le canvas, drag-in Phase 4) */}
+      {equip_palette && equip_palette.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            padding: "8px 4px",
+            marginTop: 6,
+            borderTop: "1px dashed #d0d7e2",
+          }}
+        >
+          <div style={{ fontSize: 11, color: "#666", marginRight: 8, paddingTop: 8 }}>
+            🔌 Drag depuis cette palette pour ajouter un équipement :
+          </div>
+          {equip_palette.map((pt) => (
+            <EquipmentPaletteChip key={pt.type} pt={pt} />
+          ))}
+        </div>
+      )}
 
       <div className="pc-palette">
         <div className="pc-palette-title">Palette</div>

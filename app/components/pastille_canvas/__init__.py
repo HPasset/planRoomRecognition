@@ -57,6 +57,8 @@ def pastille_canvas(
     palette: list[dict],
     seg_polygons: list[dict] | None = None,
     yolo_boxes: list[dict] | None = None,
+    equipments: list[dict] | None = None,
+    equip_palette: list[dict] | None = None,
     key: str | None = None,
 ) -> dict | None:
     """Render le canvas pastilles + palette.
@@ -75,6 +77,12 @@ def pastille_canvas(
             confidence, color} en coord image originale. Dessinés en overlay
             SVG (rectangles + labels) au-dessus des polygones segmentation
             mais SOUS les pastilles. Non interactifs. Purement visuel.
+        equipments: optionnel, liste de dicts {id, type, room, x, y, color}
+            où x/y sont en coordonnées image originale. Instances équipements
+            individuelles affichées sur le plan (1 prise = 1 instance).
+        equip_palette: optionnel, liste de dicts {type, label, color, svg_id}
+            décrivant les types d'équipements disponibles dans la palette
+            sous le canvas.
         key: clé Streamlit unique pour le component
 
     Returns:
@@ -103,6 +111,8 @@ def pastille_canvas(
         palette=palette,
         seg_polygons=seg_polygons or [],
         yolo_boxes=yolo_boxes or [],
+        equipments=equipments or [],
+        equip_palette=equip_palette or [],
         key=key,
         default=None,
     )
