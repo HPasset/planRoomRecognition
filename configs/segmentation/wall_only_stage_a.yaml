@@ -3,13 +3,20 @@
 # and 1 (Wall). Model learns that classes 2-9 never appear → outputs 0 or 1
 # everywhere. Slightly wasteful (10 query channels for 2 real classes) but
 # zero refactor of the existing pipeline.
+#
+# v1 : dataset combiné cubicasa wall_only (4745 plans Japon) + DWG curés
+# (50 plans monde, rendu matplotlib). Oversample DWG ×30 pour le faire
+# représenter ~24% du sampling effectif malgré son volume marginal.
 run_name: wall_only_stage_a_v1
 seed: 42
 
 data:
-  dataset_root: data/processed/cubicasa_wall_only
+  dataset_root: data/processed/walls_combined
   image_size: 768
   batch_size: 8  # Swin-T is lighter than Swin-S → can fit 2x batch
+  oversample_origin:
+    cc: 1.0
+    dwg: 30.0
 
 model:
   # Swin-Tiny is sufficient for binary Wall detection (vs the 10-class
@@ -28,8 +35,8 @@ scheduler:
   warmup_steps: 500
 
 training:
-  epochs: 30  # Wall is a simple binary task, converges fast
-  early_stop_patience: 5
+  epochs: 5  # Pilote — valider end-to-end avant un run long (15h+ sur MPS)
+  early_stop_patience: 2
   mixed_precision: "no"  # FP32 — BF16 produces NaN on MPS (Stage A learning)
   oversample_rare_classes: false
 
@@ -40,4 +47,4 @@ logging:
 
 checkpoint:
   output_dir: runs/segmentation/wall_only_stage_a_v1
-  save_every_n_epochs: 5
+  save_every_n_epochs: 1
