@@ -13,6 +13,9 @@ models/exports/
 # Training/experiment outputs
 logs/
 wandb/
+experiments/*/outputs/
+experiments/wall_detection_eval/models_src/
+experiments/wall_detection_eval/test_plans/
 
 # Claude Code per-machine config
 .claude/
