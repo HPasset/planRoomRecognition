@@ -1,0 +1,44 @@
+# Wall-only Mask2Former — DWG-only fine-tune.
+#
+# Test rapide : 35 train / 8 val / 7 test. Risque d'overfit clair sur le
+# style de rendu matplotlib, mais validation end-to-end du pipeline DWG +
+# baseline qualité avant d'intégrer Cubicasa plus tard.
+#
+# image_size 512 pour rester sous l'heure de training (MPS grid_sampler_2d
+# fallback CPU = 67s/step à 768, 2-3x plus rapide à 512).
+run_name: wall_only_dwg_v1
+seed: 42
+
+data:
+  dataset_root: data/processed/walls_dwg_only
+  image_size: 512
+  batch_size: 8
+
+model:
+  backbone: facebook/mask2former-swin-tiny-coco-panoptic
+
+optimizer:
+  lr_backbone: 1.0e-5
+  lr_head: 1.0e-4
+  weight_decay: 0.05
+  grad_accumulation: 2
+  grad_clip_norm: 1.0
+
+scheduler:
+  type: cosine
+  warmup_steps: 50  # 35 train / batch 8 = ~4 steps/epoch → warmup court
+
+training:
+  epochs: 20  # Beaucoup d'epochs sur petit dataset, early stop coupera
+  early_stop_patience: 5
+  mixed_precision: "no"
+  oversample_rare_classes: false
+
+logging:
+  tracker: wandb
+  project: batia-segmentation
+  log_image_count: 5
+
+checkpoint:
+  output_dir: runs/segmentation/wall_only_dwg_v1
+  save_every_n_epochs: 2
