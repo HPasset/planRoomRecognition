@@ -12,6 +12,7 @@ export interface Pastille {
   x: number;            // px image originale
   y: number;            // px image originale
   color: string;
+  rotation?: number;    // deg ; 0 = horizontal (défaut), -90 = vertical
 }
 
 export interface PaletteType {
@@ -77,6 +78,8 @@ interface Args {
   yolo_boxes?: YoloBox[];
   equipments?: EquipmentInstance[];
   equip_palette?: EquipmentPaletteType[];
+  equip_visible_types?: string[];
+  pastille_to_devis_room?: Record<string, string>;
 }
 
 interface DropResult {
@@ -157,8 +160,9 @@ const PastilleChip = memo(function PastilleChip({
       if (!isDragging) return;
       lastDx = e.clientX - startClientX;
       lastDy = e.clientY - startClientY;
+      const rot = pastilleRef.current.rotation ?? 0;
       el.style.transform =
-        `translate3d(${lastDx}px, ${lastDy}px, 0) translate(-50%, -50%)`;
+        `translate3d(${lastDx}px, ${lastDy}px, 0) translate(-50%, -50%) rotate(${rot}deg)`;
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -170,13 +174,14 @@ const PastilleChip = memo(function PastilleChip({
       const img = imgRefRef.current.current;
       const imgW = imageWidthRef.current;
       const imgH = imageHeightRef.current;
+      const _rotRest = pastilleRef.current.rotation ?? 0;
       if (!img) {
         // Reset visuel
         el.style.zIndex = "1";
         el.style.opacity = "1";
         el.style.cursor = "grab";
         el.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.15)";
-        el.style.transform = "translate(-50%, -50%)";
+        el.style.transform = `translate(-50%, -50%) rotate(${_rotRest}deg)`;
         return;
       }
       const rect = img.getBoundingClientRect();
@@ -199,7 +204,7 @@ const PastilleChip = memo(function PastilleChip({
         el.style.left = `${newLeftPct}%`;
         el.style.top = `${newTopPct}%`;
       }
-      el.style.transform = "translate(-50%, -50%)";
+      el.style.transform = `translate(-50%, -50%) rotate(${_rotRest}deg)`;
       el.style.zIndex = "1";
       el.style.opacity = "1";
       el.style.cursor = "grab";
@@ -218,11 +223,12 @@ const PastilleChip = memo(function PastilleChip({
       if (!isDragging) return;
       isDragging = false;
       try { el.releasePointerCapture(e.pointerId); } catch { /* déjà release */ }
+      const _rotCancel = pastilleRef.current.rotation ?? 0;
       el.style.zIndex = "1";
       el.style.opacity = "1";
       el.style.cursor = "grab";
       el.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.15)";
-      el.style.transform = "translate(-50%, -50%)";
+      el.style.transform = `translate(-50%, -50%) rotate(${_rotCancel}deg)`;
     };
 
     el.addEventListener("pointerdown", onPointerDown);
@@ -241,6 +247,7 @@ const PastilleChip = memo(function PastilleChip({
 
   const leftPercent = (pastille.x / imageWidth) * 100;
   const topPercent = (pastille.y / imageHeight) * 100;
+  const rotation = pastille.rotation ?? 0;
 
   return (
     <div
@@ -250,7 +257,7 @@ const PastilleChip = memo(function PastilleChip({
         position: "absolute",
         left: `${leftPercent}%`,
         top: `${topPercent}%`,
-        transform: "translate(-50%, -50%)",
+        transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
         backgroundColor: pastille.color,
         cursor: "grab",
         touchAction: "none",
@@ -572,14 +579,18 @@ const EquipmentChip = memo(function EquipmentChip({
         zIndex: 2,
         touchAction: "none",
         cursor: "grab",
-        padding: 5,
+        width: 20,
+        height: 20,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
         background: "rgba(255,255,255,0.6)",
         borderRadius: "50%",
         boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
       }}
       title={`${equipment.type} (${equipment.room})`}
     >
-      <SvgEquipIcon svgId={svgId} color={equipment.color} size={22} />
+      <SvgEquipIcon svgId={svgId} color={equipment.color} size={14} />
     </div>
   );
 });
@@ -702,6 +713,8 @@ function PastilleCanvas({ args }: ComponentProps) {
     yolo_boxes,
     equipments,
     equip_palette,
+    equip_visible_types,
+    pastille_to_devis_room,
   } = typedArgs;
 
   const [pastilles, setPastilles] = useState<Pastille[]>(initial_pastilles ?? []);
@@ -711,6 +724,21 @@ function PastilleCanvas({ args }: ComponentProps) {
 
   const imgRef = useRef<HTMLImageElement>(null);
   const lastSentJsonRef = useRef<string>("");
+
+  // null/undefined → toutes les visible ; tableau (même vide) → filtre strict.
+  const visibleTypesSet = useMemo(
+    () => (equip_visible_types == null ? null : new Set(equip_visible_types)),
+    [equip_visible_types]
+  );
+  const visibleEquipments = useMemo(
+    () =>
+      visibleTypesSet == null
+        ? equipmentsState
+        : equipmentsState.filter((e) => visibleTypesSet.has(e.type)),
+    [visibleTypesSet, equipmentsState]
+  );
+  const showEquipPalette =
+    visibleTypesSet == null || visibleTypesSet.size > 0;
 
   const equipSvgMap = useMemo(
     () => Object.fromEntries((equip_palette ?? []).map((pt) => [pt.type, pt.svg_id])),
@@ -740,24 +768,52 @@ function PastilleCanvas({ args }: ComponentProps) {
   //     → typiquement quand l'user supprime une row via 🗑️ table éditeur
   //   - AJOUT : id présent dans initial_pastilles mais absent de React state
   //     → cas rare (Python ajoute une pastille sans passer par React)
-  // Les pastilles existantes (même id dans les 2) gardent LA position React.
+  // Les pastilles existantes (même id) gardent leur position React mais
+  // adoptent les attributs serveur (label, color, type) — utile pour les
+  // re-labels d'indexation envoyés par Python après drag-in palette.
   useEffect(() => {
     const incoming = initial_pastilles ?? [];
-    const incomingIds = new Set(incoming.map((p) => p.id));
+    const incomingMap = new Map(incoming.map((p) => [String(p.id), p]));
+    const incomingIds = new Set(incomingMap.keys());
     setPastilles((prev) => {
-      const currentIds = new Set(prev.map((p) => p.id));
-      // Skip si exactement les mêmes IDs (cas le plus fréquent : Python renvoie
-      // juste ce que React a envoyé) → évite re-render inutile
+      const currentIds = new Set(prev.map((p) => String(p.id)));
+      // Garde les pastilles "new_*" même absentes d'incoming : drag-in
+      // palette pending que Python n'a pas encore acquitté. Sans cette
+      // protection, boucle d'ajout/suppression avec indexes qui grimpent.
+      const filtered = prev
+        .filter(
+          (p) => incomingIds.has(String(p.id))
+            || String(p.id).startsWith("new_"),
+        )
+        .map((p) => {
+          const fresh = incomingMap.get(String(p.id));
+          if (
+            fresh
+            && (fresh.label !== p.label
+              || fresh.color !== p.color
+              || fresh.type !== p.type
+              || fresh.rotation !== p.rotation)
+          ) {
+            // Server-controlled attrs mis à jour, x/y React préservés
+            return {
+              ...p,
+              label: fresh.label,
+              color: fresh.color,
+              type: fresh.type,
+              rotation: fresh.rotation,
+            };
+          }
+          return p;
+        });
+      const added = incoming.filter((p) => !currentIds.has(String(p.id)));
+      // Skip si pas de changement réel (même ids, mêmes attrs)
       if (
-        incomingIds.size === currentIds.size
-        && [...incomingIds].every((id) => currentIds.has(id))
+        added.length === 0
+        && filtered.length === prev.length
+        && filtered.every((p, i) => p === prev[i])
       ) {
         return prev;
       }
-      // Supprime les pastilles qui ne sont plus dans initial_pastilles
-      const filtered = prev.filter((p) => incomingIds.has(p.id));
-      // Ajoute les nouvelles pastilles (présentes dans incoming, absentes du state)
-      const added = incoming.filter((p) => !currentIds.has(p.id));
       return [...filtered, ...added];
     });
   }, [initial_pastilles]);
@@ -790,7 +846,11 @@ function PastilleCanvas({ args }: ComponentProps) {
           && [...incomingIds].every((id) => currentIds.has(id))) {
         return prev;
       }
-      const filtered = prev.filter((e) => incomingIds.has(e.id));
+      // Garde les équipements "new_*" même absents d'incoming : ajout
+      // palette pending que Python n'a pas encore acquitté.
+      const filtered = prev.filter(
+        (e) => incomingIds.has(e.id) || e.id.startsWith("new_"),
+      );
       const added = incoming.filter((e) => !currentIds.has(e.id));
       return [...filtered, ...added];
     });
@@ -825,25 +885,39 @@ function PastilleCanvas({ args }: ComponentProps) {
       const scaleY = rect.height / image_height;
       const x = Math.round((clientX - rect.left) / scaleX);
       const y = Math.round((clientY - rect.top) / scaleY);
-      let closestRoom = "";
+      let closestPastilleId = "";
+      let closestPastilleLabel = "";
       let minDist = Infinity;
       for (const p of pastilles) {
         const d = Math.hypot(p.x - x, p.y - y);
-        if (d < minDist) { minDist = d; closestRoom = p.label; }
+        if (d < minDist) {
+          minDist = d;
+          closestPastilleId = String(p.id);
+          closestPastilleLabel = p.label;
+        }
       }
+      // Le devis utilise des labels NFCCategory-indexés ("Chambre 1",
+      // "Chambre 2"…) alors que les pastilles portent le label FR brut
+      // ("Chambre"). Traduit via la map fournie par Python pour que le
+      // sync block trouve la bonne ligne devis.
+      const devisRoom = (
+        pastille_to_devis_room?.[closestPastilleId]
+        ?? closestPastilleLabel
+        ?? "Autre"
+      );
       const newId = `new_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       setEquipmentsState((prev) => [
         ...prev,
         {
           id: newId,
           type: pt.type,
-          room: closestRoom || "Autre",
+          room: devisRoom,
           x, y,
           color: pt.color,
         },
       ]);
     },
-    [image_width, image_height, pastilles],
+    [image_width, image_height, pastilles, pastille_to_devis_room],
   );
 
   // Handler drop depuis palette (ajout nouvelle pastille)
@@ -985,7 +1059,7 @@ function PastilleCanvas({ args }: ComponentProps) {
           />
         ))}
         {/* Équipements électriques (drag actif Phase 3) */}
-        {equipmentsState.length > 0 && equipmentsState.map((eq) => (
+        {visibleEquipments.length > 0 && visibleEquipments.map((eq) => (
           <EquipmentChip
             key={eq.id}
             equipment={eq}
@@ -998,45 +1072,30 @@ function PastilleCanvas({ args }: ComponentProps) {
         ))}
       </div>
 
-      {/* Palette équipements (sous le canvas, drag-in Phase 4) */}
-      {equip_palette && equip_palette.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            padding: "8px 4px",
-            marginTop: 6,
-            borderTop: "1px dashed #d0d7e2",
-          }}
-        >
-          <div style={{ fontSize: 11, color: "#666", marginRight: 8, paddingTop: 8 }}>
-            🔌 Drag depuis cette palette pour ajouter un équipement :
-          </div>
-          {equip_palette.map((pt) => (
-            <EquipmentPaletteChip
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="pc-palette">
+          <div className="pc-palette-title">Pièces</div>
+          {palette.map((pt) => (
+            <PaletteChip
               key={pt.type}
               pt={pt}
-              onDropOnCanvas={handlePaletteEquipDrop}
+              onDropOnCanvas={handlePaletteDrop}
             />
           ))}
         </div>
-      )}
 
-      <div className="pc-palette">
-        <div className="pc-palette-title">Palette</div>
-        {palette.map((pt) => (
-          <PaletteChip
-            key={pt.type}
-            pt={pt}
-            onDropOnCanvas={handlePaletteDrop}
-          />
-        ))}
-        <div className="pc-palette-hint">
-          Drag depuis la palette → ajout sur le plan.<br />
-          Drag les pastilles → déplacement.<br />
-          Sors du plan → suppression.
-        </div>
+        {showEquipPalette && equip_palette && equip_palette.length > 0 && (
+          <div className="pc-palette">
+            <div className="pc-palette-title">Équipements</div>
+            {equip_palette.map((pt) => (
+              <EquipmentPaletteChip
+                key={pt.type}
+                pt={pt}
+                onDropOnCanvas={handlePaletteEquipDrop}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

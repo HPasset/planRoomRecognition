@@ -59,6 +59,8 @@ def pastille_canvas(
     yolo_boxes: list[dict] | None = None,
     equipments: list[dict] | None = None,
     equip_palette: list[dict] | None = None,
+    equip_visible_types: list[str] | None = None,
+    pastille_to_devis_room: dict[str, str] | None = None,
     key: str | None = None,
 ) -> dict | None:
     """Render le canvas pastilles + palette.
@@ -113,6 +115,8 @@ def pastille_canvas(
         yolo_boxes=yolo_boxes or [],
         equipments=equipments or [],
         equip_palette=equip_palette or [],
+        equip_visible_types=equip_visible_types,
+        pastille_to_devis_room=pastille_to_devis_room or {},
         key=key,
         default=None,
     )

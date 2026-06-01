@@ -126,6 +126,30 @@ def _bbox_center(bbox: list[list[int]]) -> tuple[int, int]:
     return (int(sum(xs) / len(xs)), int(sum(ys) / len(ys)))
 
 
+def _bbox_rotation_deg(bbox: list[list[int]]) -> int:
+    """Détecte l'orientation d'un texte OCR depuis sa bbox 4-points.
+
+    Retourne :
+    -  0 : horizontal (cas standard)
+    - -90 : vertical (texte lu de bas en haut côté droit, convention plans FR)
+
+    Heuristique : si la hauteur de la bbox axis-aligned > 1.4 × sa largeur,
+    on considère le texte vertical. Le sens (+90 vs -90) n'est pas
+    discriminé par cette mesure ; on choisit -90 par convention.
+    """
+    if not bbox or len(bbox) < 2:
+        return 0
+    xs = [p[0] for p in bbox]
+    ys = [p[1] for p in bbox]
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+    if width <= 0:
+        return -90
+    if height / max(width, 1) > 1.4:
+        return -90
+    return 0
+
+
 DEFAULT_CHECKPOINT = "runs/segmentation/stage_b_finetune_v1/checkpoints/best.pt"
 
 # === YOLO Brique A (détection meubles, 9 classes NFC) — purement visuel ===
@@ -489,6 +513,9 @@ _EQUIP_TYPE_TO_DEVIS_LABEL: dict[str, str] = {
     equip_key: EQUIPMENT_LABELS_FR[nfc_enum]
     for nfc_enum, equip_key in NFC_TO_EQUIP_TYPE.items()
 }
+_DEVIS_LABEL_TO_EQUIP_TYPE: dict[str, str] = {
+    v: k for k, v in _EQUIP_TYPE_TO_DEVIS_LABEL.items()
+}
 
 
 def _find_devis_line_idx(
@@ -565,10 +592,15 @@ def _make_smart_placer(
         center = pastilles_by_room.get(
             room, (image_size[0] // 2, image_size[1] // 2),
         )
+        # Décale le cluster vers le bas de la pastille (~50px) pour ne pas
+        # masquer le label "Cuisine"/"Chambre N"/etc. Espacement augmenté à
+        # 40px pour aérer entre icônes.
+        adjusted_center = (center[0], center[1] + 35)
         positions = smart_placement_fallback_cluster(
-            room_center=center,
+            room_center=adjusted_center,
             n_equipments=n_of_type,
             image_size=image_size,
+            spacing=28,
             random_seed=hash((room, equip_type)) & 0xFFFFFFFF,
         )
         return positions[min(idx, len(positions) - 1)]
@@ -787,29 +819,11 @@ def main():
                     )
         yolo_allowed_classes = {n for n, on in yolo_class_checks.items() if on}
 
-        # === Affichage équipements électriques sur le plan (Phase 6) ===
-        st.markdown("---")
-        st.header("🔌 Équipements électriques (optionnel)")
-        enable_equipments = st.checkbox(
-            "Afficher les équipements sur le plan",
-            value=False,
-            help="Affiche les icônes équipements (style NF EN 60617 stylisé) "
-                 "sur le plan, avec drag-drop pour ajuster leurs positions. "
-                 "Purement visuel, sync avec le devis quantitatif.",
-        )
-        equip_type_filter: dict[str, bool] = {
-            name: True for name in EQUIP_TYPES.keys()
-        }
-        if enable_equipments:
-            st.markdown("**Types à afficher**")
-            cols = st.columns(2)
-            for i, _equip_key in enumerate(EQUIP_TYPES.keys()):
-                with cols[i % 2]:
-                    equip_type_filter[_equip_key] = st.checkbox(
-                        EQUIP_TYPES[_equip_key]["label"], value=True,
-                        key=f"equip_show_{_equip_key}",
-                    )
-        equip_allowed_types = {k for k, on in equip_type_filter.items() if on}
+        # Équipements électriques : toujours auto-affichés sur le plan, tous
+        # types visibles. Pas de toggle ni de filtre sidebar (V1.1 — UX
+        # simplifiée). Conservé en variables pour le call pastille_canvas().
+        enable_equipments = True
+        equip_allowed_types = set(EQUIP_TYPES.keys())
 
         st.markdown("---")
         st.header("💡 Devis NFC")
@@ -865,11 +879,50 @@ def main():
     img_bytes = uploaded.getvalue()
     img_hash = hashlib.md5(img_bytes).hexdigest()[:12]
 
+    # Détection changement de plan : wipe state du plan précédent pour
+    # éviter les callbacks stale (widgets de l'ancien devis qui firent
+    # et accèdent un devis_lines_key qui n'existe pas pour le nouveau hash).
+    _last_hash_key = "_last_loaded_img_hash"
+    _prev_hash = st.session_state.get(_last_hash_key)
+    if _prev_hash and _prev_hash != img_hash:
+        _stale_prefixes = (
+            f"devis_lines_{_prev_hash}",
+            f"devis_editor_{_prev_hash}",
+            f"devis_generated_{_prev_hash}",
+            f"devis_triggered_{_prev_hash}",
+            f"equipments_state_{_prev_hash}",
+            f"pastilles_state_{_prev_hash}",
+            f"pastille_to_devis_room_{_prev_hash}",
+            f"surface_by_pid_{_prev_hash}",
+            f"surface_input_{_prev_hash}",
+            f"_eq_just_populated_{_prev_hash}",
+            f"canvas_reset_counter_{_prev_hash}",
+            f"ocr_first_done_{_prev_hash}",
+            f"seg_result_{_prev_hash}",
+            f"pastille_canvas_{_prev_hash}",
+        )
+        for _k in list(st.session_state.keys()):
+            if any(_k.startswith(_p) for _p in _stale_prefixes):
+                del st.session_state[_k]
+    st.session_state[_last_hash_key] = img_hash
+
     # Save upload to a temp file (SegmentationInference reads from path)
     suffix = Path(uploaded.name).suffix
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(img_bytes)
         tmp_path = tmp.name
+
+    # === Gate : pipeline OCR ne tourne qu'au clic "Générer devis" ===
+    # En mode test (env STREAMLIT_TEST_AUTO_TRIGGER=1), bypass automatique
+    # du gate — les 45 tests AppTest reposent sur le pipeline auto.
+    _devis_triggered_key = f"devis_triggered_{img_hash}"
+    _test_auto_trigger = (
+        os.environ.get("STREAMLIT_TEST_AUTO_TRIGGER", "0") == "1"
+    )
+    _devis_triggered = (
+        _test_auto_trigger
+        or st.session_state.get(_devis_triggered_key, False)
+    )
 
     # === Pipeline d'analyse : OCR + Segmentation (optionnelle) ===
     # Stratégie cache pour éviter le "saut visuel" à chaque rerun (causé par
@@ -879,161 +932,160 @@ def main():
     #   résultat en session_state pour éviter de re-inférer à chaque rerun
     # - st.status() : affiché UNIQUEMENT si cache miss (sinon l'apparition+
     #   collapse à chaque rerun fait sauter la page)
-    result: SegmentationOutput | None = None
-    fusion_records: list[dict] | None = None
-    ocr_hits_raw: list[dict] = []
-    ocr_hits: list[dict] = []
-
-    ocr_done_key = f"ocr_first_done_{img_hash}"
-    seg_cache_key = (
-        f"seg_result_{img_hash}_{Path(checkpoint).name}_{image_size}"
-        if enable_segmentation else None
-    )
-    needs_ocr_compute = ocr_done_key not in st.session_state
-    needs_seg_compute = (
-        enable_segmentation and seg_cache_key not in st.session_state
-    )
-    show_progress = needs_ocr_compute or needs_seg_compute
-
-    # st.status TOUJOURS rendu (collapsed après le 1er run) pour conserver
-    # une hauteur stable de la page → pas de saut visuel quand on passe du
-    # "1er upload avec progress" à "rerun cached silencieux".
-    _initial_label = (
-        "🔍 Analyse du plan en cours..." if show_progress
-        else "✓ Analyse terminée (depuis le cache)"
-    )
-    _initial_state = "running" if show_progress else "complete"
-    with st.status(
-        _initial_label, expanded=show_progress, state=_initial_state,
-    ) as status:
-        try:
-            if show_progress:
-                st.write("⏳ Chargement du modèle OCR PaddleOCR FR...")
-            engine = load_paddleocr_engine()
-            if show_progress:
-                st.write("✓ Modèle OCR prêt")
-                st.write(
-                    "⏳ Lecture du plan (OCR 3 passes : "
-                    "normal + ±90° pour textes verticaux)..."
-                )
-
-            ocr_hits_raw = run_ocr_raw(img_bytes, preprocess=False)
-            if show_progress:
-                st.write(f"✓ {len(ocr_hits_raw)} textes bruts détectés")
-                st.session_state[ocr_done_key] = True
-                st.write("⏳ Filtrage + matching alias français...")
-
-            ocr_hits = postprocess_ocr_items(
-                ocr_hits_raw, confidence_min=ocr_confidence_min,
-                fuzzy=True, fuzzy_cutoff=0.72,
-            )
-            if show_progress:
-                n_rooms_ocr = sum(1 for h in ocr_hits if h.get("room_type"))
-                st.write(
-                    f"✓ {n_rooms_ocr} pièces identifiées "
-                    f"({len(ocr_hits)} labels retenus)"
-                )
-
-            if enable_segmentation:
-                if not Path(checkpoint).exists():
-                    status.update(
-                        label="❌ Checkpoint segmentation introuvable",
-                        state="error", expanded=True,
-                    )
-                    st.error(f"Checkpoint introuvable : `{checkpoint}`")
-                    return
-                if seg_cache_key in st.session_state:
-                    result = st.session_state[seg_cache_key]
-                else:
-                    if show_progress:
-                        st.write("⏳ Chargement du modèle Mask2Former...")
-                    inference = load_seg_model(checkpoint, image_size)
-                    if show_progress:
-                        st.write("✓ Modèle segmentation prêt")
-                        st.write("⏳ Inférence segmentation (Mask2Former Swin-S)...")
-                    result = inference.predict(tmp_path)
-                    st.session_state[seg_cache_key] = result
-                    if show_progress:
-                        st.write(
-                            f"✓ Segmentation terminée en {result.inference_time_ms} ms "
-                            f"({len(result.rooms)} polygones)"
-                        )
-                fusion_records = fuse_rooms_with_ocr(result.rooms, ocr_hits)
-
-            if show_progress:
-                status.update(
-                    label="✓ Analyse terminée", state="complete", expanded=False,
-                )
-        except Exception as e:
-            status.update(
-                label=f"❌ Erreur pendant l'analyse : {type(e).__name__}",
-                state="error", expanded=True,
-            )
-            st.exception(e)
-            return
-
-    # Load original image for overlay
+    # Image originale TOUJOURS chargée (utile pour le canvas même pré-trigger)
     image_bgr = cv2.imread(tmp_path)
     if image_bgr is None:
         st.error("Impossible de lire l'image.")
         return
 
-    # === Construction des pièces depuis OCR (source primaire) ===
-    ocr_rooms = build_rooms_from_ocr(ocr_hits)
-
-    # === Snap-to-walls (uniquement si segmentation activée) ===
+    # Defaults pré-trigger : pipeline OCR/seg pas encore lancé
+    result: SegmentationOutput | None = None
+    fusion_records: list[dict] | None = None
+    ocr_hits_raw: list[dict] = []
+    ocr_hits: list[dict] = []
+    ocr_rooms: list[dict] = []
     wall_lines: list[tuple[int, int, int, int]] | None = None
     wall_source: str = ""
-    if enable_segmentation and snap_walls_on and result is not None:
-        wall_mask_path = Path(result.walls.mask_path)
-        if wall_mask_path.exists():
-            wall_mask = cv2.imread(str(wall_mask_path), cv2.IMREAD_GRAYSCALE)
-            if wall_mask is not None and wall_mask.max() > 0:
-                wall_lines = extract_wall_lines(wall_mask)
-                wall_source = f"masque Wall du modèle ({(wall_mask > 0).sum():,} px)"
-        if not wall_lines:
-            wall_lines = extract_lines_from_image(
-                image_bgr,
-                algorithm=wall_algorithm,
-                min_line_length=wall_min_line_length,
-                max_line_gap=wall_max_line_gap,
-                threshold_strategy=wall_threshold_strategy if wall_filters_on else "manual",
-                dark_threshold=wall_dark_threshold if wall_filters_on else None,
-                morph_open_kernel=3 if wall_filters_on else 1,
-                axis_aligned_only=wall_filters_on,
-            )
-            wall_source = (
-                f"image originale ({wall_algorithm.upper()}, seuillage: {wall_threshold_strategy})"
-                if wall_filters_on
-                else f"image originale ({wall_algorithm.upper()}, brut sans filtre)"
-            )
-        if not wall_lines:
-            st.warning(
-                "Snap-to-walls activé mais Hough n'a trouvé aucune ligne."
-            )
 
-    # === Métriques OCR/segmentation (l'overlay visuel est remplacé par le
-    # canvas drag-drop ci-dessous — fonctions render_overlay*/imports gardées
-    # au cas où on voudrait re-ajouter un toggle "voir overlay debug") ===
-    metric_cols = st.columns(4)
-    metric_cols[0].metric("Labels OCR détectés", len(ocr_hits))
-    metric_cols[1].metric("Pièces identifiées (OCR)", len(ocr_rooms))
-    if enable_segmentation and result is not None:
-        metric_cols[2].metric(
-            "Segmentation", f"{result.inference_time_ms} ms",
-            help=f"{image_size}×{image_size}",
+    if _devis_triggered:
+        ocr_done_key = f"ocr_first_done_{img_hash}"
+        seg_cache_key = (
+            f"seg_result_{img_hash}_{Path(checkpoint).name}_{image_size}"
+            if enable_segmentation else None
         )
-        n_seg_visible = sum(
-            1 for r in result.rooms
-            if r.confidence >= threshold and r.type_id in allowed_class_ids
+        needs_ocr_compute = ocr_done_key not in st.session_state
+        needs_seg_compute = (
+            enable_segmentation and seg_cache_key not in st.session_state
         )
-        metric_cols[3].metric(
-            "Polygones", f"{n_seg_visible} / {len(result.rooms)}",
+        show_progress = needs_ocr_compute or needs_seg_compute
+
+        _initial_label = (
+            "🔍 Analyse du plan en cours..." if show_progress
+            else "✓ Analyse terminée (depuis le cache)"
         )
-        if fusion_records:
-            n_conflict = sum(1 for r in fusion_records if r["conflict"])
-            if n_conflict > 0:
-                st.warning(f"⚠ {n_conflict} conflit(s) OCR/modèle à vérifier")
+        _initial_state = "running" if show_progress else "complete"
+        with st.status(
+            _initial_label, expanded=show_progress, state=_initial_state,
+        ) as status:
+            try:
+                if show_progress:
+                    st.write("⏳ Chargement du modèle OCR PaddleOCR FR...")
+                engine = load_paddleocr_engine()
+                if show_progress:
+                    st.write("✓ Modèle OCR prêt")
+                    st.write(
+                        "⏳ Lecture du plan (OCR 3 passes : "
+                        "normal + ±90° pour textes verticaux)..."
+                    )
+
+                ocr_hits_raw = run_ocr_raw(img_bytes, preprocess=False)
+                if show_progress:
+                    st.write(f"✓ {len(ocr_hits_raw)} textes bruts détectés")
+                    st.session_state[ocr_done_key] = True
+                    st.write("⏳ Filtrage + matching alias français...")
+
+                ocr_hits = postprocess_ocr_items(
+                    ocr_hits_raw, confidence_min=ocr_confidence_min,
+                    fuzzy=True, fuzzy_cutoff=0.72,
+                )
+                if show_progress:
+                    n_rooms_ocr = sum(1 for h in ocr_hits if h.get("room_type"))
+                    st.write(
+                        f"✓ {n_rooms_ocr} pièces identifiées "
+                        f"({len(ocr_hits)} labels retenus)"
+                    )
+
+                if enable_segmentation:
+                    if not Path(checkpoint).exists():
+                        status.update(
+                            label="❌ Checkpoint segmentation introuvable",
+                            state="error", expanded=True,
+                        )
+                        st.error(f"Checkpoint introuvable : `{checkpoint}`")
+                        return
+                    if seg_cache_key in st.session_state:
+                        result = st.session_state[seg_cache_key]
+                    else:
+                        if show_progress:
+                            st.write("⏳ Chargement du modèle Mask2Former...")
+                        inference = load_seg_model(checkpoint, image_size)
+                        if show_progress:
+                            st.write("✓ Modèle segmentation prêt")
+                            st.write("⏳ Inférence segmentation (Mask2Former Swin-S)...")
+                        result = inference.predict(tmp_path)
+                        st.session_state[seg_cache_key] = result
+                        if show_progress:
+                            st.write(
+                                f"✓ Segmentation terminée en {result.inference_time_ms} ms "
+                                f"({len(result.rooms)} polygones)"
+                            )
+                    fusion_records = fuse_rooms_with_ocr(result.rooms, ocr_hits)
+
+                if show_progress:
+                    status.update(
+                        label="✓ Analyse terminée", state="complete", expanded=False,
+                    )
+            except Exception as e:
+                status.update(
+                    label=f"❌ Erreur pendant l'analyse : {type(e).__name__}",
+                    state="error", expanded=True,
+                )
+                st.exception(e)
+                return
+
+        # Construction des pièces depuis OCR (source primaire)
+        ocr_rooms = build_rooms_from_ocr(ocr_hits)
+
+        # Snap-to-walls (uniquement si segmentation activée)
+        if enable_segmentation and snap_walls_on and result is not None:
+            wall_mask_path = Path(result.walls.mask_path)
+            if wall_mask_path.exists():
+                wall_mask = cv2.imread(str(wall_mask_path), cv2.IMREAD_GRAYSCALE)
+                if wall_mask is not None and wall_mask.max() > 0:
+                    wall_lines = extract_wall_lines(wall_mask)
+                    wall_source = f"masque Wall du modèle ({(wall_mask > 0).sum():,} px)"
+            if not wall_lines:
+                wall_lines = extract_lines_from_image(
+                    image_bgr,
+                    algorithm=wall_algorithm,
+                    min_line_length=wall_min_line_length,
+                    max_line_gap=wall_max_line_gap,
+                    threshold_strategy=wall_threshold_strategy if wall_filters_on else "manual",
+                    dark_threshold=wall_dark_threshold if wall_filters_on else None,
+                    morph_open_kernel=3 if wall_filters_on else 1,
+                    axis_aligned_only=wall_filters_on,
+                )
+                wall_source = (
+                    f"image originale ({wall_algorithm.upper()}, seuillage: {wall_threshold_strategy})"
+                    if wall_filters_on
+                    else f"image originale ({wall_algorithm.upper()}, brut sans filtre)"
+                )
+            if not wall_lines:
+                st.warning(
+                    "Snap-to-walls activé mais Hough n'a trouvé aucune ligne."
+                )
+
+    # === Métriques OCR/segmentation (visible uniquement post-trigger) ===
+    if _devis_triggered:
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("Labels OCR détectés", len(ocr_hits))
+        metric_cols[1].metric("Pièces identifiées (OCR)", len(ocr_rooms))
+        if enable_segmentation and result is not None:
+            metric_cols[2].metric(
+                "Segmentation", f"{result.inference_time_ms} ms",
+                help=f"{image_size}×{image_size}",
+            )
+            n_seg_visible = sum(
+                1 for r in result.rooms
+                if r.confidence >= threshold and r.type_id in allowed_class_ids
+            )
+            metric_cols[3].metric(
+                "Polygones", f"{n_seg_visible} / {len(result.rooms)}",
+            )
+            if fusion_records:
+                n_conflict = sum(1 for r in fusion_records if r["conflict"])
+                if n_conflict > 0:
+                    st.warning(f"⚠ {n_conflict} conflit(s) OCR/modèle à vérifier")
 
     # Key éditeur Pièces : remontée AVANT le canvas car les 2 sections en ont
     # besoin (canvas pour sync DataFrame, éditeur pour init).
@@ -1042,34 +1094,161 @@ def main():
 
     # --- Canvas pastilles drag-drop (Phase 2 : drag + out-of-bbox suppr) ---
     st.markdown("---")
-    st.markdown("### 🎯 Plan interactif (drag-and-drop)")
-    st.caption(
-        "Pastilles colorées posées sur le plan aux positions détectées par "
-        "l'OCR. **Drag** pour repositionner. **Sortir du plan** pour "
-        "supprimer la pièce du devis. Palette à droite (drag-in en Phase 3)."
-    )
+    st.markdown("### 🎯 Plan interactif")
+
+    # Boutons d'action : Générer (pré-trigger) / Recalculer (post-trigger)
+    # / Réinitialiser. Tous visibles ensemble, sémantiques selon état.
+    _b1, _b2, _b3, _ = st.columns([1.5, 1.5, 1.5, 3])
+    devis_state_key = f"devis_generated_{img_hash}"
+    if devis_state_key not in st.session_state:
+        st.session_state[devis_state_key] = True
+    def _trigger_devis_regen():
+        """Invalide le cache devis + sauvegarde des lignes manuelles."""
+        dl_key = f"devis_lines_{img_hash}"
+        manual_backup_key = f"{dl_key}_manual_backup"
+        # Sauvegarde manual_backup avant suppression (tests G*/K*)
+        if dl_key in st.session_state:
+            existing_devis = st.session_state[dl_key]
+            if "_manual" in existing_devis.columns:
+                manual_rows: list[dict] = []
+                for _i_m in existing_devis.index:
+                    if not bool(existing_devis.loc[_i_m, "_manual"]):
+                        continue
+                    _rid_m = int(existing_devis.loc[_i_m, "_id"])
+                    manual_rows.append({
+                        "Pièce": st.session_state.get(
+                            f"{dl_key}_piece_{_rid_m}",
+                            str(existing_devis.loc[_i_m, "Pièce"]),
+                        ),
+                        "Équipement": st.session_state.get(
+                            f"{dl_key}_eq_{_rid_m}",
+                            str(existing_devis.loc[_i_m, "Équipement"]),
+                        ),
+                        "Qté": int(st.session_state.get(
+                            f"{dl_key}_qty_{_rid_m}",
+                            int(existing_devis.loc[_i_m, "Qté"]),
+                        )),
+                        "Prix HT (€)": float(st.session_state.get(
+                            f"{dl_key}_ht_{_rid_m}",
+                            float(existing_devis.loc[_i_m, "Prix HT (€)"]),
+                        )),
+                        "_equip_ids": list(
+                            existing_devis.loc[_i_m, "_equip_ids"] or []
+                        ) if "_equip_ids" in existing_devis.columns else [],
+                    })
+                if manual_rows:
+                    st.session_state[manual_backup_key] = manual_rows
+        keys_to_del = [
+            k for k in list(st.session_state.keys())
+            if k.startswith(dl_key) and k != manual_backup_key
+        ]
+        for k in keys_to_del:
+            del st.session_state[k]
+
+    with _b1:
+        if st.button(
+            "💡 Générer devis",
+            key=f"top_trigger_{img_hash}",
+            type="primary",
+            help=("Lance l'analyse OCR + génération automatique du devis NFC."
+                  if not _devis_triggered
+                  else "Re-déclenche l'analyse + recalcul complet du devis."),
+        ):
+            # 1er trigger : wipe les states "vides" pré-trigger (pastilles
+            # init à [], éditeur init au fallback "Chambre") pour qu'ils se
+            # ré-initialisent depuis ocr_rooms après l'OCR.
+            if not _devis_triggered:
+                for _wipe_k in (
+                    f"pastilles_state_{img_hash}",
+                    f"equipments_state_{img_hash}",
+                    editor_key,
+                ):
+                    if _wipe_k in st.session_state:
+                        del st.session_state[_wipe_k]
+            st.session_state[_devis_triggered_key] = True
+            _trigger_devis_regen()
+            st.rerun()
+    with _b2:
+        if st.button(
+            "🔄 Recalculer devis",
+            key=f"top_recalc_{img_hash}",
+            disabled=not _devis_triggered,
+            help="Recalcule le devis depuis les pièces actuelles (utile "
+                 "après modif handicap, surface, etc.).",
+        ):
+            _trigger_devis_regen()
+            st.rerun()
+    with _b3:
+        if st.button(
+            "↺ Réinitialiser",
+            key=f"top_reset_{img_hash}",
+            disabled=not _devis_triggered,
+            help="Efface tout (pastilles, devis, équipements) et re-lance "
+                 "l'OCR + génération du devis automatiquement.",
+        ):
+            keys_to_del = [
+                k for k in list(st.session_state.keys())
+                if (k.startswith(editor_key) or k.startswith(devis_state_key)
+                    or k.startswith(f"devis_lines_{img_hash}")
+                    or k.startswith(f"equipments_state_{img_hash}")
+                    or k.startswith(f"pastilles_state_{img_hash}")
+                    or k.startswith(f"pastille_to_devis_room_{img_hash}")
+                    or k.startswith(f"surface_by_pid_{img_hash}"))
+            ]
+            for k in keys_to_del:
+                del st.session_state[k]
+            # Incrémente le compteur de reset → change la `key` du canvas →
+            # force React à re-monter le composant avec un state vide
+            # (sinon les ajouts palette "new_*" persistent côté React via
+            # la protection anti-race conditions).
+            _reset_counter_key = f"canvas_reset_counter_{img_hash}"
+            st.session_state[_reset_counter_key] = (
+                st.session_state.get(_reset_counter_key, 0) + 1
+            )
+            # Garde _devis_triggered=True → l'OCR + auto-gen tournent au
+            # prochain rerun, comme un clic 'Générer devis' fresh.
+            st.session_state[_devis_triggered_key] = True
+            st.rerun()
 
     # Clé session_state : positions/visibilité des pastilles persistées
     # entre les reruns Streamlit (sinon les drags seraient perdus à chaque
     # interaction widget).
     pastilles_state_key = f"pastilles_state_{img_hash}"
 
-    # Init from OCR au premier render pour cette image
+    # Init from OCR au premier render pour cette image. Indexe les labels
+    # quand plusieurs pièces du même type ("Chambre 1", "Chambre 2"…) pour
+    # rester cohérent avec le devis (qui indexe de la même manière), évitant
+    # toute confusion user entre pastilles et lignes devis.
     if pastilles_state_key not in st.session_state:
-        init_pastilles: list[dict] = []
+        _ocr_with_label: list[tuple[dict, str]] = []
         for r in ocr_rooms:
             bbox = r.get("bbox", [])
             if not bbox:
                 continue
-            cx, cy = _bbox_center(bbox)
-            label_fr = c2_class_to_devis_label(r["c2_class"], r.get("raw_text", ""))
+            _ocr_with_label.append((
+                r, c2_class_to_devis_label(r["c2_class"], r.get("raw_text", "")),
+            ))
+        _label_total: dict[str, int] = {}
+        for _, lbl in _ocr_with_label:
+            _label_total[lbl] = _label_total.get(lbl, 0) + 1
+        _label_seen: dict[str, int] = {}
+        init_pastilles: list[dict] = []
+        for r, label_fr in _ocr_with_label:
+            _label_seen[label_fr] = _label_seen.get(label_fr, 0) + 1
+            indexed_label = (
+                f"{label_fr} {_label_seen[label_fr]}"
+                if _label_total[label_fr] > 1
+                else label_fr
+            )
+            cx, cy = _bbox_center(r["bbox"])
             init_pastilles.append({
                 "id": r["id"],
                 "type": label_fr,
-                "label": label_fr,
+                "label": indexed_label,
                 "x": cx,
                 "y": cy,
                 "color": DEVIS_LABEL_TO_COLOR.get(label_fr, "rgb(200,200,200)"),
+                "rotation": _bbox_rotation_deg(r["bbox"]),
             })
         st.session_state[pastilles_state_key] = init_pastilles
 
@@ -1080,9 +1259,13 @@ def main():
         valid_pids = set(
             df_editor_current["_pastille_id"].dropna().astype(str).tolist()
         )
+        # Garde les pastilles "new_*" (drag-in palette) même si elles n'ont
+        # pas de row éditeur correspondante — sinon elles seraient filtrées
+        # à chaque rerun et re-détectées comme ajout, créant une boucle
+        # infinie avec indexation incrémentale.
         st.session_state[pastilles_state_key] = [
             p for p in st.session_state[pastilles_state_key]
-            if str(p["id"]) in valid_pids
+            if str(p["id"]) in valid_pids or str(p["id"]).startswith("new_")
         ]
 
     # Palette : tous les types de pièces dispos pour drag-in (Phase 3)
@@ -1170,6 +1353,199 @@ def main():
     if equipments_state_key not in st.session_state:
         st.session_state[equipments_state_key] = []
 
+    devis_lines_key = f"devis_lines_{img_hash}"
+    devis_lines_nid_key = f"{devis_lines_key}_nextid"
+
+    # V1.2 — auto-construit devis_lines + equipments à l'init OU quand le user
+    # invalide via "Générer devis" (qui delete devis_lines_key). Utilise
+    # reconcile_equipments_for_line pour PRÉSERVER les positions existantes
+    # (drags user, ajouts palette) tant que la ligne (pièce, type) existe
+    # toujours dans le nouveau devis. Smart_placer pour les lignes nouvelles,
+    # trim pour les surplus, suppression des orphelins.
+    #
+    # rooms_input : depuis edited_df si l'éditeur a déjà été rendu (cas
+    # post-"Générer devis"), sinon fallback ocr_rooms (cas plan load initial).
+    # GATE : ne tourne que post-trigger pour éviter de générer des équipements
+    # depuis le fallback "Chambre" de l'éditeur quand ocr_rooms est vide.
+    if _devis_triggered and devis_lines_key not in st.session_state:
+        from src.planrec.nfc_equipments import reconcile_equipments_for_line
+
+        # Surfaces user-définies par pastille_id (édition inline devis pour
+        # Séjour). Override les surfaces venant de l'éditeur ou de l'OCR.
+        _surface_by_pid_key = f"surface_by_pid_{img_hash}"
+        _surface_by_pid: dict[str, float] = st.session_state.get(
+            _surface_by_pid_key, {},
+        )
+
+        _src_rooms_input: list[dict] = []
+        _src_rooms_pids: list[str | None] = []
+        _src_df = st.session_state.get(editor_key)
+        if _src_df is not None and len(_src_df) > 0:
+            for _idx, _row in _src_df.iterrows():
+                if not _row.get("Inclure", False):
+                    continue
+                _label = _row.get("Type")
+                if not _label or _label not in DEVIS_LABEL_TO_PARAMS:
+                    continue
+                _c2_class, _forced_hint = DEVIS_LABEL_TO_PARAMS[_label]
+                _pid = _row.get("_pastille_id")
+                _pid_str = (
+                    str(_pid) if _pid is not None and not pd.isna(_pid)
+                    else None
+                )
+                # Priorité : user-set > editor > None
+                _surface = float(_row.get("Surface (m²)") or 0.0)
+                if _pid_str and _pid_str in _surface_by_pid:
+                    _surface = _surface_by_pid[_pid_str]
+                _src_rooms_input.append({
+                    "id": f"room_{_idx + 1:03d}",
+                    "c2_class": _c2_class,
+                    "surface_m2": _surface if _surface > 0 else None,
+                    "ocr_hint": _forced_hint or _row.get(
+                        "Notes / texte OCR", "",
+                    ),
+                })
+                _src_rooms_pids.append(_pid_str)
+        else:
+            for _r in ocr_rooms:
+                _label_fr = c2_class_to_devis_label(
+                    _r["c2_class"], _r.get("raw_text", ""),
+                )
+                if _label_fr not in DEVIS_LABEL_TO_PARAMS:
+                    continue
+                _c2_class, _forced_hint = DEVIS_LABEL_TO_PARAMS[_label_fr]
+                _pid_str = str(_r["id"])
+                _surface = _r.get("surface_m2")
+                # Priorité user-set
+                if _pid_str in _surface_by_pid:
+                    _surface = _surface_by_pid[_pid_str]
+                _src_rooms_input.append({
+                    "id": _r["id"],
+                    "c2_class": _c2_class,
+                    "surface_m2": float(_surface) if _surface else None,
+                    "ocr_hint": _forced_hint or _r.get("raw_text", ""),
+                })
+                _src_rooms_pids.append(_pid_str)
+
+        if _src_rooms_input:
+            _devis_auto = compute_devis_global(
+                _src_rooms_input, handicap=devis_handicap,
+            )
+            # Build devis_lines DataFrame avec manual_backup réinjecté si présent
+            _lines, _next_id_after = build_devis_lines_initial(
+                _devis_auto, DEFAULT_PRICES_HT, next_id_start=0,
+            )
+            _manual_backup_key = f"{devis_lines_key}_manual_backup"
+            if _manual_backup_key in st.session_state:
+                for _m_row in st.session_state[_manual_backup_key]:
+                    _m_row["_id"] = _next_id_after
+                    _m_row["_manual"] = True
+                    _next_id_after += 1
+                    _target_piece = _m_row.get("Pièce")
+                    _last_idx = None
+                    for _li, _l in enumerate(_lines):
+                        if _l.get("Pièce") == _target_piece:
+                            _last_idx = _li
+                    if _last_idx is not None:
+                        _lines.insert(_last_idx + 1, _m_row)
+                    else:
+                        _lines.append(_m_row)
+                del st.session_state[_manual_backup_key]
+            _df_devis = pd.DataFrame(_lines)
+
+            # pastilles_by_room avec indexation NFCCategory.value (cohérent
+            # avec generate_equipments_from_devis_global)
+            _pos_by_pid = {
+                str(p["id"]): (int(p["x"]), int(p["y"]))
+                for p in st.session_state[pastilles_state_key]
+            }
+            _cat_total: dict[str, int] = {}
+            for _rd in _devis_auto.per_room:
+                _c = _rd.nfc_category.value
+                _cat_total[_c] = _cat_total.get(_c, 0) + 1
+            _cat_seen: dict[str, int] = {}
+            _pastilles_by_room: dict[str, tuple[int, int]] = {}
+            _pid_to_devis_room: dict[str, str] = {}
+            for _i, _rd in enumerate(_devis_auto.per_room):
+                _c = _rd.nfc_category.value
+                _cat_seen[_c] = _cat_seen.get(_c, 0) + 1
+                _room_label = (
+                    f"{_c} {_cat_seen[_c]}" if _cat_total[_c] > 1 else _c
+                )
+                _pid = (
+                    _src_rooms_pids[_i] if _i < len(_src_rooms_pids) else None
+                )
+                if _pid and _pid in _pos_by_pid:
+                    _pastilles_by_room[_room_label] = _pos_by_pid[_pid]
+                    _pid_to_devis_room[_pid] = _room_label
+            st.session_state[f"pastille_to_devis_room_{img_hash}"] = (
+                _pid_to_devis_room
+            )
+
+            _placer = _make_smart_placer(
+                seg_result=result if enable_segmentation else None,
+                image_size=(image_w, image_h),
+                pastilles_by_room=_pastilles_by_room,
+            )
+
+            # Réconciliation : itère chaque ligne devis, conserve les
+            # positions existantes pour les couples (pièce, type) qui
+            # restent dans le nouveau devis, smart_place les nouvelles
+            # lignes, trim les surplus, supprime les orphelins. Qté du
+            # devis = NFC default (le bouton "Générer devis" recompute
+            # depuis les normes, intentionnel pour que handicap/édits de
+            # pièces prennent effet). Les drags palette sont live-trackés
+            # via le sync block, donc visibles immédiatement même sans
+            # cliquer Générer devis.
+            _current_eq = list(st.session_state[equipments_state_key])
+            _ids_by_line: dict[int, list[str]] = {}
+            _valid_rooms_types: set[tuple[str, str]] = set()
+            for _line_idx in _df_devis.index:
+                _line_room = str(_df_devis.at[_line_idx, "Pièce"])
+                _line_label = str(_df_devis.at[_line_idx, "Équipement"])
+                _line_type = _DEVIS_LABEL_TO_EQUIP_TYPE.get(_line_label)
+                if _line_type is None:
+                    continue
+                _valid_rooms_types.add((_line_room, _line_type))
+                _line_qty = int(_df_devis.at[_line_idx, "Qté"])
+                _current_eq, _line_ids = reconcile_equipments_for_line(
+                    current_state=_current_eq,
+                    line_room=_line_room,
+                    line_type=_line_type,
+                    new_qty=_line_qty,
+                    smart_placer=_placer,
+                )
+                _ids_by_line[_line_idx] = _line_ids
+
+            # Drop équipements orphelins (room/type qui n'existe plus dans
+            # aucune ligne du nouveau devis)
+            _current_eq = [
+                _e for _e in _current_eq
+                if (_e["room"], _e["type"]) in _valid_rooms_types
+            ]
+
+            for _line_idx, _ids in _ids_by_line.items():
+                _df_devis.at[_line_idx, "_equip_ids"] = _ids
+
+            # Ne setter le flag _eq_just_populated QUE si la réconciliation
+            # a réellement changé l'ensemble des ids. Sinon les props canvas
+            # restent identiques → React n'echo pas → flag jamais cleared →
+            # bloque le prochain drag palette qui serait skippé par erreur.
+            _old_ids = {
+                e["id"] for e in st.session_state.get(equipments_state_key, [])
+            }
+            _new_ids = {e["id"] for e in _current_eq}
+            st.session_state[devis_lines_key] = _df_devis
+            st.session_state[devis_lines_nid_key] = _next_id_after
+            st.session_state[equipments_state_key] = _current_eq
+            if _old_ids != _new_ids:
+                st.session_state[f"_eq_just_populated_{img_hash}"] = True
+
+    # On envoie TOUJOURS l'état complet à React (source de vérité Python).
+    # L'affichage est contrôlé via equip_visible_types : la liste vide
+    # cache tous les types, None (toggle off) cache aussi. Filtrer côté
+    # Python casserait la réconciliation React (les items "filtrés" seraient
+    # interprétés comme supprimés → echo back → wipe du state Python).
     canvas_state = pastille_canvas(
         image_bytes=encoded.tobytes(),
         image_width=image_w,
@@ -1178,20 +1554,28 @@ def main():
         palette=palette,
         seg_polygons=seg_polygons,
         yolo_boxes=yolo_boxes,
-        equipments=(
-            [
-                e for e in st.session_state[equipments_state_key]
-                if e["type"] in equip_allowed_types
-            ]
-            if enable_equipments else []
-        ),
+        equipments=st.session_state[equipments_state_key],
         equip_palette=equip_palette_for_canvas,
-        key=f"pastille_canvas_{img_hash}",
+        equip_visible_types=(
+            sorted(equip_allowed_types) if enable_equipments else []
+        ),
+        pastille_to_devis_room=st.session_state.get(
+            f"pastille_to_devis_room_{img_hash}", {},
+        ),
+        key=f"pastille_canvas_{img_hash}_{st.session_state.get(f'canvas_reset_counter_{img_hash}', 0)}",
     )
 
     # === Sync canvas → Python ===
     # Le component notifie son nouvel état dans canvas_state. On compare avec
     # session_state pour détecter ce qui a changé.
+    #
+    # Race condition équipements : juste après une génération (st.rerun() à
+    # la fin du devis block), pastille_canvas() retourne le canvas_state
+    # d'AVANT la génération (React n'a pas encore re-rendu/echo). Skipper
+    # la part équipement du sync à ce tour ; ré-active au tour suivant.
+    _eq_just_populated_key = f"_eq_just_populated_{img_hash}"
+    _eq_just_populated = st.session_state.pop(_eq_just_populated_key, False)
+
     if canvas_state is not None:
         new_pastilles = canvas_state.get("pastilles", [])
         current_state = st.session_state[pastilles_state_key]
@@ -1200,8 +1584,31 @@ def main():
         removed_pids = current_pids - new_pids
         added_pastilles = [p for p in new_pastilles if str(p["id"]) not in current_pids]
 
-        # Update session_state avec les nouvelles positions / suppressions / ajouts
-        st.session_state[pastilles_state_key] = new_pastilles
+        # Update session_state : positions de React, labels/color/type de
+        # Python (autorité serveur). Sinon le label indexé ("Chambre 2")
+        # qu'on a muté côté Python serait écrasé par l'echo React stale
+        # ("Chambre"), créant une boucle Python ↔ React.
+        _current_by_pid = {str(p["id"]): p for p in current_state}
+        _merged_pastilles = []
+        for _np in new_pastilles:
+            _pid_n = str(_np["id"])
+            if _pid_n in _current_by_pid:
+                _existing = _current_by_pid[_pid_n]
+                _merged_pastilles.append({
+                    **_existing,
+                    "x": _np.get("x", _existing.get("x")),
+                    "y": _np.get("y", _existing.get("y")),
+                })
+            else:
+                _merged_pastilles.append(dict(_np))
+        st.session_state[pastilles_state_key] = _merged_pastilles
+        # Garde une référence aux nouveaux objets pour qu'added_pastilles
+        # pointe vers les dicts persistés (pour mutations ultérieures)
+        added_pastilles = [
+            _merged_pastilles[i]
+            for i, _np in enumerate(new_pastilles)
+            if str(_np["id"]) not in current_pids
+        ]
 
         # Sync équipements (Phase 3+4) : positions, suppressions hors-image,
         # ajouts via palette. Persiste AVANT tout st.rerun().
@@ -1216,31 +1623,174 @@ def main():
         ]
         removed_eq_ids = current_eq_ids - new_eq_ids
 
-        st.session_state[equipments_state_key] = new_equipments
 
-        # Phase 5 : sync pastille supprimée → suppr équipements de cette pièce.
-        # Quand l'utilisateur sort une pastille du plan, React ne cascade-pas
-        # la suppression des équipements de la pièce. On le fait ici côté
-        # Python (avant tout st.rerun()) en utilisant la map
-        # pastille_id → devis room label (indexée "Chambre 1", "Chambre 2")
-        # persistée à la génération du devis.
-        if removed_pids and equipments_state_key in st.session_state:
-            pid_to_room_map: dict[str, str] = st.session_state.get(
+        if _eq_just_populated:
+            # On vient juste de générer côté Python — le canvas_state est
+            # stale. Préserve l'état Python tel quel ; React va echo-back
+            # les vraies positions au prochain rerun (interaction user).
+            added_palette_eqs = []
+            removed_eq_ids = set()
+        else:
+            st.session_state[equipments_state_key] = new_equipments
+
+        devis_lines_key = f"devis_lines_{img_hash}"
+
+        # Pastille supprimée (drag-out) → suppr équipements + lignes devis
+        # de cette pièce. Le map pastille_id → devis_room (indexé) sert de
+        # pont entre l'id React et le label utilisé dans le DataFrame.
+        if removed_pids:
+            _pid_to_room_map: dict[str, str] = st.session_state.get(
                 f"pastille_to_devis_room_{img_hash}", {}
             )
-            removed_rooms: set[str] = {
-                pid_to_room_map[pid]
+            _removed_rooms: set[str] = {
+                _pid_to_room_map[pid]
                 for pid in removed_pids
-                if pid in pid_to_room_map
+                if pid in _pid_to_room_map
             }
-            if removed_rooms:
-                st.session_state[equipments_state_key] = [
-                    e for e in st.session_state[equipments_state_key]
-                    if e.get("room") not in removed_rooms
-                ]
+            if _removed_rooms:
+                # Cascade équipements
+                if equipments_state_key in st.session_state:
+                    st.session_state[equipments_state_key] = [
+                        e for e in st.session_state[equipments_state_key]
+                        if e.get("room") not in _removed_rooms
+                    ]
+                # Cascade lignes devis
+                if devis_lines_key in st.session_state:
+                    _df = st.session_state[devis_lines_key]
+                    st.session_state[devis_lines_key] = _df[
+                        ~_df["Pièce"].isin(_removed_rooms)
+                    ].reset_index(drop=True)
+                # Nettoie le map pour éviter les références orphelines
+                for pid in removed_pids:
+                    _pid_to_room_map.pop(pid, None)
+                st.session_state[
+                    f"pastille_to_devis_room_{img_hash}"
+                ] = _pid_to_room_map
+                st.rerun()
 
-        # Phase 4 : sync devis pour ajouts (palette) et suppressions
-        devis_lines_key = f"devis_lines_{img_hash}"
+        # Pastille ajoutée (drag depuis palette pièces) → ajout devis +
+        # smart-placement des équipements NFC pour la nouvelle pièce.
+        # Indexation : si la catégorie existe déjà (ex "Chambre 1"…), le
+        # nouveau prend l'index max+1. Sinon label simple.
+        if added_pastilles and devis_lines_key in st.session_state:
+            from src.planrec.nfc_equipments import (
+                generate_equipments_from_devis_global,
+                smart_placement_fallback_cluster,
+            )
+            _df_devis = st.session_state[devis_lines_key].copy()
+            _pid_to_room_map = st.session_state.get(
+                f"pastille_to_devis_room_{img_hash}", {}
+            )
+            _next_id = int(st.session_state.get(
+                f"{devis_lines_key}_nextid", len(_df_devis),
+            ))
+            _eq_state_added = list(st.session_state.get(equipments_state_key, []))
+            _pos_by_pid_new = {
+                str(p["id"]): (int(p["x"]), int(p["y"]))
+                for p in new_pastilles
+            }
+            for _new_p in added_pastilles:
+                _pid = str(_new_p["id"])
+                _ptype = str(_new_p.get("type", ""))
+                if _ptype not in DEVIS_LABEL_TO_PARAMS:
+                    continue
+                _c2_class, _forced_hint = DEVIS_LABEL_TO_PARAMS[_ptype]
+                _rooms_input_one = [{
+                    "id": f"room_added_{_pid}",
+                    "c2_class": _c2_class,
+                    "surface_m2": None,
+                    "ocr_hint": _forced_hint or "",
+                }]
+                _devis_one = compute_devis_global(
+                    _rooms_input_one, handicap=devis_handicap,
+                )
+                _nfc_value = _devis_one.per_room[0].nfc_category.value
+                # Détermine l'index suivant pour cette catégorie
+                _existing_labels = (
+                    _df_devis["Pièce"].astype(str).unique()
+                    if len(_df_devis) > 0 else []
+                )
+                _matching_labels = [
+                    lbl for lbl in _existing_labels
+                    if lbl == _nfc_value or lbl.startswith(f"{_nfc_value} ")
+                ]
+                if _matching_labels:
+                    _indices: list[int] = []
+                    for lbl in _matching_labels:
+                        if lbl == _nfc_value:
+                            _indices.append(1)
+                        else:
+                            try:
+                                _indices.append(int(lbl.rsplit(" ", 1)[-1]))
+                            except (ValueError, IndexError):
+                                pass
+                    # Gap-filling : trouve le plus petit index ≥ 1 libre
+                    # (ex existing [1, 3] → 2). Évite l'incrémentation
+                    # monotone qui laisserait des trous visibles.
+                    _used = set(_indices)
+                    _new_idx = 1
+                    while _new_idx in _used:
+                        _new_idx += 1
+                    _room_label = f"{_nfc_value} {_new_idx}"
+                else:
+                    _room_label = _nfc_value
+                # Mute le label de la pastille pour qu'il matche le devis.
+                # React reconcile propagera vers le canvas display.
+                _new_p["label"] = _room_label
+                # Construit les lignes devis pour cette pièce
+                _lines_one, _next_id = build_devis_lines_initial(
+                    _devis_one, DEFAULT_PRICES_HT, next_id_start=_next_id,
+                )
+                for _line in _lines_one:
+                    _line["Pièce"] = _room_label
+                # Génère et place les équipements
+                _instances = generate_equipments_from_devis_global(_devis_one)
+                for _inst in _instances:
+                    _inst["room"] = _room_label
+                _center = _pos_by_pid_new.get(_pid, (image_w // 2, image_h // 2))
+                _adjusted = (_center[0], _center[1] + 35)
+                _type_seen_p: dict[tuple[str, str], int] = {}
+                _type_total_p: dict[tuple[str, str], int] = {}
+                for _inst in _instances:
+                    _k = (_inst["room"], _inst["type"])
+                    _type_total_p[_k] = _type_total_p.get(_k, 0) + 1
+                _ids_per_typ: dict[str, list[str]] = {}
+                for _inst in _instances:
+                    _k = (_inst["room"], _inst["type"])
+                    _idx_t = _type_seen_p.get(_k, 0)
+                    _type_seen_p[_k] = _idx_t + 1
+                    _positions = smart_placement_fallback_cluster(
+                        room_center=_adjusted,
+                        n_equipments=_type_total_p[_k],
+                        image_size=(image_w, image_h),
+                        spacing=28,
+                        random_seed=hash((_room_label, _inst["type"]))
+                                    & 0xFFFFFFFF,
+                    )
+                    _x, _y = _positions[min(_idx_t, len(_positions) - 1)]
+                    _inst["x"] = int(_x)
+                    _inst["y"] = int(_y)
+                    _ids_per_typ.setdefault(_inst["type"], []).append(_inst["id"])
+                # Append _equip_ids dans les lignes devis nouvelles
+                for _line in _lines_one:
+                    _eq_type = _DEVIS_LABEL_TO_EQUIP_TYPE.get(_line["Équipement"])
+                    if _eq_type and _eq_type in _ids_per_typ:
+                        _line["_equip_ids"] = list(_ids_per_typ[_eq_type])
+                # Append au DataFrame + state
+                _df_devis = pd.concat(
+                    [_df_devis, pd.DataFrame(_lines_one)],
+                    ignore_index=True,
+                )
+                _eq_state_added.extend(_instances)
+                _pid_to_room_map[_pid] = _room_label
+            st.session_state[devis_lines_key] = _df_devis
+            st.session_state[f"{devis_lines_key}_nextid"] = _next_id
+            st.session_state[equipments_state_key] = _eq_state_added
+            st.session_state[
+                f"pastille_to_devis_room_{img_hash}"
+            ] = _pid_to_room_map
+            st.session_state[f"_eq_just_populated_{img_hash}"] = True
+            st.rerun()
 
         if added_palette_eqs and devis_lines_key in st.session_state:
             df_devis = st.session_state[devis_lines_key].copy()
@@ -1339,284 +1889,265 @@ def main():
             st.write(f"**Dernier canvas_state** : {len(canvas_state.get('pastilles', []))} pastilles")
         st.json(st.session_state.get(pastilles_state_key, []))
 
-    # --- Éditeur de pièces interactif (OCR-first + édition manuelle) ---
-    st.markdown("---")
-    st.markdown("### 🛠 Pièces à inclure dans le devis")
-    st.caption(
-        "Pièces pré-détectées par OCR (toutes cochées par défaut). "
-        "**Décoche** pour exclure une pièce du devis, **modifie** le type si "
-        "l'OCR s'est trompé, **ajoute** une pièce manuellement si l'OCR l'a "
-        "manquée."
-    )
-
-    # (editor_key déjà défini plus haut, avant le canvas pastilles)
-
-    # Init du DataFrame en session_state au premier rendu pour cette image.
-    # Chaque ligne reçoit un _id stable (compteur monotone) pour servir de
-    # CLEF DE WIDGET — sinon les keys basées sur l'index pandas sont décalées
-    # après chaque suppression et un click 🗑️ sur ligne N supprime la mauvaise.
-    # (next_id_key déjà défini plus haut, avant le canvas pastilles)
-    if editor_key not in st.session_state:
-        st.session_state[next_id_key] = 0
-        initial_rows: list[dict] = []
-        for r in ocr_rooms:
-            label = c2_class_to_devis_label(r["c2_class"], r.get("raw_text", ""))
-            initial_rows.append({
-                "_id": st.session_state[next_id_key],
-                "_pastille_id": r["id"],  # lien vers la pastille canvas
-                "Inclure": True,
-                "Type": label,
-                "Surface (m²)": 0.0,
-                "Notes / texte OCR": r["raw_text"][:50],
-            })
-            st.session_state[next_id_key] += 1
-        if not initial_rows:
-            initial_rows = [{
-                "_id": 0, "_pastille_id": None,
-                "Inclure": True, "Type": "Chambre",
-                "Surface (m²)": 0.0, "Notes / texte OCR": "",
-            }]
-            st.session_state[next_id_key] = 1
-        st.session_state[editor_key] = pd.DataFrame(initial_rows)
-
-    # === PRÉ-INIT widget states pour TOUTES les lignes ===
-    # Le DataFrame en st.session_state[editor_key] est la SOURCE DE VÉRITÉ.
-    # Les widgets utilisent on_change pour sync IMMÉDIATEMENT le DataFrame
-    # dès que l'user change une valeur. Au début de chaque rerun, on
-    # FORCE-SYNC le widget state depuis le DataFrame → garantit que le
-    # widget affiche TOUJOURS la valeur courante du DataFrame, même si
-    # Streamlit reset le widget state pour une raison quelconque.
-    _df_init = st.session_state[editor_key]
-    for _idx in _df_init.index:
-        _rid = int(_df_init.loc[_idx, "_id"])
-        # Force-sync : écrase le widget state avec la valeur du DataFrame
-        # (qui a été mise à jour par on_change au précédent rerun)
-        st.session_state[f"{editor_key}_type_{_rid}"] = str(_df_init.loc[_idx, "Type"])
-        st.session_state[f"{editor_key}_inc_{_rid}"] = bool(_df_init.loc[_idx, "Inclure"])
-        st.session_state[f"{editor_key}_surf_{_rid}"] = float(_df_init.loc[_idx, "Surface (m²)"])
-        st.session_state[f"{editor_key}_notes_{_rid}"] = str(_df_init.loc[_idx, "Notes / texte OCR"])
-
-    # === Callbacks on_change : sync widget value → DataFrame ===
-    # CRITIQUE : sans ces callbacks, le DataFrame ne reflète JAMAIS les
-    # éditions utilisateur. Conséquence : type_total lit l'init "Chambre",
-    # le devis génère des équipements de Chambre au lieu de WC, etc.
-    def _on_edit_field(rid: int, widget_suffix: str, df_field: str, caster):
-        wkey = f"{editor_key}_{widget_suffix}_{rid}"
-        if wkey not in st.session_state:
-            return
-        df_cur = st.session_state[editor_key]
-        mask = df_cur["_id"] == rid
-        df_cur.loc[mask, df_field] = caster(st.session_state[wkey])
-        st.session_state[editor_key] = df_cur
-
-    # Boutons d'action en haut : Ajouter pièce + Générer devis + Réinitialiser
-    devis_state_key = f"devis_generated_{img_hash}"
-    col_add, col_devis, _, col_reset = st.columns([1, 1, 2, 1])
-    with col_add:
-        if st.button("➕ Ajouter une pièce", key=f"{editor_key}_add"):
-            new_id = st.session_state[next_id_key]
-            st.session_state[next_id_key] += 1
-            new_row = pd.DataFrame([{
-                "_id": new_id,
-                "_pastille_id": None,  # manuel → pas de pastille (Phase 3 via palette)
-                "Inclure": True, "Type": "Chambre",
-                "Surface (m²)": 0.0, "Notes / texte OCR": "(ajout manuel)",
-            }])
-            st.session_state[editor_key] = pd.concat(
-                [st.session_state[editor_key], new_row], ignore_index=True,
-            )
-            # Pré-init widget states pour la nouvelle ligne → disponibles dès
-            # le prochain render (évite fallback "Chambre" du type_total loop)
-            st.session_state[f"{editor_key}_inc_{new_id}"] = True
-            st.session_state[f"{editor_key}_type_{new_id}"] = "Chambre"
-            st.session_state[f"{editor_key}_surf_{new_id}"] = 0.0
-            st.session_state[f"{editor_key}_notes_{new_id}"] = "(ajout manuel)"
-            st.rerun()
-    with col_devis:
-        if st.button("💡 Générer devis", key=f"{editor_key}_gen",
-                     type="primary"):
-            st.session_state[devis_state_key] = True
-            # Avant reset : sauvegarder les lignes ajoutées manuellement EN
-            # LISANT LES WIDGET STATES (pas le DataFrame, qui n'a pas les
-            # valeurs éditées par l'utilisateur).
-            dl_key = f"devis_lines_{img_hash}"
-            manual_backup_key = f"{dl_key}_manual_backup"
-            if dl_key in st.session_state:
-                existing_devis = st.session_state[dl_key]
-                if "_manual" in existing_devis.columns:
-                    manual_rows: list[dict] = []
-                    for idx in existing_devis.index:
-                        if not bool(existing_devis.loc[idx, "_manual"]):
-                            continue
-                        rid = int(existing_devis.loc[idx, "_id"])
-                        backup_ids = []
-                        if "_equip_ids" in existing_devis.columns:
-                            backup_ids = list(
-                                existing_devis.loc[idx, "_equip_ids"] or []
-                            )
-                        manual_rows.append({
-                            "Pièce": st.session_state.get(
-                                f"{dl_key}_piece_{rid}",
-                                str(existing_devis.loc[idx, "Pièce"]),
-                            ),
-                            "Équipement": st.session_state.get(
-                                f"{dl_key}_eq_{rid}",
-                                str(existing_devis.loc[idx, "Équipement"]),
-                            ),
-                            "Qté": int(st.session_state.get(
-                                f"{dl_key}_qty_{rid}",
-                                int(existing_devis.loc[idx, "Qté"]),
-                            )),
-                            "Prix HT (€)": float(st.session_state.get(
-                                f"{dl_key}_ht_{rid}",
-                                float(existing_devis.loc[idx, "Prix HT (€)"]),
-                            )),
-                            "_equip_ids": backup_ids,
-                        })
-                    if manual_rows:
-                        st.session_state[manual_backup_key] = manual_rows
-            # Reset complet du tableau devis pour reconstruction
-            keys_to_del = [
-                k for k in list(st.session_state.keys())
-                if k.startswith(dl_key) and k != manual_backup_key
-            ]
-            for k in keys_to_del:
-                del st.session_state[k]
-            st.rerun()
-    with col_reset:
-        if st.button(
-            "🔄 Réinitialiser", key=f"{editor_key}_reset",
-            help="Efface toutes les éditions et reconstruit le tableau depuis "
-                 "les pièces détectées par OCR.",
-        ):
-            # Supprime toutes les clés session_state liées à ce plan
-            keys_to_del = [
-                k for k in list(st.session_state.keys())
-                if k.startswith(editor_key) or k.startswith(devis_state_key)
-            ]
-            for k in keys_to_del:
-                del st.session_state[k]
-            st.rerun()
-
-    if not ocr_rooms and len(st.session_state[editor_key]) == 1:
-        st.warning(
-            "Aucune pièce identifiée par l'OCR. Ajoute des pièces manuellement "
-            "via le bouton ➕ et configure leur type."
+    # --- Éditeur de pièces (caché par défaut, accessible via expander) ---
+    # V1.2 : section devenue rarement utile depuis le drag-drop. Conservée
+    # pour cas avancés (changement de type d'une pièce mal détectée par OCR,
+    # exclusion fine via case à cocher) et pour la rétrocompat des tests
+    # AppTest qui interagissent avec ces widgets.
+    with st.expander("⚙️ Paramètres avancés (édition manuelle des pièces)", expanded=False):
+        st.caption(
+            "Modifie le type d'une pièce mal détectée par l'OCR, ou exclus-en "
+            "via la case 'Inclure'. Pour la plupart des cas, le drag-drop "
+            "depuis le canvas est plus simple."
         )
 
-    # === Rendu custom row-by-row : VRAIS boutons 🗑️ par ligne ===
-    # Layout : 6 colonnes [#, Inclure, Type, Surface, Notes, Bouton Suppr.]
-    COL_PROPS = [0.4, 1, 4, 2, 5, 1]
+        # Init du DataFrame en session_state au premier rendu pour cette image.
+        if editor_key not in st.session_state:
+            st.session_state[next_id_key] = 0
+            initial_rows: list[dict] = []
+            for r in ocr_rooms:
+                label = c2_class_to_devis_label(r["c2_class"], r.get("raw_text", ""))
+                initial_rows.append({
+                    "_id": st.session_state[next_id_key],
+                    "_pastille_id": r["id"],
+                    "Inclure": True,
+                    "Type": label,
+                    "Surface (m²)": 0.0,
+                    "Notes / texte OCR": r["raw_text"][:50],
+                })
+                st.session_state[next_id_key] += 1
+            if not initial_rows:
+                initial_rows = [{
+                    "_id": 0, "_pastille_id": None,
+                    "Inclure": True, "Type": "Chambre",
+                    "Surface (m²)": 0.0, "Notes / texte OCR": "",
+                }]
+                st.session_state[next_id_key] = 1
+            st.session_state[editor_key] = pd.DataFrame(initial_rows)
 
-    # Headers
-    header_cols = st.columns(COL_PROPS)
-    header_cols[0].markdown("**#**", help="Numéro d'occurrence pour ce type "
-                                          "(ex: WC 2 = 2ème WC)")
-    header_cols[1].markdown("**Inclure**")
-    header_cols[2].markdown("**Type de pièce**")
-    header_cols[3].markdown("**Surface (m²)**")
-    header_cols[4].markdown("**Notes / texte OCR**")
-    header_cols[5].markdown("**Suppr.**")
-    st.divider()
+        # FORCE-SYNC widget states depuis le DataFrame
+        _df_init = st.session_state[editor_key]
+        for _idx in _df_init.index:
+            _rid = int(_df_init.loc[_idx, "_id"])
+            st.session_state[f"{editor_key}_type_{_rid}"] = str(_df_init.loc[_idx, "Type"])
+            st.session_state[f"{editor_key}_inc_{_rid}"] = bool(_df_init.loc[_idx, "Inclure"])
+            st.session_state[f"{editor_key}_surf_{_rid}"] = float(_df_init.loc[_idx, "Surface (m²)"])
+            st.session_state[f"{editor_key}_notes_{_rid}"] = str(_df_init.loc[_idx, "Notes / texte OCR"])
 
-    df = st.session_state[editor_key]
-    ids_to_delete: list[int] = []
+        # Callbacks on_change : sync widget value → DataFrame
+        def _on_edit_field(rid: int, widget_suffix: str, df_field: str, caster):
+            wkey = f"{editor_key}_{widget_suffix}_{rid}"
+            if wkey not in st.session_state:
+                return
+            if editor_key not in st.session_state:
+                return  # Stale callback après changement de plan
+            df_cur = st.session_state[editor_key]
+            mask = df_cur["_id"] == rid
+            df_cur.loc[mask, df_field] = caster(st.session_state[wkey])
+            st.session_state[editor_key] = df_cur
 
-    # Compteurs lus DEPUIS LE DATAFRAME (source de vérité, sync via on_change)
-    type_total: dict[str, int] = {}
-    for idx in df.index:
-        current_type = str(df.loc[idx, "Type"])
-        type_total[current_type] = type_total.get(current_type, 0) + 1
-    type_seen_count: dict[str, int] = {}
-
-    for idx in df.index:
-        row = df.loc[idx]
-        row_id = int(row["_id"])
-        current_type = str(row["Type"])
-        type_seen_count[current_type] = type_seen_count.get(current_type, 0) + 1
-        idx_label = (
-            str(type_seen_count[current_type])
-            if type_total.get(current_type, 0) >= 2 else ""
-        )
-
-        cols = st.columns(COL_PROPS)
-        with cols[0]:
-            if idx_label:
-                st.markdown(
-                    f"<div style='padding-top: 0.5rem; text-align: center; "
-                    f"color: #666; font-weight: 600;'>{idx_label}</div>",
-                    unsafe_allow_html=True,
+        # Boutons d'éditeur (Ajouter pièce + Générer devis + Réinitialiser),
+        # conservés pour rétrocompat des tests AppTest qui les invoquent.
+        col_add, col_devis, _, col_reset = st.columns([1, 1, 2, 1])
+        with col_add:
+            if st.button("➕ Ajouter une pièce", key=f"{editor_key}_add"):
+                new_id = st.session_state[next_id_key]
+                st.session_state[next_id_key] += 1
+                new_row = pd.DataFrame([{
+                    "_id": new_id,
+                    "_pastille_id": None,
+                    "Inclure": True, "Type": "Chambre",
+                    "Surface (m²)": 0.0, "Notes / texte OCR": "(ajout manuel)",
+                }])
+                st.session_state[editor_key] = pd.concat(
+                    [st.session_state[editor_key], new_row], ignore_index=True,
                 )
-            else:
-                st.markdown("")
-        # Widgets avec on_change → sync DataFrame instantanément
-        with cols[1]:
-            st.checkbox(
-                "Inclure cette pièce",
-                key=f"{editor_key}_inc_{row_id}",
-                on_change=_on_edit_field,
-                args=(row_id, "inc", "Inclure", bool),
-                label_visibility="collapsed",
-            )
-        with cols[2]:
-            st.selectbox(
-                "Type de pièce", DEVIS_LABELS,
-                key=f"{editor_key}_type_{row_id}",
-                on_change=_on_edit_field,
-                args=(row_id, "type", "Type", str),
-                label_visibility="collapsed",
-            )
-        with cols[3]:
-            st.number_input(
-                "Surface",
-                min_value=0.0, max_value=300.0, step=1.0,
-                key=f"{editor_key}_surf_{row_id}",
-                on_change=_on_edit_field,
-                args=(row_id, "surf", "Surface (m²)", float),
-                label_visibility="collapsed",
-            )
-        with cols[4]:
-            st.text_input(
-                "Notes",
-                key=f"{editor_key}_notes_{row_id}",
-                on_change=_on_edit_field,
-                args=(row_id, "notes", "Notes / texte OCR", str),
-                label_visibility="collapsed",
-            )
-        with cols[5]:
-            if st.button(
-                "🗑️", key=f"{editor_key}_del_{row_id}",
-                help="Supprimer définitivement cette pièce du tableau",
-            ):
-                ids_to_delete.append(row_id)
-
-    # Process deletions : drop par _id (pas par index pandas)
-    if ids_to_delete:
-        new_df = df[~df["_id"].isin(ids_to_delete)].reset_index(drop=True)
-        st.session_state[editor_key] = new_df
-        for row_id in ids_to_delete:
-            for prefix in ("inc", "type", "surf", "notes", "del"):
-                k = f"{editor_key}_{prefix}_{row_id}"
-                if k in st.session_state:
+                st.session_state[f"{editor_key}_inc_{new_id}"] = True
+                st.session_state[f"{editor_key}_type_{new_id}"] = "Chambre"
+                st.session_state[f"{editor_key}_surf_{new_id}"] = 0.0
+                st.session_state[f"{editor_key}_notes_{new_id}"] = "(ajout manuel)"
+                st.rerun()
+        with col_devis:
+            if st.button("💡 Générer devis", key=f"{editor_key}_gen",
+                         type="primary"):
+                st.session_state[devis_state_key] = True
+                dl_key = f"devis_lines_{img_hash}"
+                manual_backup_key = f"{dl_key}_manual_backup"
+                if dl_key in st.session_state:
+                    existing_devis = st.session_state[dl_key]
+                    if "_manual" in existing_devis.columns:
+                        manual_rows: list[dict] = []
+                        for idx in existing_devis.index:
+                            if not bool(existing_devis.loc[idx, "_manual"]):
+                                continue
+                            rid = int(existing_devis.loc[idx, "_id"])
+                            backup_ids = []
+                            if "_equip_ids" in existing_devis.columns:
+                                backup_ids = list(
+                                    existing_devis.loc[idx, "_equip_ids"] or []
+                                )
+                            manual_rows.append({
+                                "Pièce": st.session_state.get(
+                                    f"{dl_key}_piece_{rid}",
+                                    str(existing_devis.loc[idx, "Pièce"]),
+                                ),
+                                "Équipement": st.session_state.get(
+                                    f"{dl_key}_eq_{rid}",
+                                    str(existing_devis.loc[idx, "Équipement"]),
+                                ),
+                                "Qté": int(st.session_state.get(
+                                    f"{dl_key}_qty_{rid}",
+                                    int(existing_devis.loc[idx, "Qté"]),
+                                )),
+                                "Prix HT (€)": float(st.session_state.get(
+                                    f"{dl_key}_ht_{rid}",
+                                    float(existing_devis.loc[idx, "Prix HT (€)"]),
+                                )),
+                                "_equip_ids": backup_ids,
+                            })
+                        if manual_rows:
+                            st.session_state[manual_backup_key] = manual_rows
+                keys_to_del = [
+                    k for k in list(st.session_state.keys())
+                    if k.startswith(dl_key) and k != manual_backup_key
+                ]
+                for k in keys_to_del:
                     del st.session_state[k]
-        st.rerun()
+                st.rerun()
+        with col_reset:
+            if st.button(
+                "🔄 Réinitialiser", key=f"{editor_key}_reset",
+                help="Efface toutes les éditions et reconstruit le tableau depuis "
+                     "les pièces détectées par OCR.",
+            ):
+                keys_to_del = [
+                    k for k in list(st.session_state.keys())
+                    if k.startswith(editor_key) or k.startswith(devis_state_key)
+                ]
+                for k in keys_to_del:
+                    del st.session_state[k]
+                st.rerun()
 
-    # edited_df = DataFrame directement (déjà sync via on_change)
-    edited_df = df.copy()
+        if not ocr_rooms and len(st.session_state[editor_key]) == 1:
+            st.warning(
+                "Aucune pièce identifiée par l'OCR. Ajoute des pièces manuellement "
+                "via le bouton ➕ et configure leur type."
+            )
 
-    # Compteur live
-    n_total = len(edited_df)
-    n_inclus = int(edited_df["Inclure"].sum()) if n_total > 0 else 0
-    st.caption(
-        f"📊 **{n_inclus}** pièces cochées sur **{n_total}** au total"
-    )
+        # Rendu custom row-by-row : VRAIS boutons 🗑️ par ligne
+        COL_PROPS = [0.4, 1, 4, 2, 5, 1]
+        header_cols = st.columns(COL_PROPS)
+        header_cols[0].markdown("**#**", help="Numéro d'occurrence pour ce type")
+        header_cols[1].markdown("**Inclure**")
+        header_cols[2].markdown("**Type de pièce**")
+        header_cols[3].markdown("**Surface (m²)**")
+        header_cols[4].markdown("**Notes / texte OCR**")
+        header_cols[5].markdown("**Suppr.**")
+        st.divider()
 
-    # --- Devis (basé sur NF C 15-100) — affiché après click 'Générer devis' ---
+        df = st.session_state[editor_key]
+        ids_to_delete: list[int] = []
+
+        type_total: dict[str, int] = {}
+        for idx in df.index:
+            current_type = str(df.loc[idx, "Type"])
+            type_total[current_type] = type_total.get(current_type, 0) + 1
+        type_seen_count: dict[str, int] = {}
+
+        for idx in df.index:
+            row = df.loc[idx]
+            row_id = int(row["_id"])
+            current_type = str(row["Type"])
+            type_seen_count[current_type] = type_seen_count.get(current_type, 0) + 1
+            idx_label = (
+                str(type_seen_count[current_type])
+                if type_total.get(current_type, 0) >= 2 else ""
+            )
+
+            cols = st.columns(COL_PROPS)
+            with cols[0]:
+                if idx_label:
+                    st.markdown(
+                        f"<div style='padding-top: 0.5rem; text-align: center; "
+                        f"color: #666; font-weight: 600;'>{idx_label}</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown("")
+            with cols[1]:
+                st.checkbox(
+                    "Inclure cette pièce",
+                    key=f"{editor_key}_inc_{row_id}",
+                    on_change=_on_edit_field,
+                    args=(row_id, "inc", "Inclure", bool),
+                    label_visibility="collapsed",
+                )
+            with cols[2]:
+                st.selectbox(
+                    "Type de pièce", DEVIS_LABELS,
+                    key=f"{editor_key}_type_{row_id}",
+                    on_change=_on_edit_field,
+                    args=(row_id, "type", "Type", str),
+                    label_visibility="collapsed",
+                )
+            with cols[3]:
+                st.number_input(
+                    "Surface",
+                    min_value=0.0, max_value=300.0, step=1.0,
+                    key=f"{editor_key}_surf_{row_id}",
+                    on_change=_on_edit_field,
+                    args=(row_id, "surf", "Surface (m²)", float),
+                    label_visibility="collapsed",
+                )
+            with cols[4]:
+                st.text_input(
+                    "Notes",
+                    key=f"{editor_key}_notes_{row_id}",
+                    on_change=_on_edit_field,
+                    args=(row_id, "notes", "Notes / texte OCR", str),
+                    label_visibility="collapsed",
+                )
+            with cols[5]:
+                if st.button(
+                    "🗑️", key=f"{editor_key}_del_{row_id}",
+                    help="Supprimer définitivement cette pièce du tableau",
+                ):
+                    ids_to_delete.append(row_id)
+
+        if ids_to_delete:
+            new_df = df[~df["_id"].isin(ids_to_delete)].reset_index(drop=True)
+            st.session_state[editor_key] = new_df
+            for row_id in ids_to_delete:
+                for prefix in ("inc", "type", "surf", "notes", "del"):
+                    k = f"{editor_key}_{prefix}_{row_id}"
+                    if k in st.session_state:
+                        del st.session_state[k]
+            st.rerun()
+
+        edited_df = df.copy()
+        n_total = len(edited_df)
+        n_inclus = int(edited_df["Inclure"].sum()) if n_total > 0 else 0
+        st.caption(
+            f"📊 **{n_inclus}** pièces cochées sur **{n_total}** au total"
+        )
+
+    # edited_df nécessaire pour le bloc devis ci-dessous (recalcul rooms_input)
+    edited_df = st.session_state[editor_key].copy()
+
+    # --- Devis (basé sur NF C 15-100) ---
     if st.session_state.get(devis_state_key, False):
         st.markdown("---")
         st.markdown("### 💡 Devis quantitatif (basé sur norme NF C 15-100)")
         if devis_handicap:
             st.caption("🦽 Norme handicap activée")
+
+        # Pré-trigger : pas encore d'OCR → afficher placeholder vide
+        if not _devis_triggered:
+            st.info(
+                "Clique sur **💡 Générer devis** au-dessus du plan pour "
+                "lancer l'analyse OCR et générer le devis quantitatif."
+            )
+            return
 
         # Construit rooms_input depuis le DataFrame édité (uniquement les lignes
         # cochées avec un Type valide)
@@ -1645,135 +2176,22 @@ def main():
             )
         else:
             # === Tableau détail devis (éditable, ligne par ligne) ===
+            # devis_lines_key et equipments_state_key sont auto-construits +
+            # réconciliés en amont (V1.2, voir bloc auto-gen). Le bouton
+            # "Générer devis" invalide devis_lines_key → l'auto-gen rebuild
+            # depuis edited_df et reconcile les positions équipements.
             devis_lines_key = f"devis_lines_{img_hash}"
             devis_lines_nid_key = f"{devis_lines_key}_nextid"
 
-            # Init depuis le DevisGlobal (1er render OU après reset via bouton
-            # "Générer devis" qui efface cette session_state). Les lignes
-            # manuelles sauvegardées dans manual_backup sont réinjectées à la
-            # bonne position (juste après la dernière ligne de leur pièce).
+            # Garde défensive : si l'auto-gen n'a pas pu construire devis_lines
+            # (state corrompu après upload d'un nouveau plan, race condition),
+            # affiche message au lieu de crasher sur l'accès direct au DF.
             if devis_lines_key not in st.session_state:
-                devis = compute_devis_global(
-                    rooms_input, handicap=devis_handicap,
+                st.info(
+                    "Devis en cours de génération... Si ce message persiste, "
+                    "clique sur **↺ Réinitialiser** au-dessus du plan."
                 )
-                lines, next_id_after = build_devis_lines_initial(
-                    devis, DEFAULT_PRICES_HT, next_id_start=0,
-                )
-                manual_backup_key = f"{devis_lines_key}_manual_backup"
-                if manual_backup_key in st.session_state:
-                    for m_row in st.session_state[manual_backup_key]:
-                        m_row["_id"] = next_id_after
-                        m_row["_manual"] = True
-                        next_id_after += 1
-                        target_piece = m_row.get("Pièce")
-                        last_idx = None
-                        for i, l in enumerate(lines):
-                            if l.get("Pièce") == target_piece:
-                                last_idx = i
-                        if last_idx is not None:
-                            lines.insert(last_idx + 1, m_row)
-                        else:
-                            lines.append(m_row)
-                    del st.session_state[manual_backup_key]
-                st.session_state[devis_lines_key] = pd.DataFrame(lines)
-                st.session_state[devis_lines_nid_key] = next_id_after
-
-                # === Phase 5 : génération équipements + smart placement ===
-                # 1. Génère les instances équipements depuis devis (1 par unité Qté)
-                # 2. Calcule pastilles_by_room en reproduisant l'indexation
-                #    cat ("Chambre 1", "Chambre 2", …) faite par
-                #    generate_equipments_from_devis_global, en pairant
-                #    devis.per_room[i] avec rooms_input[i] (préservation d'ordre
-                #    garantie par compute_devis_global) → pastille_id via edited_df
-                # 3. Place chaque équipement via _make_smart_placer
-                # 4. Persiste equipments_state + remplit _equip_ids du DataFrame
-                from src.planrec.nfc_equipments import (
-                    generate_equipments_from_devis_global,
-                )
-
-                instances_raw = generate_equipments_from_devis_global(devis)
-
-                # Re-itère edited_df dans le MÊME ordre que la construction de
-                # rooms_input pour récupérer les _pastille_id alignés
-                rooms_input_pids: list[str | None] = []
-                for _idx, _row in edited_df.iterrows():
-                    if not _row.get("Inclure", False):
-                        continue
-                    _label = _row.get("Type")
-                    if not _label or _label not in DEVIS_LABEL_TO_PARAMS:
-                        continue
-                    _pid = _row.get("_pastille_id")
-                    rooms_input_pids.append(
-                        str(_pid) if _pid is not None and not pd.isna(_pid)
-                        else None
-                    )
-
-                # Pos par pastille_id depuis session_state
-                pastille_pos_by_pid: dict[str, tuple[int, int]] = {
-                    str(p["id"]): (int(p["x"]), int(p["y"]))
-                    for p in st.session_state[pastilles_state_key]
-                }
-
-                # Reproduit l'indexation NFCCategory.value ("Chambre 1", …)
-                # appliquée par generate_equipments_from_devis_global
-                _cat_total: dict[str, int] = {}
-                for _rd in devis.per_room:
-                    _c = _rd.nfc_category.value
-                    _cat_total[_c] = _cat_total.get(_c, 0) + 1
-                _cat_seen: dict[str, int] = {}
-                pastilles_by_room: dict[str, tuple[int, int]] = {}
-                # Mapping pastille_id → devis room label, persisté pour la
-                # cascade-suppression (Phase 5.3) lors d'un drag-out pastille
-                pid_to_devis_room: dict[str, str] = {}
-                for _i, _rd in enumerate(devis.per_room):
-                    _c = _rd.nfc_category.value
-                    _cat_seen[_c] = _cat_seen.get(_c, 0) + 1
-                    _room_label = (
-                        f"{_c} {_cat_seen[_c]}" if _cat_total[_c] > 1 else _c
-                    )
-                    _pid = rooms_input_pids[_i] if _i < len(rooms_input_pids) else None
-                    if _pid and _pid in pastille_pos_by_pid:
-                        pastilles_by_room[_room_label] = pastille_pos_by_pid[_pid]
-                        pid_to_devis_room[_pid] = _room_label
-                st.session_state[f"pastille_to_devis_room_{img_hash}"] = (
-                    pid_to_devis_room
-                )
-
-                placer = _make_smart_placer(
-                    seg_result=result if enable_segmentation else None,
-                    image_size=(image_w, image_h),
-                    pastilles_by_room=pastilles_by_room,
-                )
-
-                type_seen: dict[tuple[str, str], int] = {}
-                type_total: dict[tuple[str, str], int] = {}
-                for _inst in instances_raw:
-                    _k = (_inst["room"], _inst["type"])
-                    type_total[_k] = type_total.get(_k, 0) + 1
-                for _inst in instances_raw:
-                    _k = (_inst["room"], _inst["type"])
-                    _idx_t = type_seen.get(_k, 0)
-                    type_seen[_k] = _idx_t + 1
-                    _x, _y = placer(
-                        _inst["type"], _inst["room"], _idx_t, type_total[_k],
-                    )
-                    _inst["x"] = int(_x)
-                    _inst["y"] = int(_y)
-
-                st.session_state[equipments_state_key] = instances_raw
-
-                # Remplit _equip_ids sur les lignes auto-générées du devis
-                df_devis_new = st.session_state[devis_lines_key]
-                ids_by_line: dict[int, list[str]] = {}
-                for _inst in instances_raw:
-                    _line_idx = _find_devis_line_idx(
-                        df_devis_new, _inst["room"], _inst["type"],
-                    )
-                    if _line_idx is not None:
-                        ids_by_line.setdefault(_line_idx, []).append(_inst["id"])
-                for _line_idx, _ids in ids_by_line.items():
-                    df_devis_new.at[_line_idx, "_equip_ids"] = _ids
-                st.session_state[devis_lines_key] = df_devis_new
+                return
 
             # Liste des pièces existantes dans le devis (pour selectbox Pièce)
             df_devis_current = st.session_state[devis_lines_key]
@@ -1808,6 +2226,11 @@ def main():
             def _on_devis_edit(rid: int, widget_suffix: str, df_field: str, caster):
                 wkey = f"{devis_lines_key}_{widget_suffix}_{rid}"
                 if wkey not in st.session_state:
+                    return
+                # Garde : callback stale après changement de plan — le widget
+                # pré-existe mais devis_lines_key du nouveau hash n'est pas
+                # encore en state. No-op au lieu de crash.
+                if devis_lines_key not in st.session_state:
                     return
                 df_cur = st.session_state[devis_lines_key]
                 mask = df_cur["_id"] == rid
@@ -2000,6 +2423,64 @@ def main():
                         f"<em>{n_equipts} équipement{plural}</em></div>",
                         unsafe_allow_html=True,
                     )
+
+                # Surface (m²) éditable pour Séjour uniquement — impacte le
+                # nombre de prises NFC (1 prise / 4 m², min 5, +3 derrière TV).
+                # Storage : surface_by_pid[pastille_id]. On retrouve le pid
+                # via pid_to_devis_room inverse (map persistée à la gen).
+                if piece_name.startswith("Sejour"):
+                    _pid_to_room = st.session_state.get(
+                        f"pastille_to_devis_room_{img_hash}", {},
+                    )
+                    _pid_for_piece = next(
+                        (pid for pid, room in _pid_to_room.items()
+                         if room == piece_name),
+                        None,
+                    )
+                    if _pid_for_piece:
+                        _sbp_key = f"surface_by_pid_{img_hash}"
+                        _surface_by_pid_cur: dict[str, float] = (
+                            st.session_state.get(_sbp_key, {})
+                        )
+                        _current_surf = float(
+                            _surface_by_pid_cur.get(_pid_for_piece, 0.0)
+                        )
+                        _surf_widget_key = (
+                            f"surface_input_{img_hash}_{_pid_for_piece}"
+                        )
+                        # Force-sync widget state depuis le dict (source de
+                        # vérité). Garantit l'affichage cohérent.
+                        st.session_state[_surf_widget_key] = _current_surf
+
+                        def _on_surface_change(
+                            pid: str = _pid_for_piece,
+                            wkey: str = _surf_widget_key,
+                        ):
+                            _sbp = st.session_state.get(_sbp_key, {})
+                            _sbp[pid] = float(st.session_state[wkey])
+                            st.session_state[_sbp_key] = _sbp
+                            # Invalide le cache devis → l'auto-gen rebuild
+                            # avec la nouvelle surface (recalcul prises NFC).
+                            if devis_lines_key in st.session_state:
+                                del st.session_state[devis_lines_key]
+
+                        with hcols[3]:
+                            st.number_input(
+                                "Surface (m²)",
+                                min_value=0.0, max_value=300.0, step=1.0,
+                                key=_surf_widget_key,
+                                on_change=_on_surface_change,
+                                label_visibility="collapsed",
+                                help="Surface du séjour. Impacte le nombre "
+                                     "de prises NFC (1 prise / 4 m², min 5).",
+                            )
+                        with hcols[4]:
+                            st.markdown(
+                                "<div style='padding-top: 0.5rem; "
+                                "color: #888; font-size: 11px;'>"
+                                "← m² du séjour</div>",
+                                unsafe_allow_html=True,
+                            )
 
                 # --- Rows équipement (uniquement si pièce déroulée) ---
                 if not is_expanded:

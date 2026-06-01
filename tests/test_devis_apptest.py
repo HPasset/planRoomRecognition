@@ -1484,25 +1484,14 @@ def test_E6_smart_placement_inside_image_bbox(patch_pipeline):
         assert 0 <= inst["y"] <= 100, f"y={inst['y']} hors bbox"
 
 
-def test_E7_toggle_off_on_preserves_equipments_state(patch_pipeline):
-    """E7 : décocher puis recocher le toggle 'Afficher équipements' ne perd
-    pas equipments_state (le state vit en session_state, indépendant du
-    toggle d'affichage)."""
+def test_E7_equipments_auto_generated_on_plan_load(patch_pipeline):
+    """E7 (V1.1) : depuis le retrait du toggle sidebar, les équipements
+    sont auto-générés dès que les pastilles OCR sont prêtes — pas besoin
+    de cliquer 'Générer devis' au préalable."""
     patch_pipeline()
     at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
     at.run()
-    enable_equipments_toggle(at)
-    find_button_by_label(at, "générer devis").click()
-    at.run()
 
-    eq_before = list(get_equipments_state(at))
-    assert len(eq_before) > 0
-
-    cb = next(c for c in at.checkbox if "Afficher les équipements" in c.label)
-    cb.set_value(False).run()
-    cb = next(c for c in at.checkbox if "Afficher les équipements" in c.label)
-    cb.set_value(True).run()
-
-    eq_after = list(get_equipments_state(at))
-    assert len(eq_after) == len(eq_before)
-    assert {e["id"] for e in eq_after} == {e["id"] for e in eq_before}
+    eq = get_equipments_state(at)
+    assert eq is not None
+    assert len(eq) > 0, "équipements devraient être auto-générés à l'init"

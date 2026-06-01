@@ -10,9 +10,16 @@ Solution : patcher à un niveau plus profond — la CLASSE
 mock. Pareil pour ``cv2.imread`` et ``streamlit.file_uploader``.
 """
 from __future__ import annotations
+import os
 from typing import Callable
 import pytest
 import numpy as np
+
+
+# En mode test, bypass le gate "click Générer devis" qui maintenant
+# précède le pipeline OCR (UX V1.2 — l'user clique pour déclencher).
+# Tous les 45 tests AppTest reposent sur le pipeline auto-déclenché.
+os.environ["STREAMLIT_TEST_AUTO_TRIGGER"] = "1"
 
 
 # ============================================================================
@@ -223,9 +230,6 @@ def get_equipments_state(at):
 
 
 def enable_equipments_toggle(at):
-    """Activate the 'Afficher les équipements sur le plan' sidebar checkbox."""
-    cb = next(
-        c for c in at.checkbox
-        if "Afficher les équipements" in c.label
-    )
-    cb.set_value(True).run()
+    """No-op : depuis V1.1 les équipements sont auto-affichés (pas de toggle).
+    Conservé pour rétrocompatibilité des tests E1-E6."""
+    return at
