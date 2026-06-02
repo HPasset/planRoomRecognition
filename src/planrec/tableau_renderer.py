@@ -79,20 +79,61 @@ def _render_rcd_row(rcd: RCD, y: int) -> str:
     return "".join(parts)
 
 
+def _wrap_label(label: str, max_chars_per_line: int = 9, max_lines: int = 3) -> list[str]:
+    """Découpe un label en lignes de ≤ max_chars_per_line, en coupant aux espaces.
+    Si le dernier mot ne tient pas après max_lines, le dernier mot est tronqué avec …
+    Les mots individuels plus longs que max_chars_per_line restent sur leur propre
+    ligne (overflow gracieux plutôt que coupure intra-mot)."""
+    words = label.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        if not current:
+            current = word
+        elif len(current) + 1 + len(word) <= max_chars_per_line:
+            current = current + " " + word
+        else:
+            lines.append(current)
+            current = word
+            if len(lines) >= max_lines:
+                break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    if len(lines) == max_lines and len(" ".join(lines).split()) < len(words):
+        last = lines[-1]
+        lines[-1] = (last[:max_chars_per_line - 1] + "…") if len(last) >= max_chars_per_line else last + "…"
+    return lines
+
+
 def _render_module(circuit: Circuit, x: int, y: int) -> str:
     """Un module disjoncteur."""
     color = CIRCUIT_COLORS.get(circuit.type, "#CCCCCC")
     type_a_marker = "*" if circuit.requires_type_a else ""
-    short_label = (circuit.label[:9] + "…") if len(circuit.label) > 10 else circuit.label
+    label_lines = _wrap_label(circuit.label, max_chars_per_line=9, max_lines=3)
+
+    # Placement vertical adapté au nombre de lignes (zone label : y+35 à y+72)
+    n = len(label_lines)
+    if n == 1:
+        line_ys = [y + 55]
+    elif n == 2:
+        line_ys = [y + 48, y + 60]
+    else:  # 3
+        line_ys = [y + 42, y + 54, y + 66]
+
+    label_svg = "".join(
+        f'<text x="{x + MODULE_W // 2}" y="{ly}" font-size="9" '
+        f'text-anchor="middle" fill="#000">{line}</text>'
+        for ly, line in zip(line_ys, label_lines)
+    )
+
     return (
         f'<rect x="{x}" y="{y}" width="{MODULE_W}" height="{MODULE_H}" '
         f'fill="{color}" stroke="#37474F" stroke-width="1"/>'
         f'<text x="{x + MODULE_W // 2}" y="{y + 20}" font-size="14" '
         f'font-weight="bold" text-anchor="middle" fill="#000">'
         f'{circuit.breaker_amps}A{type_a_marker}</text>'
-        f'<text x="{x + MODULE_W // 2}" y="{y + 55}" font-size="9" '
-        f'text-anchor="middle" fill="#000">{short_label}</text>'
-        f'<text x="{x + MODULE_W // 2}" y="{y + 80}" font-size="8" '
+        + label_svg +
+        f'<text x="{x + MODULE_W // 2}" y="{y + 92}" font-size="8" '
         f'font-style="italic" text-anchor="middle" fill="#37474F">'
         f'{circuit.cable_section_mm2} mm²</text>'
     )
