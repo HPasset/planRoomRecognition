@@ -308,3 +308,68 @@ def _compute_min_rcds(
     n_packing = math.ceil(n_breakers / MAX_BREAKERS_PER_RCD)
 
     return max(n_typo, n_surface, n_packing)
+
+
+_NORMALIZED_RCD_AMPS = [25, 40, 63, 80, 100, 125]
+
+
+def _ceil_to_normalized(x: float) -> int:
+    """Arrondi au calibre normalisé supérieur dans {25, 40, 63, 80, 100, 125}."""
+    for cap in _NORMALIZED_RCD_AMPS:
+        if x <= cap:
+            return cap
+    return _NORMALIZED_RCD_AMPS[-1]
+
+
+def _compute_rcd_amps(circuits: list[Circuit]) -> int:
+    """Calibre RCD = (Σ non-chauffage)/2 + Σ chauffage, arrondi normalisé."""
+    non_heat = [c for c in circuits if c.type not in
+                (CircuitType.HEATING, CircuitType.TOWEL_WARMER)]
+    heat = [c for c in circuits if c.type in
+            (CircuitType.HEATING, CircuitType.TOWEL_WARMER)]
+    raw = sum(c.breaker_amps for c in non_heat) / 2 + sum(c.breaker_amps for c in heat)
+    return _ceil_to_normalized(raw)
+
+
+def _distribute_circuits_to_rcds(
+    circuits: list[Circuit],
+    n_rcds: int,
+) -> list[RCD]:
+    """Bin-packing greedy :
+    1. RCD1 = Type A → reçoit les circuits requires_type_a (Plaque + LL)
+    2. RCD2..N = Type AC → reçoivent le reste
+    3. Tri restant par amps décroissant, placement greedy au RCD le moins chargé
+    4. Calcul calibre par formule (Σ hors-chauf)/2 + Σ chauf, normalisé
+    """
+    rcds: list[RCD] = []
+    rcds.append(RCD(id=generate_rcd_id(), rcd_type="A", amps=40,
+                    sensitivity_ma=30, circuits=[]))
+    for _ in range(max(0, n_rcds - 1)):
+        rcds.append(RCD(id=generate_rcd_id(), rcd_type="AC", amps=40,
+                        sensitivity_ma=30, circuits=[]))
+
+    # Type A obligatoire → RCD1
+    type_a_circuits = [c for c in circuits if c.requires_type_a]
+    other_circuits = [c for c in circuits if not c.requires_type_a]
+    for c in type_a_circuits:
+        rcds[0].circuits.append(c)
+
+    # Trier autres par amps décroissant, bin-packing greedy
+    sorted_others = sorted(other_circuits, key=lambda c: -c.breaker_amps)
+    for c in sorted_others:
+        # Choisir le RCD le moins chargé (en nombre de circuits, cap 8)
+        candidates = [r for r in rcds if len(r.circuits) < MAX_BREAKERS_PER_RCD]
+        if not candidates:
+            # Si tous saturés, ajouter un RCD AC supplémentaire
+            new_rcd = RCD(id=generate_rcd_id(), rcd_type="AC", amps=40,
+                          sensitivity_ma=30, circuits=[])
+            rcds.append(new_rcd)
+            candidates = [new_rcd]
+        target = min(candidates, key=lambda r: len(r.circuits))
+        target.circuits.append(c)
+
+    # Recalculer calibre de chaque RCD
+    for rcd in rcds:
+        rcd.amps = _compute_rcd_amps(rcd.circuits)
+
+    return rcds

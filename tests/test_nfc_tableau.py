@@ -238,3 +238,56 @@ def test_min_rcds_many_breakers_forces_more():
     from src.planrec.nfc_tableau import _compute_min_rcds
     assert _compute_min_rcds(typology="T2", surface_m2=80.0,
                              n_breakers=18) == 3
+
+
+def test_distribute_type_A_contains_cooktop_and_lavelinge():
+    """RCD1 Type A contient OBLIGATOIREMENT Plaque + LL."""
+    from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, Circuit, CircuitType
+    plaque = Circuit(id="c1", type=CircuitType.KITCHEN_SPECIAL, label="Plaque",
+                     breaker_amps=32, cable_section_mm2=6.0,
+                     requires_type_a=True)
+    ll = Circuit(id="c2", type=CircuitType.LAUNDRY, label="LL",
+                 breaker_amps=20, cable_section_mm2=2.5,
+                 requires_type_a=True)
+    other = Circuit(id="c3", type=CircuitType.LIGHTING, label="Lum",
+                    breaker_amps=10, cable_section_mm2=1.5)
+    rcds = _distribute_circuits_to_rcds([plaque, ll, other], n_rcds=2)
+    assert rcds[0].rcd_type == "A"
+    type_a_ids = {c.id for c in rcds[0].circuits}
+    assert "c1" in type_a_ids
+    assert "c2" in type_a_ids
+
+
+def test_distribute_other_rcds_are_type_AC():
+    from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, Circuit, CircuitType
+    plaque = Circuit(id="c1", type=CircuitType.KITCHEN_SPECIAL, label="P",
+                     breaker_amps=32, cable_section_mm2=6.0, requires_type_a=True)
+    others = [Circuit(id=f"c{i+2}", type=CircuitType.LIGHTING, label=f"L{i}",
+                      breaker_amps=10, cable_section_mm2=1.5)
+              for i in range(2)]
+    rcds = _distribute_circuits_to_rcds([plaque] + others, n_rcds=2)
+    assert rcds[0].rcd_type == "A"
+    assert rcds[1].rcd_type == "AC"
+
+
+def test_rcd_amps_formula_normalized():
+    """RCD avec 4× 20A non-chauffage → (4*20)/2 = 40A normalisé."""
+    from src.planrec.nfc_tableau import _compute_rcd_amps, Circuit, CircuitType
+    circuits = [
+        Circuit(id=f"c{i}", type=CircuitType.SOCKET, label="x",
+                breaker_amps=20, cable_section_mm2=2.5)
+        for i in range(4)
+    ]
+    assert _compute_rcd_amps(circuits) == 40
+
+
+def test_rcd_amps_heating_summed_not_halved():
+    """1× 20A socket + 1× 20A heating → 20/2 + 20 = 30 → arrondi à 40A."""
+    from src.planrec.nfc_tableau import _compute_rcd_amps, Circuit, CircuitType
+    circuits = [
+        Circuit(id="c1", type=CircuitType.SOCKET, label="x",
+                breaker_amps=20, cable_section_mm2=2.5),
+        Circuit(id="c2", type=CircuitType.HEATING, label="x",
+                breaker_amps=20, cable_section_mm2=2.5),
+    ]
+    assert _compute_rcd_amps(circuits) == 40
