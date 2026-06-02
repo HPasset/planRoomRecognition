@@ -38,3 +38,31 @@ class Circuit:
 def generate_circuit_id() -> str:
     """Génère un ID unique 'circ_<8 hex>'."""
     return f"circ_{secrets.token_hex(4)}"
+
+
+@dataclass
+class RCD:
+    """Interrupteur Différentiel."""
+    id: str
+    rcd_type: str        # "A" (plaque + LL obligatoire) ou "AC"
+    amps: int            # 25, 40, 63, 80, 100, 125 (normalisé)
+    sensitivity_ma: int  # 30 mA (résidentiel standard)
+    circuits: list[Circuit] = field(default_factory=list)
+
+
+@dataclass
+class Tableau:
+    typology: str                    # "T3"
+    typology_source: str             # "auto" | "user_override"
+    surface_m2: Optional[float]
+    heating_enabled: bool
+    rcds: list[RCD]
+    total_modules: int               # somme circuits + RCD + headroom 20%
+    n_rails: int                     # ceil(total / 13 modules par rail)
+    notes: list[str]
+    warnings: list[str]
+
+
+def generate_rcd_id() -> str:
+    """Génère un ID unique 'rcd_<8 hex>'."""
+    return f"rcd_{secrets.token_hex(4)}"
