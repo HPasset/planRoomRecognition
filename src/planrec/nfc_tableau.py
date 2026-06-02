@@ -66,3 +66,23 @@ class Tableau:
 def generate_rcd_id() -> str:
     """Génère un ID unique 'rcd_<8 hex>'."""
     return f"rcd_{secrets.token_hex(4)}"
+
+
+from src.planrec.nfc_rules import DevisGlobal, NFCCategory
+
+
+def detect_typology(devis: DevisGlobal) -> str:
+    """Auto-détecte la typologie du logement à partir du devis.
+
+    Compte les pièces principales (séjour + chambres) :
+    - 1 pièce principale (séjour seul, studio) → T1
+    - séjour + 1 chambre → T2
+    - séjour + 2 chambres → T3
+    - séjour + 3 chambres → T4
+    - séjour + 4+ chambres → T5 (cap)
+    """
+    n_main_rooms = sum(
+        1 for d in devis.per_room
+        if d.nfc_category in (NFCCategory.LIVINGROOM, NFCCategory.BEDROOM)
+    )
+    return f"T{min(n_main_rooms, 5)}"

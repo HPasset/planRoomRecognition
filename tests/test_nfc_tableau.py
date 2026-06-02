@@ -55,3 +55,48 @@ def test_tableau_dataclass_fields():
     assert t.typology == "T3"
     assert t.heating_enabled is True
     assert t.notes == ["RJ45 → coffret VDI"]
+
+
+def test_detect_typology_T1_studio():
+    """1 séjour seul → T1 (studio)."""
+    from src.planrec.nfc_tableau import detect_typology
+    from src.planrec.nfc_rules import compute_devis_global
+    devis = compute_devis_global(
+        [{"id": "L1", "c2_class": "LivingRoom", "surface_m2": 30.0}],
+    )
+    assert detect_typology(devis) == "T1"
+
+
+def test_detect_typology_T2_living_plus_1_bedroom():
+    from src.planrec.nfc_tableau import detect_typology
+    from src.planrec.nfc_rules import compute_devis_global
+    devis = compute_devis_global([
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 20.0},
+        {"id": "B1", "c2_class": "BedRoom"},
+    ])
+    assert detect_typology(devis) == "T2"
+
+
+def test_detect_typology_T3_living_plus_2_bedrooms():
+    from src.planrec.nfc_tableau import detect_typology
+    from src.planrec.nfc_rules import compute_devis_global
+    devis = compute_devis_global([
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "B1", "c2_class": "BedRoom"},
+        {"id": "B2", "c2_class": "BedRoom"},
+    ])
+    assert detect_typology(devis) == "T3"
+
+
+def test_detect_typology_T5_capped_at_5():
+    """4+ chambres + séjour → T5 (on cap au lieu de T6/T7)."""
+    from src.planrec.nfc_tableau import detect_typology
+    from src.planrec.nfc_rules import compute_devis_global
+    devis = compute_devis_global([
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 30.0},
+        {"id": "B1", "c2_class": "BedRoom"},
+        {"id": "B2", "c2_class": "BedRoom"},
+        {"id": "B3", "c2_class": "BedRoom"},
+        {"id": "B4", "c2_class": "BedRoom"},
+    ])
+    assert detect_typology(devis) == "T5"
