@@ -388,3 +388,61 @@ def test_equip_types_has_8_new_keys():
     assert NFC_TO_EQUIP_TYPE[EquipmentType.OVEN] == "Oven"
     assert NFC_TO_EQUIP_TYPE[EquipmentType.COOKTOP] == "Cooktop"
     assert NFC_TO_EQUIP_TYPE[EquipmentType.CONVECTOR] == "Convector"
+
+
+def test_circuit_only_equipment_types_contains_oven_cooktop_convector():
+    """Four, Plaque cuisson et Convecteur sont marqués circuit-only :
+    présents dans le tableau électrique mais hors devis facturable."""
+    from src.planrec.nfc_rules import (
+        CIRCUIT_ONLY_EQUIPMENT_TYPES,
+        EquipmentType,
+    )
+    assert EquipmentType.OVEN in CIRCUIT_ONLY_EQUIPMENT_TYPES
+    assert EquipmentType.COOKTOP in CIRCUIT_ONLY_EQUIPMENT_TYPES
+    assert EquipmentType.CONVECTOR in CIRCUIT_ONLY_EQUIPMENT_TYPES
+
+
+def test_circuit_only_excludes_dishwasher_washing_machine_boiler_towel():
+    """Lave-vaisselle, Lave-linge, Sèche-linge, Chaudière, Sèche-serviettes
+    restent facturés (l'artisan pose ces équipements ou leurs accessoires)."""
+    from src.planrec.nfc_rules import (
+        CIRCUIT_ONLY_EQUIPMENT_TYPES,
+        EquipmentType,
+    )
+    for keep in (
+        EquipmentType.DISHWASHER,
+        EquipmentType.WASHING_MACHINE,
+        EquipmentType.DRYER,
+        EquipmentType.BOILER,
+        EquipmentType.TOWEL_WARMER,
+        EquipmentType.SOCKET,
+        EquipmentType.LIGHT_POINT,
+        EquipmentType.SWITCH,
+        EquipmentType.RJ45,
+    ):
+        assert keep not in CIRCUIT_ONLY_EQUIPMENT_TYPES
+
+
+def test_build_devis_lines_initial_filters_circuit_only_types():
+    """build_devis_lines_initial() doit exclure les lignes Four/Plaque/Convecteur
+    mais conserver les équipements posés par l'artisan + les autres spécialisés."""
+    from app.streamlit_app import build_devis_lines_initial
+    from src.planrec.nfc_pricing import DEFAULT_PRICES_HT
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "K1", "c2_class": "Kitchen"},
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    lines, _ = build_devis_lines_initial(devis, DEFAULT_PRICES_HT)
+    labels = {line["Équipement"] for line in lines}
+
+    # Hors devis facturable
+    assert "Four" not in labels
+    assert "Plaque de cuisson" not in labels
+    assert "Convecteur" not in labels
+    # Conservés (artisan pose)
+    assert "Lave-vaisselle" in labels
+    assert "Prise de courant" in labels
+    assert "Point lumineux" in labels

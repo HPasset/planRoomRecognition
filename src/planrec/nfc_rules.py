@@ -49,6 +49,16 @@ class EquipmentType(str, Enum):
     TOWEL_WARMER = "seche_serviettes"
 
 
+# Equipement type "circuit-only" : apparaît dans le tableau électrique
+# (l'artisan fournit le circuit + disjoncteur + câble) mais PAS dans le devis
+# facturable (appareil fourni par l'occupant). Cf. retour métier 2026-06-02.
+CIRCUIT_ONLY_EQUIPMENT_TYPES: frozenset[EquipmentType] = frozenset({
+    EquipmentType.OVEN,
+    EquipmentType.COOKTOP,
+    EquipmentType.CONVECTOR,
+})
+
+
 # Mapping direct C2 → catégorie NFC (cas simple, sans contexte OCR).
 # Bath est mappé à BATH par défaut ; un override via OCR peut le passer à WC.
 C2_TO_NFC: dict[str, NFCCategory] = {

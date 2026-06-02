@@ -36,7 +36,7 @@ from src.planrec.nfc_pricing import (
     compute_ttc,
 )
 from src.planrec.nfc_equipments import EQUIP_TYPES, NFC_TO_EQUIP_TYPE
-from src.planrec.nfc_rules import compute_devis_global
+from src.planrec.nfc_rules import CIRCUIT_ONLY_EQUIPMENT_TYPES, compute_devis_global
 from src.planrec.ocr.engine_paddle import PaddleOCREngine
 from src.planrec.ocr.postprocess import postprocess_ocr_items
 from src.planrec.polygon_postprocess import (
@@ -256,6 +256,10 @@ def build_devis_lines_initial(
 
         for eq, qty in d.items.items():
             if qty <= 0:
+                continue
+            # Four / Plaque / Convecteur sont "circuit-only" : présents dans le
+            # tableau électrique mais hors devis facturable (fournis par l'occupant).
+            if eq in CIRCUIT_ONLY_EQUIPMENT_TYPES:
                 continue
             lines.append({
                 "_id": next_id,

@@ -808,10 +808,12 @@ def test_D4_devis_cuisine_seule_equipements_nfc(patch_pipeline):
     assert "Prise de courant" in equipements
     assert "Point lumineux" in equipements
     assert "Interrupteur" in equipements
-    # 3 circuits spécialisés typés (Four, Plaque de cuisson, Lave-vaisselle)
-    assert "Four" in equipements
-    assert "Plaque de cuisson" in equipements
+    # Lave-vaisselle reste facturé (l'artisan le pose)
     assert "Lave-vaisselle" in equipements
+    # Four et Plaque de cuisson sont "circuit-only" : présents dans le
+    # tableau électrique mais HORS devis facturable (achat occupant).
+    assert "Four" not in equipements
+    assert "Plaque de cuisson" not in equipements
     # Pas d'Alimentation spécialisée générique en cuisine
     assert "Alimentation spécialisée" not in equipements
 
@@ -1598,7 +1600,12 @@ def test_T4_pdf_download_button_present_and_returns_bytes(patch_pipeline):
     # Vérifie que img_hash est présent en session state (condition pour le PDF)
     from conftest import find_img_hash
     img_hash = find_img_hash(at)
-    devis_global = at.session_state.get(f"devis_global_{img_hash}")
+    # SafeSessionState ne supporte pas .get() — on accède directement
+    devis_key = f"devis_global_{img_hash}"
+    try:
+        devis_global = at.session_state[devis_key]
+    except KeyError:
+        devis_global = None
     assert devis_global is not None, (
         "devis_global absent du session_state — le PDF n'a pas pu être généré"
     )
