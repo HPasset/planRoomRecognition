@@ -1450,6 +1450,9 @@ def main():
             _devis_auto = compute_devis_global(
                 _src_rooms_input, handicap=devis_handicap,
             )
+            # Persiste le DevisGlobal en session_state pour accès ultérieur
+            # (ex: section tableau électrique V1.2 en bas de page).
+            st.session_state[f"devis_global_{img_hash}"] = _devis_auto
             # Build devis_lines DataFrame avec manual_backup réinjecté si présent
             _lines, _next_id_after = build_devis_lines_initial(
                 _devis_auto, DEFAULT_PRICES_HT, next_id_start=0,
@@ -2684,6 +2687,56 @@ def main():
                 data=csv_buf.getvalue(),
                 file_name=f"devis_{csv_plan_id}.csv",
                 mime="text/csv",
+            )
+
+    # ---- Section V1.2 : Tableau électrique ----
+    if st.session_state.get(_devis_triggered_key):
+        from src.planrec import nfc_tableau as _nfc_tab
+        from src.planrec import tableau_renderer as _tab_render
+
+        st.markdown("---")
+        st.subheader("⚡ Tableau électrique")
+
+        # Lire les valeurs sidebar via session_state (en cas de scope différent)
+        _heating = st.session_state.get("tableau_heating_enabled", True)
+        _typo_override = st.session_state.get("tableau_typology_override", None)
+
+        _devis_global = st.session_state.get(f"devis_global_{img_hash}")
+        if _devis_global is None:
+            st.info(
+                "Tableau électrique disponible après génération du devis. "
+                "Clique sur **💡 Générer devis** pour lancer l'analyse."
+            )
+        else:
+            tableau = _nfc_tab.generate_tableau(
+                devis_global=_devis_global,
+                heating_enabled=_heating,
+                typology_override=_typo_override,
+            )
+
+            # Bandeau de notes / warnings
+            for note in tableau.notes:
+                st.info(note)
+            for warning in tableau.warnings:
+                st.warning(warning)
+
+            # Schéma modulaire SVG
+            svg_xml = _tab_render.render_svg(tableau)
+            st.markdown(svg_xml, unsafe_allow_html=True)
+
+            # Liste circuits HTML
+            st.markdown("**Détail des circuits**")
+            html_circuits = _tab_render.render_html_table(tableau)
+            st.markdown(html_circuits, unsafe_allow_html=True)
+
+            # PDF download
+            pdf_bytes = _tab_render.export_pdf(tableau)
+            st.download_button(
+                "📄 Télécharger le tableau (PDF A4)",
+                data=pdf_bytes,
+                file_name=f"tableau_electrique_{tableau.typology}_{img_hash[:8]}.pdf",
+                mime="application/pdf",
+                key="dl_tableau_pdf",
             )
 
     # --- Debug: ALL raw OCR hits (before any filtering) ---
