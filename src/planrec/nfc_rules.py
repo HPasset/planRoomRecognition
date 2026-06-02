@@ -134,8 +134,10 @@ def compute_devis_for_room(
         devis.items[EquipmentType.SOCKET] = 6
         devis.items[EquipmentType.LIGHT_POINT] = 1
         devis.items[EquipmentType.SWITCH] = 1
-        # 3 alimentations : plaque, four, lave-vaisselle
-        devis.items[EquipmentType.SPECIAL_FEED] = 3
+        # Circuits spécialisés typés (V1.2)
+        devis.items[EquipmentType.OVEN] = 1
+        devis.items[EquipmentType.COOKTOP] = 1
+        devis.items[EquipmentType.DISHWASHER] = 1
         devis.special_feeds_detail.extend([
             "Plaque de cuisson (32A)", "Four (16A)", "Lave-vaisselle (16A)",
         ])

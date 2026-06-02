@@ -303,3 +303,14 @@ def test_pricing_covers_all_new_types():
         assert DEFAULT_PRICES_HT[t] > 0
         assert t in EQUIPMENT_LABELS_FR, f"label manquant pour {t.value}"
         assert len(EQUIPMENT_LABELS_FR[t]) > 0
+
+
+def test_kitchen_generates_typed_special_feeds():
+    """Cuisine génère 1 Four + 1 Plaque + 1 LV (au lieu de 3× SPECIAL_FEED)."""
+    from src.planrec.nfc_rules import compute_devis_for_room, EquipmentType
+    devis = compute_devis_for_room("k1", "Kitchen")
+    assert devis.items.get(EquipmentType.OVEN) == 1
+    assert devis.items.get(EquipmentType.COOKTOP) == 1
+    assert devis.items.get(EquipmentType.DISHWASHER) == 1
+    # plus de SPECIAL_FEED générique en cuisine
+    assert EquipmentType.SPECIAL_FEED not in devis.items
