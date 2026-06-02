@@ -273,3 +273,16 @@ def test_reconcile_qty_zero_removes_all():
     )
     assert all(not (i["room"] == "Cuisine" and i["type"] == "Prise") for i in new_state)
     assert line_ids == []
+
+
+def test_equipment_type_has_all_v2_subtypes():
+    """Les 6 sous-types spécialisés + 2 chauffage doivent être présents."""
+    from src.planrec.nfc_rules import EquipmentType
+    assert EquipmentType.OVEN.value == "four"
+    assert EquipmentType.COOKTOP.value == "plaque_cuisson"
+    assert EquipmentType.DISHWASHER.value == "lave_vaisselle"
+    assert EquipmentType.WASHING_MACHINE.value == "lave_linge"
+    assert EquipmentType.DRYER.value == "seche_linge"
+    assert EquipmentType.BOILER.value == "chaudiere_cumulus"
+    assert EquipmentType.CONVECTOR.value == "convecteur"
+    assert EquipmentType.TOWEL_WARMER.value == "seche_serviettes"

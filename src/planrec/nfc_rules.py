@@ -31,11 +31,22 @@ class NFCCategory(str, Enum):
 
 
 class EquipmentType(str, Enum):
+    # Anciens types (préservés pour compatibilité)
     SOCKET = "prise_courant"
     RJ45 = "prise_rj45"
     LIGHT_POINT = "point_lumineux"
     SWITCH = "interrupteur"
-    SPECIAL_FEED = "alimentation_specialisee"
+    SPECIAL_FEED = "alimentation_specialisee"  # legacy, plus généré par compute_devis_for_room
+    # NEW V1.2 — éclatement de SPECIAL_FEED en sous-types typés
+    OVEN = "four"
+    COOKTOP = "plaque_cuisson"
+    DISHWASHER = "lave_vaisselle"
+    WASHING_MACHINE = "lave_linge"
+    DRYER = "seche_linge"
+    BOILER = "chaudiere_cumulus"
+    # NEW V1.2 — chauffage électrique
+    CONVECTOR = "convecteur"
+    TOWEL_WARMER = "seche_serviettes"
 
 
 # Mapping direct C2 → catégorie NFC (cas simple, sans contexte OCR).
