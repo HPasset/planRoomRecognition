@@ -121,3 +121,32 @@ def test_lighting_bin_packing_overflow_creates_2_circuits():
     circuits = _build_lighting_circuits(rooms_with_lights)
     assert len(circuits) == 2
     assert sum(c.n_devices for c in circuits) == 7
+
+
+def test_sockets_one_room_one_circuit():
+    """Pièce 5 prises → 1 circuit 20A/2.5mm²."""
+    from src.planrec.nfc_tableau import _build_socket_circuits
+    rooms_with_sockets = [("Sejour", 5)]
+    circuits = _build_socket_circuits(rooms_with_sockets)
+    assert len(circuits) == 1
+    assert circuits[0].breaker_amps == 20
+    assert circuits[0].cable_section_mm2 == 2.5
+    assert circuits[0].n_devices == 5
+
+
+def test_sockets_pack_small_rooms_together():
+    """3 petites pièces (2+1+1 prises) → 1 circuit grouppé."""
+    from src.planrec.nfc_tableau import _build_socket_circuits
+    rooms = [("WC", 1), ("Entrée", 2), ("Couloir", 1)]
+    circuits = _build_socket_circuits(rooms)
+    assert len(circuits) == 1
+    assert circuits[0].n_devices == 4
+
+
+def test_sockets_large_room_dedicated_circuit():
+    """Pièce 12 prises → 1 circuit dédié."""
+    from src.planrec.nfc_tableau import _build_socket_circuits
+    rooms = [("Sejour", 12)]
+    circuits = _build_socket_circuits(rooms)
+    assert len(circuits) == 1
+    assert circuits[0].n_devices == 12
