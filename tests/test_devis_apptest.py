@@ -803,12 +803,17 @@ def test_D4_devis_cuisine_seule_equipements_nfc(patch_pipeline):
 
     df_devis = get_devis_df(at)
     assert set(df_devis["Pièce"].unique()) == {"Cuisine"}
-    # Cuisine NFC = au moins prises, point lumineux, interrupteur, alim spé
+    # Cuisine NFC = prises, point lumineux, interrupteur + circuits typés V1.2
     equipements = set(df_devis["Équipement"].tolist())
     assert "Prise de courant" in equipements
     assert "Point lumineux" in equipements
     assert "Interrupteur" in equipements
-    assert "Alimentation spécialisée" in equipements
+    # 3 circuits spécialisés typés (Four, Plaque de cuisson, Lave-vaisselle)
+    assert "Four" in equipements
+    assert "Plaque de cuisson" in equipements
+    assert "Lave-vaisselle" in equipements
+    # Pas d'Alimentation spécialisée générique en cuisine
+    assert "Alimentation spécialisée" not in equipements
 
 
 # --- E. Édition devis (suite) ---

@@ -69,7 +69,9 @@ def test_generate_equipments_from_devis_simple():
 
 
 def test_generate_equipments_kitchen_qty_explodes():
-    """Cuisine NFC : qté élevée (6 prises + 3 alim spé + ...) → autant d'instances."""
+    """Cuisine NFC : Four + Plaque + LV (typés) + 6 prises + 1 lum + 1 inter."""
+    from src.planrec.nfc_rules import compute_devis_global
+
     rooms_input = [
         {"id": "room_001", "c2_class": "Kitchen", "surface_m2": None,
          "ocr_hint": None},
@@ -79,11 +81,16 @@ def test_generate_equipments_kitchen_qty_explodes():
     type_counts: dict[str, int] = {}
     for inst in instances:
         type_counts[inst["type"]] = type_counts.get(inst["type"], 0) + 1
-    # Au moins 6 prises (NFC cuisine) + 3 alim spé + 1 point lum + 1 inter
+    # 6 prises + 1 lum + 1 interrupteur en cuisine NFC
     assert type_counts.get("Prise", 0) >= 6
-    assert type_counts.get("SpecialFeed", 0) >= 3
     assert type_counts.get("LightPoint", 0) >= 1
     assert type_counts.get("Switch", 0) >= 1
+    # 3 circuits spécialisés typés (au lieu de 3 SpecialFeed génériques)
+    assert type_counts.get("Oven", 0) == 1
+    assert type_counts.get("Cooktop", 0) == 1
+    assert type_counts.get("Dishwasher", 0) == 1
+    # Pas de SpecialFeed légacy en cuisine
+    assert type_counts.get("SpecialFeed", 0) == 0
 
 
 def test_generate_equipments_room_label_with_index():
