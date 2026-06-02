@@ -282,3 +282,29 @@ def _build_specialized_circuits(
                 requires_type_a=type_a,
             ))
     return circuits
+
+
+_TYPO_RCD_RULE = {"T1": 1, "T2": 2, "T3": 3, "T4": 4, "T5": 4}
+MAX_BREAKERS_PER_RCD = 8
+
+
+def _compute_min_rcds(
+    typology: str,
+    surface_m2: Optional[float],
+    n_breakers: int,
+) -> int:
+    """Max des 3 contraintes : règle typo, règle surface NFC, ceil(N/8)."""
+    n_typo = _TYPO_RCD_RULE.get(typology, 1)
+
+    if surface_m2 is None:
+        n_surface = 1
+    elif surface_m2 <= 35:
+        n_surface = 1
+    elif surface_m2 <= 100:
+        n_surface = 2
+    else:
+        n_surface = 3
+
+    n_packing = math.ceil(n_breakers / MAX_BREAKERS_PER_RCD)
+
+    return max(n_typo, n_surface, n_packing)

@@ -217,3 +217,24 @@ def test_specialized_lavelinge_is_20A_2_5mm2_type_a():
     assert circuits[0].breaker_amps == 20
     assert circuits[0].cable_section_mm2 == 2.5
     assert circuits[0].requires_type_a is True
+
+
+def test_min_rcds_T2_returns_2():
+    """T2 → 2 RCD minimum (règle cabinet)."""
+    from src.planrec.nfc_tableau import _compute_min_rcds
+    assert _compute_min_rcds(typology="T2", surface_m2=None,
+                             n_breakers=5) == 2
+
+
+def test_min_rcds_surface_overrides_typology():
+    """T1 mais 120 m² → 3 RCD (règle NFC stricte > règle typo)."""
+    from src.planrec.nfc_tableau import _compute_min_rcds
+    assert _compute_min_rcds(typology="T1", surface_m2=120.0,
+                             n_breakers=5) == 3
+
+
+def test_min_rcds_many_breakers_forces_more():
+    """T2 (2 RCD min) mais 18 disjoncteurs → ceil(18/8) = 3 RCD."""
+    from src.planrec.nfc_tableau import _compute_min_rcds
+    assert _compute_min_rcds(typology="T2", surface_m2=80.0,
+                             n_breakers=18) == 3
