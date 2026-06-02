@@ -1,0 +1,149 @@
+"""Rendu visuel du Tableau électrique : SVG inline (Streamlit st.markdown) +
+liste HTML descriptive + export PDF A4 (reportlab).
+
+Aucun import Streamlit ou React — module testable pytest seul.
+"""
+from __future__ import annotations
+
+from src.planrec.nfc_tableau import Tableau, RCD, Circuit, CircuitType
+
+
+# Couleurs par fonction de circuit (cohérent palette équipements)
+CIRCUIT_COLORS: dict[CircuitType, str] = {
+    CircuitType.LIGHTING:        "#FFD54F",  # jaune
+    CircuitType.SOCKET:          "#42A5F5",  # bleu
+    CircuitType.KITCHEN_SPECIAL: "#AB47BC",  # violet
+    CircuitType.LAUNDRY:         "#FF7043",  # orange
+    CircuitType.BOILER:          "#C62828",  # rouge sombre
+    CircuitType.HEATING:         "#EF5350",  # rouge clair
+    CircuitType.TOWEL_WARMER:    "#EF9A9A",  # rose clair
+}
+
+
+# Dimensions SVG (cf. spec section 5)
+MODULE_W = 60
+MODULE_H = 100
+RCD_BLOCK_W = 240  # 4 modules de large
+RCD_AVAILABLE_SLOTS = 18  # max modules par rangée
+
+
+def render_svg(tableau: Tableau) -> str:
+    """Génère le SVG complet du tableau comme string XML.
+
+    Sortie embarquable dans `st.markdown(svg_xml, unsafe_allow_html=True)`.
+    """
+    if not tableau.rcds:
+        return '<div style="padding:1em;color:#888">Aucun circuit à afficher.</div>'
+
+    n_rcds = len(tableau.rcds)
+    width = RCD_BLOCK_W + RCD_AVAILABLE_SLOTS * MODULE_W
+    height = n_rcds * MODULE_H + 30  # 30 px header
+
+    parts: list[str] = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+        f'height="{height}" viewBox="0 0 {width} {height}" '
+        f'style="background:#FAFAFA; font-family:Inter,sans-serif">',
+        f'<text x="10" y="20" font-size="14" font-weight="bold">'
+        f'Tableau électrique — Logement {tableau.typology}</text>',
+    ]
+
+    for i, rcd in enumerate(tableau.rcds):
+        y = 30 + i * MODULE_H
+        parts.append(_render_rcd_row(rcd, y))
+
+    parts.append('</svg>')
+    return "".join(parts)
+
+
+def _render_rcd_row(rcd: RCD, y: int) -> str:
+    """Une rangée RCD = bloc ID + N modules disjoncteur."""
+    parts: list[str] = []
+
+    # Bloc RCD (gauche, fond blanc bord noir épais)
+    parts.append(
+        f'<rect x="0" y="{y}" width="{RCD_BLOCK_W}" height="{MODULE_H}" '
+        f'fill="white" stroke="#000" stroke-width="2"/>'
+        f'<text x="{RCD_BLOCK_W // 2}" y="{y + 25}" font-size="12" '
+        f'font-weight="bold" text-anchor="middle">ID {rcd.amps} A</text>'
+        f'<text x="{RCD_BLOCK_W // 2}" y="{y + 45}" font-size="11" '
+        f'text-anchor="middle">Type {rcd.rcd_type}</text>'
+        f'<text x="{RCD_BLOCK_W // 2}" y="{y + 62}" font-size="10" '
+        f'text-anchor="middle">{rcd.sensitivity_ma} mA</text>'
+    )
+
+    # Modules disjoncteur (droite)
+    for j, circuit in enumerate(rcd.circuits):
+        x = RCD_BLOCK_W + j * MODULE_W
+        parts.append(_render_module(circuit, x, y))
+
+    return "".join(parts)
+
+
+def _render_module(circuit: Circuit, x: int, y: int) -> str:
+    """Un module disjoncteur."""
+    color = CIRCUIT_COLORS.get(circuit.type, "#CCCCCC")
+    type_a_marker = "*" if circuit.requires_type_a else ""
+    short_label = (circuit.label[:9] + "…") if len(circuit.label) > 10 else circuit.label
+    return (
+        f'<rect x="{x}" y="{y}" width="{MODULE_W}" height="{MODULE_H}" '
+        f'fill="{color}" stroke="#37474F" stroke-width="1"/>'
+        f'<text x="{x + MODULE_W // 2}" y="{y + 20}" font-size="14" '
+        f'font-weight="bold" text-anchor="middle" fill="#000">'
+        f'{circuit.breaker_amps}A{type_a_marker}</text>'
+        f'<text x="{x + MODULE_W // 2}" y="{y + 55}" font-size="9" '
+        f'text-anchor="middle" fill="#000">{short_label}</text>'
+        f'<text x="{x + MODULE_W // 2}" y="{y + 80}" font-size="8" '
+        f'font-style="italic" text-anchor="middle" fill="#37474F">'
+        f'{circuit.cable_section_mm2} mm²</text>'
+    )
+
+
+def render_html_table(tableau: Tableau) -> str:
+    """Liste HTML descriptive de tous les circuits."""
+    parts: list[str] = [
+        '<table style="width:100%; border-collapse:collapse; '
+        'font-family:Inter,sans-serif; font-size:13px">',
+        '<tr style="background:#37474F; color:white">'
+        '<th style="padding:6px; text-align:left">ID</th>'
+        '<th style="padding:6px; text-align:left">Type</th>'
+        '<th style="padding:6px; text-align:right">Calibre</th>'
+        '<th style="padding:6px; text-align:right">Section</th>'
+        '<th style="padding:6px; text-align:left">Pièces alimentées</th>'
+        '</tr>',
+    ]
+
+    row_idx = 0
+    type_labels_fr = {
+        CircuitType.LIGHTING: "Éclairage",
+        CircuitType.SOCKET: "Prises",
+        CircuitType.KITCHEN_SPECIAL: "Cuisine spé",
+        CircuitType.LAUNDRY: "Buanderie",
+        CircuitType.BOILER: "Chaudière",
+        CircuitType.HEATING: "Chauffage",
+        CircuitType.TOWEL_WARMER: "Sèche-serv.",
+    }
+    for rcd in tableau.rcds:
+        for circuit in rcd.circuits:
+            bg = "#F5F5F5" if row_idx % 2 == 0 else "white"
+            rooms_str = ", ".join(circuit.rooms_served) or "—"
+            type_a_marker = " *" if circuit.requires_type_a else ""
+            parts.append(
+                f'<tr style="background:{bg}">'
+                f'<td style="padding:6px">ID {tableau.rcds.index(rcd)+1} '
+                f'Type {rcd.rcd_type}</td>'
+                f'<td style="padding:6px">{circuit.label}{type_a_marker}</td>'
+                f'<td style="padding:6px; text-align:right">'
+                f'{circuit.breaker_amps} A</td>'
+                f'<td style="padding:6px; text-align:right">'
+                f'{circuit.cable_section_mm2} mm²</td>'
+                f'<td style="padding:6px">{rooms_str}</td>'
+                f'</tr>'
+            )
+            row_idx += 1
+
+    parts.append('</table>')
+    parts.append(
+        '<p style="font-size:11px; color:#888; margin-top:4px">'
+        '* = Type A obligatoire</p>'
+    )
+    return "".join(parts)
