@@ -65,6 +65,19 @@ NFC_TO_EQUIP_TYPE: dict[EquipmentType, str] = {
 }
 
 
+# Clés EQUIP_TYPES masquées sur le plan : pas affichées dans la palette
+# équipements et pas générées automatiquement par
+# generate_equipments_from_devis_global. Ces équipements existent dans le
+# devis (sauf circuit-only) et dans le tableau électrique, mais ne sont pas
+# représentés comme pastilles sur le plan (retour métier 2026-06-02 :
+# pastilles V1.0/V1.1 suffisent visuellement, les 8 sous-types typés V1.2
+# polluent la palette).
+CANVAS_HIDDEN_EQUIP_KEYS: frozenset[str] = frozenset({
+    "Oven", "Cooktop", "Dishwasher", "WashingMachine",
+    "Dryer", "Boiler", "Convector", "TowelWarmer",
+})
+
+
 def generate_equipment_id() -> str:
     """Génère un ID unique 'eq_<8 hex>' (~4 milliards de valeurs distinctes)."""
     return f"eq_{secrets.token_hex(4)}"
@@ -98,6 +111,11 @@ def generate_equipments_from_devis_global(
         )
         for nfc_type, qty in room_devis.items.items():
             equip_key = NFC_TO_EQUIP_TYPE[nfc_type]
+            # Skip les types masqués (Four/Plaque/LV/LL/SL/Chaudière/Conv/SS) :
+            # ils restent dans devis.items (donc dans le tableau électrique)
+            # mais pas comme pastilles sur le plan.
+            if equip_key in CANVAS_HIDDEN_EQUIP_KEYS:
+                continue
             color = EQUIP_TYPES[equip_key]["color"]
             for _ in range(qty):
                 instances.append({

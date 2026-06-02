@@ -69,7 +69,12 @@ def test_generate_equipments_from_devis_simple():
 
 
 def test_generate_equipments_kitchen_qty_explodes():
-    """Cuisine NFC : Four + Plaque + LV (typés) + 6 prises + 1 lum + 1 inter."""
+    """Cuisine NFC sur le canvas : 6 prises + 1 lum + 1 inter.
+
+    Les sous-types V1.2 (Four, Plaque, LV) sont dans devis.items mais
+    MASQUÉS sur le canvas (cf. CANVAS_HIDDEN_EQUIP_KEYS) — ils n'apparaissent
+    pas comme pastilles sur le plan.
+    """
     from src.planrec.nfc_rules import compute_devis_global
 
     rooms_input = [
@@ -81,16 +86,23 @@ def test_generate_equipments_kitchen_qty_explodes():
     type_counts: dict[str, int] = {}
     for inst in instances:
         type_counts[inst["type"]] = type_counts.get(inst["type"], 0) + 1
-    # 6 prises + 1 lum + 1 interrupteur en cuisine NFC
+    # Pastilles visibles : 6 prises + 1 lum + 1 interrupteur en cuisine NFC
     assert type_counts.get("Prise", 0) >= 6
     assert type_counts.get("LightPoint", 0) >= 1
     assert type_counts.get("Switch", 0) >= 1
-    # 3 circuits spécialisés typés (au lieu de 3 SpecialFeed génériques)
-    assert type_counts.get("Oven", 0) == 1
-    assert type_counts.get("Cooktop", 0) == 1
-    assert type_counts.get("Dishwasher", 0) == 1
+    # Sous-types V1.2 masqués du canvas (présents dans devis.items côté NFC
+    # mais pas comme pastilles)
+    assert type_counts.get("Oven", 0) == 0
+    assert type_counts.get("Cooktop", 0) == 0
+    assert type_counts.get("Dishwasher", 0) == 0
     # Pas de SpecialFeed légacy en cuisine
     assert type_counts.get("SpecialFeed", 0) == 0
+    # Vérif : les sous-types restent bien dans le devis lui-même
+    from src.planrec.nfc_rules import EquipmentType
+    cuisine_items = devis.per_room[0].items
+    assert cuisine_items.get(EquipmentType.OVEN) == 1
+    assert cuisine_items.get(EquipmentType.COOKTOP) == 1
+    assert cuisine_items.get(EquipmentType.DISHWASHER) == 1
 
 
 def test_generate_equipments_room_label_with_index():
@@ -446,3 +458,17 @@ def test_build_devis_lines_initial_filters_circuit_only_types():
     assert "Lave-vaisselle" in labels
     assert "Prise de courant" in labels
     assert "Point lumineux" in labels
+
+
+def test_canvas_hidden_equip_keys_contains_all_v12_subtypes():
+    """CANVAS_HIDDEN_EQUIP_KEYS couvre les 8 sous-types V1.2 (et seulement
+    eux). Les 5 types legacy V1.0 (Prise/RJ45/Light/Switch/SpecialFeed)
+    restent visibles."""
+    from src.planrec.nfc_equipments import CANVAS_HIDDEN_EQUIP_KEYS
+
+    hidden = {"Oven", "Cooktop", "Dishwasher", "WashingMachine",
+              "Dryer", "Boiler", "Convector", "TowelWarmer"}
+    assert CANVAS_HIDDEN_EQUIP_KEYS == hidden
+
+    visible_legacy = {"Prise", "RJ45", "LightPoint", "Switch", "SpecialFeed"}
+    assert visible_legacy.isdisjoint(CANVAS_HIDDEN_EQUIP_KEYS)

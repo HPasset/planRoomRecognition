@@ -35,7 +35,11 @@ from src.planrec.nfc_pricing import (
     TVA_OPTIONS,
     compute_ttc,
 )
-from src.planrec.nfc_equipments import EQUIP_TYPES, NFC_TO_EQUIP_TYPE
+from src.planrec.nfc_equipments import (
+    CANVAS_HIDDEN_EQUIP_KEYS,
+    EQUIP_TYPES,
+    NFC_TO_EQUIP_TYPE,
+)
 from src.planrec.nfc_rules import CIRCUIT_ONLY_EQUIPMENT_TYPES, compute_devis_global
 from src.planrec.ocr.engine_paddle import PaddleOCREngine
 from src.planrec.ocr.postprocess import postprocess_ocr_items
@@ -1297,11 +1301,15 @@ def main():
         for lbl, color in DEVIS_LABEL_TO_COLOR.items()
     ]
 
-    # Palette équipements (Phase 2 : statique, drag-in en Phase 4)
+    # Palette équipements (Phase 2 : statique, drag-in en Phase 4).
+    # Les sous-types V1.2 (Four, Plaque, LV, LL, SL, Chaudière, Convecteur,
+    # Sèche-serviettes) sont masqués du canvas — ils restent dans le devis
+    # (sauf circuit-only Four/Plaque/Conv) et dans le tableau électrique.
     equip_palette_for_canvas: list[dict] = [
         {"type": key, "label": info["label"], "color": info["color"],
          "svg_id": info["svg_id"]}
         for key, info in EQUIP_TYPES.items()
+        if key not in CANVAS_HIDDEN_EQUIP_KEYS
     ]
 
     # Encode l'image originale en PNG pour transit au component
