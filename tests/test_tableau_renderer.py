@@ -85,3 +85,37 @@ def test_render_svg_dimensions_scale_with_n_rcds():
     h_small = int(svg_small.split('height="')[1].split('"')[0])
     h_big = int(svg_big.split('height="')[1].split('"')[0])
     assert h_big > h_small
+
+
+def test_render_html_table_one_row_per_circuit():
+    """Une ligne <tr> par circuit + 1 row header."""
+    from src.planrec.tableau_renderer import render_html_table
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "B1", "c2_class": "BedRoom"},
+        {"id": "K1", "c2_class": "Kitchen"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    tab = generate_tableau(devis_global=devis, heating_enabled=True)
+    html = render_html_table(tab)
+
+    total_circuits = sum(len(r.circuits) for r in tab.rcds)
+    n_tr = html.count("<tr")
+    assert n_tr == total_circuits + 1
+
+
+def test_render_html_table_contains_breaker_amps_and_section():
+    """Le HTML mentionne calibre + section câble."""
+    from src.planrec.tableau_renderer import render_html_table
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [{"id": "K1", "c2_class": "Kitchen"}]
+    devis = compute_devis_global(rooms)
+    tab = generate_tableau(devis_global=devis)
+    html = render_html_table(tab)
+    assert "32 A" in html or "32A" in html
+    assert "6 mm²" in html or "6.0 mm²" in html or "6.0mm" in html
