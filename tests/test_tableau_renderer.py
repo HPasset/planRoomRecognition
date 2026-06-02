@@ -22,3 +22,66 @@ def test_circuit_colors_constants_present():
         assert ct in CIRCUIT_COLORS
         assert CIRCUIT_COLORS[ct].startswith("#")
         assert len(CIRCUIT_COLORS[ct]) == 7
+
+
+def test_render_svg_contains_all_circuits_as_rect():
+    """Tous les circuits sont rendus comme rect colorés."""
+    from src.planrec.tableau_renderer import render_svg
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "B1", "c2_class": "BedRoom"},
+        {"id": "K1", "c2_class": "Kitchen"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    tab = generate_tableau(devis_global=devis, heating_enabled=True)
+    svg = render_svg(tab)
+
+    total_circuits = sum(len(r.circuits) for r in tab.rcds)
+    n_rect = svg.count("<rect")
+    assert n_rect >= total_circuits + len(tab.rcds)
+
+
+def test_render_svg_well_formed_xml():
+    """SVG output parseable comme XML."""
+    import xml.etree.ElementTree as ET
+    from src.planrec.tableau_renderer import render_svg
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [{"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0}]
+    devis = compute_devis_global(rooms)
+    tab = generate_tableau(devis_global=devis, heating_enabled=False)
+    svg = render_svg(tab)
+    ET.fromstring(svg)
+
+
+def test_render_svg_dimensions_scale_with_n_rcds():
+    """Hauteur SVG croît avec le nombre de RCD."""
+    from src.planrec.tableau_renderer import render_svg
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    small_rooms = [{"id": "L1", "c2_class": "LivingRoom", "surface_m2": 30.0}]
+    big_rooms = [
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "B1", "c2_class": "BedRoom"},
+        {"id": "B2", "c2_class": "BedRoom"},
+        {"id": "B3", "c2_class": "BedRoom"},
+        {"id": "K1", "c2_class": "Kitchen"},
+        {"id": "S1", "c2_class": "Bath"},
+        {"id": "T1", "c2_class": "Storage"},
+    ]
+    svg_small = render_svg(generate_tableau(
+        compute_devis_global(small_rooms, heating_enabled=False),
+        heating_enabled=False,
+    ))
+    svg_big = render_svg(generate_tableau(
+        compute_devis_global(big_rooms, heating_enabled=True),
+        heating_enabled=True,
+    ))
+    h_small = int(svg_small.split('height="')[1].split('"')[0])
+    h_big = int(svg_big.split('height="')[1].split('"')[0])
+    assert h_big > h_small
