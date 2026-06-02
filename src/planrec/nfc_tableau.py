@@ -331,6 +331,104 @@ def _compute_rcd_amps(circuits: list[Circuit]) -> int:
     return _ceil_to_normalized(raw)
 
 
+def generate_tableau(
+    devis_global: DevisGlobal,
+    heating_enabled: bool = True,
+    typology_override: Optional[str] = None,
+) -> Tableau:
+    """Orchestre les 7 phases pour produire un Tableau complet."""
+
+    # Phase 0 : typologie + surface
+    typology = typology_override or detect_typology(devis_global)
+    typology_source = "user_override" if typology_override else "auto"
+    surfaces = [d.surface_m2 for d in devis_global.per_room if d.surface_m2]
+    surface_m2 = sum(surfaces) if surfaces else None
+
+    notes: list[str] = []
+    warnings: list[str] = []
+
+    # Phase 1 : RJ45 hors tableau
+    n_rj45 = sum(
+        d.items.get(EquipmentType.RJ45, 0) for d in devis_global.per_room
+    )
+    if n_rj45 > 0:
+        notes.append(f"{n_rj45} prises RJ45 → coffret VDI séparé (hors V1 batIA)")
+
+    # Construire les listes par catégorie pour les phases 2/3/4
+    rooms_with_lights: list[tuple[str, int]] = []
+    rooms_with_sockets: list[tuple[str, int]] = []
+    rooms_with_convectors: list[tuple[str, int]] = []
+    n_towel_warmers = 0
+    spec_counts: dict[EquipmentType, int] = {}
+
+    cat_seen: dict[str, int] = {}
+    cat_total: dict[str, int] = {}
+    for d in devis_global.per_room:
+        cat = d.nfc_category.value
+        cat_total[cat] = cat_total.get(cat, 0) + 1
+    for d in devis_global.per_room:
+        cat = d.nfc_category.value
+        cat_seen[cat] = cat_seen.get(cat, 0) + 1
+        room_label = f"{cat} {cat_seen[cat]}" if cat_total[cat] > 1 else cat
+
+        n_light = d.items.get(EquipmentType.LIGHT_POINT, 0)
+        if n_light > 0:
+            rooms_with_lights.append((room_label, n_light))
+
+        n_sock = d.items.get(EquipmentType.SOCKET, 0)
+        if n_sock > 0:
+            rooms_with_sockets.append((room_label, n_sock))
+
+        n_conv = d.items.get(EquipmentType.CONVECTOR, 0)
+        if n_conv > 0:
+            rooms_with_convectors.append((room_label, n_conv))
+
+        n_tw = d.items.get(EquipmentType.TOWEL_WARMER, 0)
+        n_towel_warmers += n_tw
+
+        for eq_type in (EquipmentType.OVEN, EquipmentType.COOKTOP,
+                        EquipmentType.DISHWASHER,
+                        EquipmentType.WASHING_MACHINE, EquipmentType.DRYER,
+                        EquipmentType.BOILER):
+            n_eq = d.items.get(eq_type, 0)
+            if n_eq > 0:
+                spec_counts[eq_type] = spec_counts.get(eq_type, 0) + n_eq
+
+    # Phase 2-5 : générer circuits
+    circuits: list[Circuit] = []
+    circuits.extend(_build_lighting_circuits(rooms_with_lights))
+    circuits.extend(_build_socket_circuits(rooms_with_sockets))
+    if heating_enabled:
+        circuits.extend(_build_heating_circuits(rooms_with_convectors,
+                                                 n_towel_warmers))
+    circuits.extend(_build_specialized_circuits(spec_counts))
+
+    # Phase 6 : nombre min de RCD
+    n_rcds = _compute_min_rcds(typology, surface_m2, len(circuits))
+
+    # Phase 7 : répartition sur RCD + calcul calibres
+    rcds = _distribute_circuits_to_rcds(circuits, n_rcds)
+
+    # Compteurs visuels
+    total_modules = (
+        len(circuits)
+        + sum(4 for _ in rcds)
+    )
+    n_rails = math.ceil(total_modules / 13) if total_modules > 0 else 0
+
+    return Tableau(
+        typology=typology,
+        typology_source=typology_source,
+        surface_m2=surface_m2,
+        heating_enabled=heating_enabled,
+        rcds=rcds,
+        total_modules=total_modules,
+        n_rails=n_rails,
+        notes=notes,
+        warnings=warnings,
+    )
+
+
 def _distribute_circuits_to_rcds(
     circuits: list[Circuit],
     n_rcds: int,

@@ -291,3 +291,68 @@ def test_rcd_amps_heating_summed_not_halved():
                 breaker_amps=20, cable_section_mm2=2.5),
     ]
     assert _compute_rcd_amps(circuits) == 40
+
+
+def test_generate_tableau_T3_complete_flow():
+    """T3 standard (séjour + 2 chambres + cuisine + SdB + entrée) →
+    tableau cohérent : 3 RCD min, Type A contient Plaque + LL, notes RJ45."""
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "B1", "c2_class": "BedRoom"},
+        {"id": "B2", "c2_class": "BedRoom"},
+        {"id": "K1", "c2_class": "Kitchen"},
+        {"id": "S1", "c2_class": "Bath"},
+        {"id": "E1", "c2_class": "Entry"},
+        {"id": "T1", "c2_class": "Storage"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    tableau = generate_tableau(devis_global=devis, heating_enabled=True)
+
+    assert tableau.typology == "T3"
+    assert tableau.heating_enabled is True
+    assert len(tableau.rcds) >= 3
+    # Premier RCD est Type A et contient Plaque + LL
+    type_a_rcd = tableau.rcds[0]
+    assert type_a_rcd.rcd_type == "A"
+    labels = [c.label for c in type_a_rcd.circuits]
+    assert any("Plaque" in lbl for lbl in labels)
+    assert any("Lave-linge" in lbl for lbl in labels)
+    # Note RJ45 hors tableau
+    assert any("RJ45" in n for n in tableau.notes)
+
+
+def test_generate_tableau_typology_override():
+    """typology_override force la typologie quel que soit le devis."""
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 20.0},
+        {"id": "B1", "c2_class": "BedRoom"},
+    ]
+    devis = compute_devis_global(rooms)
+    tableau = generate_tableau(devis_global=devis, heating_enabled=True,
+                                typology_override="T4")
+    assert tableau.typology == "T4"
+    assert tableau.typology_source == "user_override"
+
+
+def test_generate_tableau_heating_disabled_no_heating_circuits():
+    """heating_enabled=False → 0 circuits HEATING ni TOWEL_WARMER."""
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "B1", "c2_class": "BedRoom"},
+        {"id": "S1", "c2_class": "Bath"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=False)
+    tableau = generate_tableau(devis_global=devis, heating_enabled=False)
+    all_circuits = [c for r in tableau.rcds for c in r.circuits]
+    heating_circuits = [c for c in all_circuits
+                        if c.type.value in ("heating", "towel_warmer")]
+    assert heating_circuits == []
