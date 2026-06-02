@@ -436,6 +436,70 @@ function SvgEquipIcon({ svgId, color, size = 22 }: SvgEquipIconProps) {
           <line x1="26" y1="14" x2="26" y2="9" stroke={color} strokeWidth={2}/>
         </svg>
       );
+    case "oven":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
+          <rect x="10" y="12" width="20" height="12" rx="1" fill="none" stroke={color} strokeWidth={2}/>
+          <text x="20" y="25" textAnchor="middle" fontSize="10" fontWeight="bold" fill={color}>F</text>
+        </svg>
+      );
+    case "cooktop":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
+          <circle cx="15" cy="17" r="4" fill="none" stroke={color} strokeWidth={2}/>
+          <circle cx="25" cy="17" r="4" fill="none" stroke={color} strokeWidth={2}/>
+          <circle cx="15" cy="27" r="4" fill="none" stroke={color} strokeWidth={2}/>
+          <circle cx="25" cy="27" r="4" fill="none" stroke={color} strokeWidth={2}/>
+        </svg>
+      );
+    case "dishwasher":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
+          <text x="20" y="25" textAnchor="middle" fontSize="10" fontWeight="bold" fill={color}>LV</text>
+        </svg>
+      );
+    case "washingmachine":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
+          <circle cx="20" cy="22" r="8" fill="none" stroke={color} strokeWidth={2}/>
+          <text x="20" y="26" textAnchor="middle" fontSize="8" fontWeight="bold" fill={color}>LL</text>
+        </svg>
+      );
+    case "dryer":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
+          <circle cx="20" cy="22" r="8" fill="none" stroke={color} strokeWidth={2}/>
+          <text x="20" y="26" textAnchor="middle" fontSize="8" fontWeight="bold" fill={color}>SL</text>
+        </svg>
+      );
+    case "boiler":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="14" fill="white" stroke={color} strokeWidth={sw}/>
+          <text x="20" y="25" textAnchor="middle" fontSize="14" fontWeight="bold" fill={color}>C</text>
+        </svg>
+      );
+    case "convector":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <rect x="6" y="12" width="28" height="16" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
+          <path d="M11 24 Q14 19 17 24 Q20 29 23 24 Q26 19 29 24" fill="none" stroke={color} strokeWidth={2}/>
+        </svg>
+      );
+    case "towelwarmer":
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
+          <line x1="12" y1="14" x2="28" y2="14" stroke={color} strokeWidth={2}/>
+          <line x1="12" y1="20" x2="28" y2="20" stroke={color} strokeWidth={2}/>
+          <line x1="12" y1="26" x2="28" y2="26" stroke={color} strokeWidth={2}/>
+        </svg>
+      );
     default:
       return (
         <svg width={size} height={size} viewBox="0 0 40 40">
