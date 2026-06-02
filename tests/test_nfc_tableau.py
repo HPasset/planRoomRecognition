@@ -178,3 +178,42 @@ def test_heating_empty_lists():
     from src.planrec.nfc_tableau import _build_heating_circuits
     circuits = _build_heating_circuits([], n_towel_warmers=0)
     assert circuits == []
+
+
+def test_specialized_each_appliance_one_circuit():
+    """6 appareils spé → 6 circuits dédiés."""
+    from src.planrec.nfc_tableau import _build_specialized_circuits
+    from src.planrec.nfc_rules import EquipmentType
+    counts = {
+        EquipmentType.OVEN: 1,
+        EquipmentType.COOKTOP: 1,
+        EquipmentType.DISHWASHER: 1,
+        EquipmentType.WASHING_MACHINE: 1,
+        EquipmentType.DRYER: 1,
+        EquipmentType.BOILER: 1,
+    }
+    circuits = _build_specialized_circuits(counts)
+    assert len(circuits) == 6
+
+
+def test_specialized_plaque_is_32A_6mm2_type_a():
+    """Plaque cuisson → calibre 32A, câble 6mm², requires_type_a=True."""
+    from src.planrec.nfc_tableau import _build_specialized_circuits
+    from src.planrec.nfc_rules import EquipmentType
+    counts = {EquipmentType.COOKTOP: 1}
+    circuits = _build_specialized_circuits(counts)
+    assert len(circuits) == 1
+    plaque = circuits[0]
+    assert plaque.breaker_amps == 32
+    assert plaque.cable_section_mm2 == 6.0
+    assert plaque.requires_type_a is True
+
+
+def test_specialized_lavelinge_is_20A_2_5mm2_type_a():
+    from src.planrec.nfc_tableau import _build_specialized_circuits
+    from src.planrec.nfc_rules import EquipmentType
+    counts = {EquipmentType.WASHING_MACHINE: 1}
+    circuits = _build_specialized_circuits(counts)
+    assert circuits[0].breaker_amps == 20
+    assert circuits[0].cable_section_mm2 == 2.5
+    assert circuits[0].requires_type_a is True

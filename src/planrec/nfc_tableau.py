@@ -68,7 +68,7 @@ def generate_rcd_id() -> str:
     return f"rcd_{secrets.token_hex(4)}"
 
 
-from src.planrec.nfc_rules import DevisGlobal, NFCCategory
+from src.planrec.nfc_rules import DevisGlobal, EquipmentType, NFCCategory
 
 
 def detect_typology(devis: DevisGlobal) -> str:
@@ -246,4 +246,39 @@ def _build_socket_circuits(
             current_n = n_sockets
 
     _flush()
+    return circuits
+
+
+_SPECIALIZED_SPECS: dict[EquipmentType, tuple[int, float, str, bool, CircuitType]] = {
+    # (breaker_amps, cable_section_mm2, label, requires_type_a, circuit_type)
+    EquipmentType.OVEN:            (20, 2.5, "Four",           False, CircuitType.KITCHEN_SPECIAL),
+    EquipmentType.COOKTOP:         (32, 6.0, "Plaque cuisson", True,  CircuitType.KITCHEN_SPECIAL),
+    EquipmentType.DISHWASHER:      (20, 2.5, "Lave-vaisselle", False, CircuitType.KITCHEN_SPECIAL),
+    EquipmentType.WASHING_MACHINE: (20, 2.5, "Lave-linge",     True,  CircuitType.LAUNDRY),
+    EquipmentType.DRYER:           (20, 2.5, "Sèche-linge",    False, CircuitType.LAUNDRY),
+    EquipmentType.BOILER:          (20, 2.5, "Chaudière",      False, CircuitType.BOILER),
+}
+
+
+def _build_specialized_circuits(
+    counts: dict[EquipmentType, int],
+) -> list[Circuit]:
+    """Génère 1 circuit par instance d'appareil spécialisé."""
+    circuits: list[Circuit] = []
+    for eq_type, n in counts.items():
+        if eq_type not in _SPECIALIZED_SPECS or n <= 0:
+            continue
+        amps, section, label, type_a, ctype = _SPECIALIZED_SPECS[eq_type]
+        for i in range(n):
+            suffix = f" {i+1}" if n > 1 else ""
+            circuits.append(Circuit(
+                id=generate_circuit_id(),
+                type=ctype,
+                label=f"{label}{suffix}",
+                breaker_amps=amps,
+                cable_section_mm2=section,
+                rooms_served=[],
+                n_devices=1,
+                requires_type_a=type_a,
+            ))
     return circuits
