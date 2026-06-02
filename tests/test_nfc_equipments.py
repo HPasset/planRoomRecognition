@@ -314,3 +314,13 @@ def test_kitchen_generates_typed_special_feeds():
     assert devis.items.get(EquipmentType.DISHWASHER) == 1
     # plus de SPECIAL_FEED générique en cuisine
     assert EquipmentType.SPECIAL_FEED not in devis.items
+
+
+def test_storage_generates_typed_special_feeds():
+    """Cellier/Buanderie : LL + SL + Chaudière (au lieu de 3× SPECIAL_FEED)."""
+    from src.planrec.nfc_rules import compute_devis_for_room, EquipmentType
+    devis = compute_devis_for_room("s1", "Storage")
+    assert devis.items.get(EquipmentType.WASHING_MACHINE) == 1
+    assert devis.items.get(EquipmentType.DRYER) == 1
+    assert devis.items.get(EquipmentType.BOILER) == 1
+    assert EquipmentType.SPECIAL_FEED not in devis.items

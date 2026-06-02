@@ -144,11 +144,13 @@ def compute_devis_for_room(
         devis.notes.append("4 prises au-dessus du plan de travail")
 
     elif nfc_cat == NFCCategory.STORAGE:
-        # Cellier/Buanderie : 1 lumière + 1 prise + 3 alimentations
+        # Cellier/Buanderie : 1 lumière + 1 prise + 3 circuits spécialisés typés
         devis.items[EquipmentType.LIGHT_POINT] = 1
         devis.items[EquipmentType.SWITCH] = 1
         devis.items[EquipmentType.SOCKET] = 1
-        devis.items[EquipmentType.SPECIAL_FEED] = 3
+        devis.items[EquipmentType.WASHING_MACHINE] = 1
+        devis.items[EquipmentType.DRYER] = 1
+        devis.items[EquipmentType.BOILER] = 1
         devis.special_feeds_detail.extend([
             "Lave-linge (16A)", "Sèche-linge (16A)", "Cumulus",
         ])
