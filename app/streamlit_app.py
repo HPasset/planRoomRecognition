@@ -861,6 +861,25 @@ def main():
                  "Changement = recharge modèle (~10 s)."
         )
 
+        # ---- Sidebar V1.2 : Tableau électrique ----
+        st.markdown("---")
+        st.subheader("⚡ Tableau électrique")
+        heating_enabled = st.toggle(
+            "Chauffage électrique",
+            value=True,
+            key="tableau_heating_enabled",
+            help="Si actif, batIA ajoute 1 convecteur 2000W par pièce "
+                 "principale et 1 sèche-serviettes par SdB."
+        )
+        with st.expander("Forcer typologie", expanded=False):
+            typology_override = st.selectbox(
+                "Typologie",
+                [None, "T1", "T2", "T3", "T4", "T5"],
+                index=0,
+                key="tableau_typology_override",
+                help="Par défaut auto-détectée depuis les pièces."
+            )
+
     # --- Main pane ---
     if uploaded is None:
         st.info("👈 Charge un plan dans la sidebar pour démarrer.")
