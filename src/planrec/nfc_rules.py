@@ -56,6 +56,7 @@ CIRCUIT_ONLY_EQUIPMENT_TYPES: frozenset[EquipmentType] = frozenset({
     EquipmentType.OVEN,
     EquipmentType.COOKTOP,
     EquipmentType.CONVECTOR,
+    EquipmentType.TOWEL_WARMER,
 })
 
 

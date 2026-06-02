@@ -93,6 +93,18 @@ SOCKET_MAX_PER_CIRCUIT = 12       # Règle cabinet associé (NFC stricte = 8)
 CONVECTOR_MAX_PER_CIRCUIT = 2     # Règle cabinet associé (2× 2000W max)
 
 
+def _compact_rooms_label(prefix: str, rooms: list[str]) -> str:
+    """Label compact pour les modules SVG : prefix + room(s) qui tient
+    en 2-3 lignes max dans 60 px de large. Si >1 pièce, agrégé en '×N'.
+    La liste complète des pièces reste dans Circuit.rooms_served pour
+    le rendu HTML/PDF."""
+    if not rooms:
+        return prefix
+    if len(rooms) == 1:
+        return f"{prefix} {rooms[0]}"
+    return f"{prefix} ×{len(rooms)}"
+
+
 def _build_lighting_circuits(
     rooms_with_lights: list[tuple[str, int]],
 ) -> list[Circuit]:
@@ -113,7 +125,7 @@ def _build_lighting_circuits(
             circuits.append(Circuit(
                 id=generate_circuit_id(),
                 type=CircuitType.LIGHTING,
-                label=f"Éclairage {', '.join(current_rooms)}",
+                label=_compact_rooms_label("Éclairage", current_rooms),
                 breaker_amps=10,
                 cable_section_mm2=1.5,
                 rooms_served=list(current_rooms),
@@ -173,7 +185,7 @@ def _build_heating_circuits(
         circuits.append(Circuit(
             id=generate_circuit_id(),
             type=CircuitType.HEATING,
-            label=f"Chauffage {', '.join(chunk)}",
+            label=_compact_rooms_label("Chauffage", chunk),
             breaker_amps=20,
             cable_section_mm2=2.5,
             rooms_served=list(chunk),
@@ -212,7 +224,7 @@ def _build_socket_circuits(
             circuits.append(Circuit(
                 id=generate_circuit_id(),
                 type=CircuitType.SOCKET,
-                label=f"Prises {', '.join(current_rooms)}",
+                label=_compact_rooms_label("Prises", current_rooms),
                 breaker_amps=20,
                 cable_section_mm2=2.5,
                 rooms_served=list(current_rooms),

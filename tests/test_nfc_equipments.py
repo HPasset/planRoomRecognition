@@ -414,9 +414,10 @@ def test_circuit_only_equipment_types_contains_oven_cooktop_convector():
     assert EquipmentType.CONVECTOR in CIRCUIT_ONLY_EQUIPMENT_TYPES
 
 
-def test_circuit_only_excludes_dishwasher_washing_machine_boiler_towel():
-    """Lave-vaisselle, Lave-linge, Sèche-linge, Chaudière, Sèche-serviettes
-    restent facturés (l'artisan pose ces équipements ou leurs accessoires)."""
+def test_circuit_only_excludes_dishwasher_washing_machine_boiler():
+    """Lave-vaisselle, Lave-linge, Sèche-linge, Chaudière restent facturés
+    (l'artisan pose ces équipements). Le Sèche-serviettes a été ajouté en
+    circuit-only le 2026-06-02 sur retour métier (fourni par l'occupant)."""
     from src.planrec.nfc_rules import (
         CIRCUIT_ONLY_EQUIPMENT_TYPES,
         EquipmentType,
@@ -426,13 +427,14 @@ def test_circuit_only_excludes_dishwasher_washing_machine_boiler_towel():
         EquipmentType.WASHING_MACHINE,
         EquipmentType.DRYER,
         EquipmentType.BOILER,
-        EquipmentType.TOWEL_WARMER,
         EquipmentType.SOCKET,
         EquipmentType.LIGHT_POINT,
         EquipmentType.SWITCH,
         EquipmentType.RJ45,
     ):
         assert keep not in CIRCUIT_ONLY_EQUIPMENT_TYPES
+    # TOWEL_WARMER désormais circuit-only
+    assert EquipmentType.TOWEL_WARMER in CIRCUIT_ONLY_EQUIPMENT_TYPES
 
 
 def test_build_devis_lines_initial_filters_circuit_only_types():
