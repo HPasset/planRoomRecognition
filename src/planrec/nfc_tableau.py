@@ -154,6 +154,47 @@ def _build_lighting_circuits(
     return circuits
 
 
+def _build_heating_circuits(
+    rooms_with_convectors: list[tuple[str, int]],
+    n_towel_warmers: int,
+) -> list[Circuit]:
+    """Génère les circuits chauffage : convecteurs packés 2/circuit + 1 circuit
+    par sèche-serviettes."""
+    circuits: list[Circuit] = []
+
+    # Convecteurs : pack 2 par circuit
+    all_convectors: list[str] = []
+    for room, n in rooms_with_convectors:
+        all_convectors.extend([room] * n)
+
+    while all_convectors:
+        chunk = all_convectors[:CONVECTOR_MAX_PER_CIRCUIT]
+        all_convectors = all_convectors[CONVECTOR_MAX_PER_CIRCUIT:]
+        circuits.append(Circuit(
+            id=generate_circuit_id(),
+            type=CircuitType.HEATING,
+            label=f"Chauffage {', '.join(chunk)}",
+            breaker_amps=20,
+            cable_section_mm2=2.5,
+            rooms_served=list(chunk),
+            n_devices=len(chunk),
+        ))
+
+    # Sèche-serviettes : 1 circuit dédié par instance
+    for i in range(n_towel_warmers):
+        circuits.append(Circuit(
+            id=generate_circuit_id(),
+            type=CircuitType.TOWEL_WARMER,
+            label=f"Sèche-serviettes {i+1}",
+            breaker_amps=20,
+            cable_section_mm2=2.5,
+            rooms_served=[],
+            n_devices=1,
+        ))
+
+    return circuits
+
+
 def _build_socket_circuits(
     rooms_with_sockets: list[tuple[str, int]],
 ) -> list[Circuit]:

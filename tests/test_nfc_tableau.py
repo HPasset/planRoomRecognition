@@ -150,3 +150,31 @@ def test_sockets_large_room_dedicated_circuit():
     circuits = _build_socket_circuits(rooms)
     assert len(circuits) == 1
     assert circuits[0].n_devices == 12
+
+
+def test_heating_pack_2_convectors_per_circuit():
+    """4 convecteurs → 2 circuits HEATING (2 max par circuit, 20A)."""
+    from src.planrec.nfc_tableau import _build_heating_circuits
+    rooms_with_conv = [("Sejour", 1), ("Chambre 1", 1), ("Chambre 2", 1),
+                       ("Chambre 3", 1)]
+    circuits = _build_heating_circuits(rooms_with_conv, n_towel_warmers=0)
+    heating = [c for c in circuits if c.type.value == "heating"]
+    assert len(heating) == 2
+    assert all(c.breaker_amps == 20 and c.cable_section_mm2 == 2.5
+               for c in heating)
+    assert sum(c.n_devices for c in heating) == 4
+
+
+def test_heating_1_circuit_per_towel_warmer():
+    """3 sèche-serviettes → 3 circuits dédiés TOWEL_WARMER (1 par circuit)."""
+    from src.planrec.nfc_tableau import _build_heating_circuits
+    circuits = _build_heating_circuits(rooms_with_convectors=[],
+                                       n_towel_warmers=3)
+    tw = [c for c in circuits if c.type.value == "towel_warmer"]
+    assert len(tw) == 3
+
+
+def test_heating_empty_lists():
+    from src.planrec.nfc_tableau import _build_heating_circuits
+    circuits = _build_heating_circuits([], n_towel_warmers=0)
+    assert circuits == []
