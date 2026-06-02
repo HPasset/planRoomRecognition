@@ -100,3 +100,24 @@ def test_detect_typology_T5_capped_at_5():
         {"id": "B4", "c2_class": "BedRoom"},
     ])
     assert detect_typology(devis) == "T5"
+
+
+def test_lighting_one_room_one_circuit_if_few_lights():
+    """Une pièce avec ≤5 lights → 1 circuit éclairage 10A/1.5mm²."""
+    from src.planrec.nfc_tableau import _build_lighting_circuits
+    rooms_with_lights = [("Sejour", 3), ("Chambre 1", 2)]
+    circuits = _build_lighting_circuits(rooms_with_lights)
+    assert len(circuits) == 1
+    assert circuits[0].breaker_amps == 10
+    assert circuits[0].cable_section_mm2 == 1.5
+    assert circuits[0].n_devices == 5
+    assert set(circuits[0].rooms_served) == {"Sejour", "Chambre 1"}
+
+
+def test_lighting_bin_packing_overflow_creates_2_circuits():
+    """7 lights ne tiennent pas sur 1 circuit (cap 5) → 2 circuits."""
+    from src.planrec.nfc_tableau import _build_lighting_circuits
+    rooms_with_lights = [("Cuisine", 7)]
+    circuits = _build_lighting_circuits(rooms_with_lights)
+    assert len(circuits) == 2
+    assert sum(c.n_devices for c in circuits) == 7

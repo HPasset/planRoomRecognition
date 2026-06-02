@@ -86,3 +86,69 @@ def detect_typology(devis: DevisGlobal) -> str:
         if d.nfc_category in (NFCCategory.LIVINGROOM, NFCCategory.BEDROOM)
     )
     return f"T{min(n_main_rooms, 5)}"
+
+
+LIGHTING_MAX_PER_CIRCUIT = 5      # Règle cabinet associé (NFC stricte = 8)
+SOCKET_MAX_PER_CIRCUIT = 12       # Règle cabinet associé (NFC stricte = 8)
+CONVECTOR_MAX_PER_CIRCUIT = 2     # Règle cabinet associé (2× 2000W max)
+
+
+def _build_lighting_circuits(
+    rooms_with_lights: list[tuple[str, int]],
+) -> list[Circuit]:
+    """Bin-packing greedy : pièces avec leur n_lights → circuits 5/circuit max.
+
+    Trie pièces par n_lights décroissant. Ouvre circuits successifs en y
+    ajoutant pièces tant que capacité restante.
+    """
+    sorted_rooms = sorted(rooms_with_lights, key=lambda x: -x[1])
+    circuits: list[Circuit] = []
+    current_capacity = 0
+    current_rooms: list[str] = []
+    current_n = 0
+
+    def _flush():
+        nonlocal current_capacity, current_rooms, current_n
+        if current_n > 0:
+            circuits.append(Circuit(
+                id=generate_circuit_id(),
+                type=CircuitType.LIGHTING,
+                label=f"Éclairage {', '.join(current_rooms)}",
+                breaker_amps=10,
+                cable_section_mm2=1.5,
+                rooms_served=list(current_rooms),
+                n_devices=current_n,
+                requires_type_a=False,
+            ))
+        current_capacity = 0
+        current_rooms = []
+        current_n = 0
+
+    for room_name, n_lights in sorted_rooms:
+        if n_lights > LIGHTING_MAX_PER_CIRCUIT:
+            _flush()
+            n_remaining = n_lights
+            while n_remaining > 0:
+                chunk = min(n_remaining, LIGHTING_MAX_PER_CIRCUIT)
+                circuits.append(Circuit(
+                    id=generate_circuit_id(),
+                    type=CircuitType.LIGHTING,
+                    label=f"Éclairage {room_name}",
+                    breaker_amps=10,
+                    cable_section_mm2=1.5,
+                    rooms_served=[room_name],
+                    n_devices=chunk,
+                ))
+                n_remaining -= chunk
+        elif current_capacity + n_lights <= LIGHTING_MAX_PER_CIRCUIT:
+            current_rooms.append(room_name)
+            current_capacity += n_lights
+            current_n += n_lights
+        else:
+            _flush()
+            current_rooms = [room_name]
+            current_capacity = n_lights
+            current_n = n_lights
+
+    _flush()
+    return circuits
