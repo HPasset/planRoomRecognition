@@ -286,3 +286,20 @@ def test_equipment_type_has_all_v2_subtypes():
     assert EquipmentType.BOILER.value == "chaudiere_cumulus"
     assert EquipmentType.CONVECTOR.value == "convecteur"
     assert EquipmentType.TOWEL_WARMER.value == "seche_serviettes"
+
+
+def test_pricing_covers_all_new_types():
+    """DEFAULT_PRICES_HT et EQUIPMENT_LABELS_FR couvrent les 8 nouveaux types."""
+    from src.planrec.nfc_rules import EquipmentType
+    from src.planrec.nfc_pricing import DEFAULT_PRICES_HT, EQUIPMENT_LABELS_FR
+
+    new_types = [
+        EquipmentType.OVEN, EquipmentType.COOKTOP, EquipmentType.DISHWASHER,
+        EquipmentType.WASHING_MACHINE, EquipmentType.DRYER, EquipmentType.BOILER,
+        EquipmentType.CONVECTOR, EquipmentType.TOWEL_WARMER,
+    ]
+    for t in new_types:
+        assert t in DEFAULT_PRICES_HT, f"prix manquant pour {t.value}"
+        assert DEFAULT_PRICES_HT[t] > 0
+        assert t in EQUIPMENT_LABELS_FR, f"label manquant pour {t.value}"
+        assert len(EQUIPMENT_LABELS_FR[t]) > 0

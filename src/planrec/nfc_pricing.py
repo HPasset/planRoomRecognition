@@ -11,11 +11,22 @@ from src.planrec.nfc_rules import EquipmentType
 
 # Prix unitaires HT par défaut (€) — fourniture + pose
 DEFAULT_PRICES_HT: dict[EquipmentType, float] = {
+    # Anciens (préservés pour rétrocompat)
     EquipmentType.SOCKET: 25.0,            # prise courant 16A standard
     EquipmentType.RJ45: 40.0,              # prise RJ45 cat 6
     EquipmentType.LIGHT_POINT: 50.0,       # point lumineux simple + LED
     EquipmentType.SWITCH: 18.0,            # va-et-vient ou simple allumage
-    EquipmentType.SPECIAL_FEED: 70.0,      # alimentation spécialisée (16A ou 32A)
+    EquipmentType.SPECIAL_FEED: 70.0,      # legacy fourre-tout, valeur moyenne
+    # NEW V1.2 — circuits spécialisés typés
+    EquipmentType.OVEN: 80.0,
+    EquipmentType.COOKTOP: 110.0,          # 32A + câble 6mm² → plus cher
+    EquipmentType.DISHWASHER: 75.0,
+    EquipmentType.WASHING_MACHINE: 75.0,
+    EquipmentType.DRYER: 75.0,
+    EquipmentType.BOILER: 85.0,
+    # NEW V1.2 — chauffage
+    EquipmentType.CONVECTOR: 65.0,         # alim seule, hors convecteur
+    EquipmentType.TOWEL_WARMER: 70.0,
 }
 
 
@@ -26,6 +37,14 @@ EQUIPMENT_LABELS_FR: dict[EquipmentType, str] = {
     EquipmentType.LIGHT_POINT: "Point lumineux",
     EquipmentType.SWITCH: "Interrupteur",
     EquipmentType.SPECIAL_FEED: "Alimentation spécialisée",
+    EquipmentType.OVEN: "Four",
+    EquipmentType.COOKTOP: "Plaque de cuisson",
+    EquipmentType.DISHWASHER: "Lave-vaisselle",
+    EquipmentType.WASHING_MACHINE: "Lave-linge",
+    EquipmentType.DRYER: "Sèche-linge",
+    EquipmentType.BOILER: "Chaudière/cumulus",
+    EquipmentType.CONVECTOR: "Convecteur",
+    EquipmentType.TOWEL_WARMER: "Sèche-serviettes",
 }
 
 # Mapping inverse (label FR → enum)
