@@ -86,6 +86,7 @@ def compute_devis_for_room(
     surface_m2: float | None = None,
     handicap: bool = False,
     ocr_hint: str | None = None,
+    heating_enabled: bool = True,    # NEW V1.2
 ) -> Devis:
     """Calcule le devis NFC pour une pièce.
 
@@ -124,9 +125,9 @@ def compute_devis_for_room(
         devis.items[EquipmentType.LIGHT_POINT] = 2
         devis.items[EquipmentType.SWITCH] = 1
         devis.items[EquipmentType.SOCKET] = 1 + (1 if handicap else 0)
-        # Sèche-serviettes (V1.2 : circuit chauffage typé)
-        devis.items[EquipmentType.TOWEL_WARMER] = 1
-        devis.special_feeds_detail.append("Sèche-serviettes")
+        if heating_enabled:
+            devis.items[EquipmentType.TOWEL_WARMER] = 1
+            devis.special_feeds_detail.append("Sèche-serviettes")
         devis.notes.append("⚠ Zone 60 cm autour douche/baignoire interdite")
 
     elif nfc_cat == NFCCategory.KITCHEN:
@@ -199,6 +200,10 @@ def compute_devis_for_room(
     else:  # UNKNOWN
         devis.notes.append("Type de pièce non reconnu, devis vide")
 
+    # Auto-génération chauffage électrique pour pièces principales (V1.2)
+    if heating_enabled and nfc_cat in (NFCCategory.LIVINGROOM, NFCCategory.BEDROOM):
+        devis.items[EquipmentType.CONVECTOR] = 1
+
     return devis
 
 
@@ -251,6 +256,7 @@ class DevisGlobal:
 def compute_devis_global(
     rooms: list[dict],
     handicap: bool = False,
+    heating_enabled: bool = True,     # NEW V1.2
 ) -> DevisGlobal:
     """Calcule le devis global pour une liste de pièces.
 
@@ -261,6 +267,8 @@ def compute_devis_global(
             - surface_m2 (float | None): optionnel
             - ocr_hint (str | None): texte OCR contextuel
         handicap: applique les règles handicap à toutes les pièces
+        heating_enabled: si True, génère CONVECTOR pour séjour/chambres et
+                         TOWEL_WARMER pour SdB
 
     Returns:
         DevisGlobal avec per_room + totaux agrégés
@@ -273,6 +281,7 @@ def compute_devis_global(
             surface_m2=r.get("surface_m2"),
             handicap=handicap,
             ocr_hint=r.get("ocr_hint"),
+            heating_enabled=heating_enabled,
         )
         out.per_room.append(devis)
     return out

@@ -332,3 +332,33 @@ def test_bath_generates_towel_warmer_not_special_feed():
     devis = compute_devis_for_room("b1", "Bath")
     assert devis.items.get(EquipmentType.TOWEL_WARMER) == 1
     assert EquipmentType.SPECIAL_FEED not in devis.items
+
+
+def test_heating_enabled_adds_convector_to_living_and_bedroom():
+    """Avec heating_enabled=True (défaut), séjour et chambres reçoivent 1 CONVECTOR."""
+    from src.planrec.nfc_rules import compute_devis_for_room, EquipmentType
+    living = compute_devis_for_room("L1", "LivingRoom", surface_m2=20.0)
+    bedroom = compute_devis_for_room("B1", "BedRoom")
+    assert living.items.get(EquipmentType.CONVECTOR) == 1
+    assert bedroom.items.get(EquipmentType.CONVECTOR) == 1
+
+
+def test_heating_disabled_no_convector():
+    """heating_enabled=False supprime convecteur + sèche-serviettes."""
+    from src.planrec.nfc_rules import compute_devis_for_room, EquipmentType
+    living = compute_devis_for_room("L1", "LivingRoom", surface_m2=20.0,
+                                     heating_enabled=False)
+    bath = compute_devis_for_room("B1", "Bath", heating_enabled=False)
+    assert EquipmentType.CONVECTOR not in living.items
+    assert EquipmentType.TOWEL_WARMER not in bath.items
+
+
+def test_heating_no_convector_in_secondary_rooms():
+    """Convecteur uniquement en pièces principales (séjour, chambres). Pas en
+    cuisine/WC/SdB/cellier/entrée."""
+    from src.planrec.nfc_rules import compute_devis_for_room, EquipmentType
+    for c2 in ("Kitchen", "Bath", "Storage", "Entry"):
+        d = compute_devis_for_room("x", c2, heating_enabled=True)
+        assert EquipmentType.CONVECTOR not in d.items, (
+            f"Convecteur indu pour {c2}"
+        )
