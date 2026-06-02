@@ -356,3 +356,36 @@ def test_generate_tableau_heating_disabled_no_heating_circuits():
     heating_circuits = [c for c in all_circuits
                         if c.type.value in ("heating", "towel_warmer")]
     assert heating_circuits == []
+
+
+def test_edge_case_T1_studio_one_rcd_type_A():
+    """T1 studio (séjour seul + cuisine + SdB) → 1 RCD Type A unique contenant
+    Plaque + LL + tout le reste."""
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 30.0},
+        {"id": "K1", "c2_class": "Kitchen"},
+        {"id": "S1", "c2_class": "Bath"},
+        {"id": "T1", "c2_class": "Storage"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    tableau = generate_tableau(devis_global=devis, heating_enabled=True)
+    assert tableau.typology == "T1"
+    assert len(tableau.rcds) >= 1
+    assert tableau.rcds[0].rcd_type == "A"
+
+
+def test_edge_case_no_kitchen_no_type_a_required():
+    """Logement sans cuisine ni LL → pas de circuit requires_type_a → RCD1
+    reste Type A mais vide de circuits obligatoires."""
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [{"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0}]
+    devis = compute_devis_global(rooms, heating_enabled=False)
+    tableau = generate_tableau(devis_global=devis, heating_enabled=False)
+    type_a_circuits = [c for r in tableau.rcds for c in r.circuits
+                       if c.requires_type_a]
+    assert type_a_circuits == []
