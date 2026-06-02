@@ -119,3 +119,28 @@ def test_render_html_table_contains_breaker_amps_and_section():
     html = render_html_table(tab)
     assert "32 A" in html or "32A" in html
     assert "6 mm²" in html or "6.0 mm²" in html or "6.0mm" in html
+
+
+def test_export_pdf_returns_valid_bytes():
+    """export_pdf retourne des bytes parseables comme PDF."""
+    from src.planrec.tableau_renderer import export_pdf
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+    import io
+    from pypdf import PdfReader
+
+    rooms = [
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "K1", "c2_class": "Kitchen"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    tab = generate_tableau(devis_global=devis, heating_enabled=True)
+    pdf_bytes = export_pdf(tab)
+
+    assert isinstance(pdf_bytes, bytes)
+    assert pdf_bytes.startswith(b"%PDF-")
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    assert len(reader.pages) >= 1
+    text = reader.pages[0].extract_text()
+    assert "Tableau" in text or "tableau" in text.lower()

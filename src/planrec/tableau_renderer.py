@@ -147,3 +147,95 @@ def render_html_table(tableau: Tableau) -> str:
         '* = Type A obligatoire</p>'
     )
     return "".join(parts)
+
+
+def export_pdf(tableau: Tableau) -> bytes:
+    """Génère un PDF A4 portrait : header + schéma + liste circuits + footer."""
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+    from reportlab.lib import colors
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    page_w, page_h = A4
+
+    # Header
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(20 * mm, page_h - 20 * mm,
+                 f"batIA · Tableau électrique · {tableau.typology}")
+    c.setFont("Helvetica", 9)
+    from datetime import date
+    c.drawString(20 * mm, page_h - 27 * mm,
+                 f"Date : {date.today().isoformat()}  ·  "
+                 f"Logement : {tableau.typology}  ·  "
+                 f"Chauffage : {'oui' if tableau.heating_enabled else 'non'}")
+
+    # Schéma simplifié (rectangles colorés)
+    y_cursor = page_h - 45 * mm
+    mod_w_mm = 8 * mm
+    mod_h_mm = 14 * mm
+    rcd_w_mm = 32 * mm
+    for rcd in tableau.rcds:
+        # Bloc RCD
+        c.setStrokeColor(colors.black)
+        c.setFillColor(colors.white)
+        c.rect(20 * mm, y_cursor - mod_h_mm, rcd_w_mm, mod_h_mm,
+               stroke=1, fill=1)
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawCentredString(20 * mm + rcd_w_mm / 2, y_cursor - 5 * mm,
+                            f"ID {rcd.amps} A")
+        c.setFont("Helvetica", 7)
+        c.drawCentredString(20 * mm + rcd_w_mm / 2, y_cursor - 9 * mm,
+                            f"Type {rcd.rcd_type}")
+        c.drawCentredString(20 * mm + rcd_w_mm / 2, y_cursor - 12 * mm,
+                            f"{rcd.sensitivity_ma} mA")
+
+        # Modules
+        for j, circ in enumerate(rcd.circuits):
+            x = 20 * mm + rcd_w_mm + j * mod_w_mm
+            hex_color = CIRCUIT_COLORS.get(circ.type, "#CCCCCC")
+            c.setFillColor(colors.HexColor(hex_color))
+            c.setStrokeColor(colors.HexColor("#37474F"))
+            c.rect(x, y_cursor - mod_h_mm, mod_w_mm, mod_h_mm,
+                   stroke=1, fill=1)
+            c.setFillColor(colors.black)
+            c.setFont("Helvetica-Bold", 7)
+            c.drawCentredString(x + mod_w_mm / 2, y_cursor - 4 * mm,
+                                f"{circ.breaker_amps}A")
+            c.setFont("Helvetica", 6)
+            short = circ.label[:8]
+            c.drawCentredString(x + mod_w_mm / 2, y_cursor - 9 * mm, short)
+
+        y_cursor -= mod_h_mm + 2 * mm
+
+    # Liste circuits (textuelle)
+    y_cursor -= 8 * mm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(20 * mm, y_cursor, "Détail des circuits")
+    y_cursor -= 6 * mm
+    c.setFont("Helvetica", 8)
+    for rcd in tableau.rcds:
+        for circ in rcd.circuits:
+            line = (
+                f"ID {tableau.rcds.index(rcd)+1} Type {rcd.rcd_type} | "
+                f"{circ.label} | {circ.breaker_amps} A | "
+                f"{circ.cable_section_mm2} mm² | "
+                f"{', '.join(circ.rooms_served) or '—'}"
+            )
+            c.drawString(20 * mm, y_cursor, line[:120])
+            y_cursor -= 4 * mm
+            if y_cursor < 30 * mm:
+                c.showPage()
+                y_cursor = page_h - 20 * mm
+
+    # Footer
+    c.setFont("Helvetica-Oblique", 7)
+    c.drawString(20 * mm, 15 * mm,
+                 "Calculé selon NFC 15-100 §10 + règles cabinet. "
+                 "Sections câbles indicatives. L'artisan valide la conformité finale.")
+
+    c.save()
+    return buf.getvalue()
