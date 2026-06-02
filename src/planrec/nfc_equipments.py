@@ -27,11 +27,22 @@ class EquipmentInstance(TypedDict):
 
 # Mapping label devis (FR) + couleur (CSS) + svg_id (pour le composant React)
 EQUIP_TYPES: dict[str, dict[str, str]] = {
-    "Prise":       {"label": "Prise courant",  "color": "rgb(255, 112, 67)", "svg_id": "socket"},
-    "RJ45":        {"label": "Prise RJ45",     "color": "rgb(38, 166, 154)", "svg_id": "rj45"},
-    "LightPoint":  {"label": "Point lumineux", "color": "rgb(251, 192, 45)", "svg_id": "light"},
-    "Switch":      {"label": "Interrupteur",   "color": "rgb(66, 165, 245)", "svg_id": "switch"},
-    "SpecialFeed": {"label": "Alim spé",       "color": "rgb(171, 71, 188)", "svg_id": "specfeed"},
+    # Anciens types (préservés)
+    "Prise":          {"label": "Prise courant",  "color": "rgb(255, 112, 67)", "svg_id": "socket"},
+    "RJ45":           {"label": "Prise RJ45",     "color": "rgb(38, 166, 154)", "svg_id": "rj45"},
+    "LightPoint":     {"label": "Point lumineux", "color": "rgb(251, 192, 45)", "svg_id": "light"},
+    "Switch":         {"label": "Interrupteur",   "color": "rgb(66, 165, 245)", "svg_id": "switch"},
+    "SpecialFeed":    {"label": "Alim spé",       "color": "rgb(171, 71, 188)", "svg_id": "specfeed"},
+    # NEW V1.2 — circuits spécialisés typés (violet cuisine, orange buanderie, rouge cumulus)
+    "Oven":           {"label": "Four",           "color": "rgb(171, 71, 188)", "svg_id": "oven"},
+    "Cooktop":        {"label": "Plaque cuisson", "color": "rgb(123, 31, 162)", "svg_id": "cooktop"},
+    "Dishwasher":     {"label": "Lave-vaisselle", "color": "rgb(194, 24, 91)",  "svg_id": "dishwasher"},
+    "WashingMachine": {"label": "Lave-linge",     "color": "rgb(255, 112, 67)", "svg_id": "washingmachine"},
+    "Dryer":          {"label": "Sèche-linge",    "color": "rgb(255, 167, 38)", "svg_id": "dryer"},
+    "Boiler":         {"label": "Chaudière",      "color": "rgb(198, 40, 40)",  "svg_id": "boiler"},
+    # NEW V1.2 — chauffage (rouge clair)
+    "Convector":      {"label": "Convecteur",     "color": "rgb(239, 83, 80)",  "svg_id": "convector"},
+    "TowelWarmer":    {"label": "Sèche-serv.",    "color": "rgb(239, 154, 154)", "svg_id": "towelwarmer"},
 }
 
 
@@ -42,6 +53,15 @@ NFC_TO_EQUIP_TYPE: dict[EquipmentType, str] = {
     EquipmentType.LIGHT_POINT: "LightPoint",
     EquipmentType.SWITCH: "Switch",
     EquipmentType.SPECIAL_FEED: "SpecialFeed",
+    # NEW V1.2
+    EquipmentType.OVEN: "Oven",
+    EquipmentType.COOKTOP: "Cooktop",
+    EquipmentType.DISHWASHER: "Dishwasher",
+    EquipmentType.WASHING_MACHINE: "WashingMachine",
+    EquipmentType.DRYER: "Dryer",
+    EquipmentType.BOILER: "Boiler",
+    EquipmentType.CONVECTOR: "Convector",
+    EquipmentType.TOWEL_WARMER: "TowelWarmer",
 }
 
 
