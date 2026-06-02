@@ -324,3 +324,11 @@ def test_storage_generates_typed_special_feeds():
     assert devis.items.get(EquipmentType.DRYER) == 1
     assert devis.items.get(EquipmentType.BOILER) == 1
     assert EquipmentType.SPECIAL_FEED not in devis.items
+
+
+def test_bath_generates_towel_warmer_not_special_feed():
+    """SdB génère 1 TOWEL_WARMER (sèche-serviettes, chauffage)."""
+    from src.planrec.nfc_rules import compute_devis_for_room, EquipmentType
+    devis = compute_devis_for_room("b1", "Bath")
+    assert devis.items.get(EquipmentType.TOWEL_WARMER) == 1
+    assert EquipmentType.SPECIAL_FEED not in devis.items

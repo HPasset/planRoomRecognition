@@ -124,9 +124,9 @@ def compute_devis_for_room(
         devis.items[EquipmentType.LIGHT_POINT] = 2
         devis.items[EquipmentType.SWITCH] = 1
         devis.items[EquipmentType.SOCKET] = 1 + (1 if handicap else 0)
-        # Sèche-serviette
-        devis.items[EquipmentType.SPECIAL_FEED] = 1
-        devis.special_feeds_detail.append("Sèche-serviette")
+        # Sèche-serviettes (V1.2 : circuit chauffage typé)
+        devis.items[EquipmentType.TOWEL_WARMER] = 1
+        devis.special_feeds_detail.append("Sèche-serviettes")
         devis.notes.append("⚠ Zone 60 cm autour douche/baignoire interdite")
 
     elif nfc_cat == NFCCategory.KITCHEN:
