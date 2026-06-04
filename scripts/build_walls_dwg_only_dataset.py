@@ -19,43 +19,50 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DWG_ROOT = PROJECT_ROOT / "data" / "processed" / "dwg_walls"
-OUT_ROOT = PROJECT_ROOT / "data" / "processed" / "walls_dwg_only"
+DEFAULT_SRC = PROJECT_ROOT / "data" / "processed" / "dwg_walls"
+DEFAULT_OUT = PROJECT_ROOT / "data" / "processed" / "walls_dwg_only"
 
 SPLITS = ("train", "val", "test")
 
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--src", type=Path, default=DEFAULT_SRC,
+                    help="Source dir (contient meta.json + train/val/test)")
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT,
+                    help="Output dir au format Cubicasa-like")
     ap.add_argument("--overwrite", action="store_true")
     args = ap.parse_args()
 
-    if OUT_ROOT.exists():
+    src_root: Path = args.src
+    out_root: Path = args.out
+
+    if out_root.exists():
         if args.overwrite:
-            shutil.rmtree(OUT_ROOT)
+            shutil.rmtree(out_root)
         else:
-            print(f"ERROR: {OUT_ROOT} existe déjà. Utilise --overwrite.")
+            print(f"ERROR: {out_root} existe déjà. Utilise --overwrite.")
             sys.exit(1)
 
-    with (DWG_ROOT / "meta.json").open() as f:
+    with (src_root / "meta.json").open() as f:
         meta = json.load(f)
 
     splits: dict[str, list[str]] = {s: [] for s in SPLITS}
 
     for split in SPLITS:
         for sub in ("images", "semantic", "instance"):
-            (OUT_ROOT / sub / split).mkdir(parents=True, exist_ok=True)
+            (out_root / sub / split).mkdir(parents=True, exist_ok=True)
 
         for entry in meta["splits"][split]:
             orig_id = Path(entry["img"]).stem  # "img_0001"
             stem = orig_id.replace("img_", "")
             new_id = f"dwg_{stem}"
 
-            src_img = DWG_ROOT / split / entry["img"]
-            src_mask = DWG_ROOT / split / entry["mask"]
-            dst_img = OUT_ROOT / "images" / split / f"{new_id}.png"
-            dst_sem = OUT_ROOT / "semantic" / split / f"{new_id}.png"
-            dst_inst = OUT_ROOT / "instance" / split / f"{new_id}.png"
+            src_img = src_root / split / entry["img"]
+            src_mask = src_root / split / entry["mask"]
+            dst_img = out_root / "images" / split / f"{new_id}.png"
+            dst_sem = out_root / "semantic" / split / f"{new_id}.png"
+            dst_inst = out_root / "instance" / split / f"{new_id}.png"
 
             shutil.copy2(src_img, dst_img)
             mask = cv2.imread(str(src_mask), cv2.IMREAD_GRAYSCALE)
@@ -65,24 +72,25 @@ def main():
 
             splits[split].append(new_id)
 
-    with (OUT_ROOT / "splits.json").open("w") as f:
+    with (out_root / "splits.json").open("w") as f:
         json.dump(splits, f, indent=2)
 
-    (OUT_ROOT / "dataset.yaml").write_text(
-        f"path: {OUT_ROOT.resolve()}\n"
+    n_total = sum(len(splits[s]) for s in SPLITS)
+    (out_root / "dataset.yaml").write_text(
+        f"path: {out_root.resolve()}\n"
         "num_classes: 2  # 0=Background, 1=Wall (training uses 10-class model)\n"
         "names:\n"
         "  - Background\n"
         "  - Wall\n"
         "splits: [train, val, test]\n"
-        "source: DWG plans only (50 paires curees, rendu matplotlib)\n",
+        f"source: DWG plans only ({n_total} paires depuis {src_root.name})\n",
         encoding="utf-8",
     )
 
-    print("=== Résumé walls_dwg_only ===")
+    print(f"=== Résumé {out_root.name} ===")
     for split in SPLITS:
         print(f"  {split:5s} : {len(splits[split]):3d} samples")
-    print(f"\nDataset prêt : {OUT_ROOT}")
+    print(f"\nDataset prêt : {out_root}")
 
 
 if __name__ == "__main__":

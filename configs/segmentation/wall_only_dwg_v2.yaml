@@ -1,0 +1,51 @@
+# Wall-only Mask2Former — DWG-only v2 (CLOUD A10G).
+#
+# Dataset : data/processed/walls_dwg_only_v2 (149 paires = 50 v1 + 99 dwglab triés)
+# Init : facebook/mask2former-swin-tiny-coco-panoptic (ImageNet+COCO panoptic
+#        baseline standard, mêmes poids de départ que wall_only_dwg_v1).
+# Compute : Modal A10G 24 GB. Estim ~45 min (105 train · batch 4 · 40 ep).
+#
+# Différences vs v1 (configs/segmentation/wall_only_dwg.yaml) :
+# - Dataset : 50 → 149 paires (3x), incluant 99 plans dwglab triés
+# - Image : 512 → 640 (plus de détail des murs fins)
+# - Batch : 8 → 4 (cohérent A10G + image 640)
+# - Epochs : 20 → 40 (plus de data justifie plus d'epochs ; early stop coupera)
+# - Early stop patience : 5 → 8
+# - Paths cloud : /data/walls_dwg_only_v2, /runs/wall_only_dwg_v2
+
+run_name: wall_only_dwg_v2
+seed: 42
+
+data:
+  dataset_root: /data/walls_dwg_only_v2
+  image_size: 640
+  batch_size: 4
+
+model:
+  backbone: facebook/mask2former-swin-tiny-coco-panoptic
+
+optimizer:
+  lr_backbone: 1.0e-5
+  lr_head: 1.0e-4
+  weight_decay: 0.05
+  grad_accumulation: 2
+  grad_clip_norm: 1.0
+
+scheduler:
+  type: cosine
+  warmup_steps: 100  # 105 train / batch 4 = ~26 steps/epoch → warmup ~4 epochs
+
+training:
+  epochs: 40
+  early_stop_patience: 8
+  mixed_precision: "no"
+  oversample_rare_classes: false
+
+logging:
+  tracker: wandb
+  project: batia-segmentation
+  log_image_count: 5
+
+checkpoint:
+  output_dir: /runs/wall_only_dwg_v2
+  save_every_n_epochs: 1     # save+commit après chaque epoch (resume safe)

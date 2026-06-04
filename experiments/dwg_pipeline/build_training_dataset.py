@@ -56,8 +56,48 @@ COLOR_WALL = "black"
 COLOR_CONTEXT = "#bbbbbb"
 
 
+def _walk_entities(msp, max_insert_depth: int = 5):
+    """Itère sur les entités du modelspace en explodant récursivement les INSERT
+    (références de BLOCK). Nécessaire pour les fichiers Archicad/Revit où la
+    géométrie réelle vit dans des blocs nommés (CASANOVA-…|Murs - Maconnerie),
+    le modelspace ne contenant que des INSERT vers ces blocs.
+
+    `virtual_entities()` d'ezdxf applique automatiquement les transforms
+    d'insertion (translation, rotation, scale).
+
+    Yield (entity, effective_layer) tuples — pour les entités sur layer "0"
+    dans un block, applique la convention AutoCAD/Archicad : layer héritée de
+    l'INSERT parent (chain le long de l'arborescence imbriquée).
+    """
+    def _emit(entity, depth, parent_layer):
+        if entity.dxftype() == "INSERT":
+            if depth >= max_insert_depth:
+                return
+            insert_layer = entity.dxf.layer
+            try:
+                virt_iter = entity.virtual_entities()
+            except Exception:
+                return
+            for sub in virt_iter:
+                yield from _emit(sub, depth + 1, insert_layer)
+        else:
+            # Convention AutoCAD : layer "0" dans un block hérite de l'INSERT parent
+            effective = entity.dxf.layer
+            if effective == "0" and parent_layer is not None:
+                effective = parent_layer
+            yield entity, effective
+
+    for entity in msp:
+        yield from _emit(entity, 0, None)
+
+
 def extract_segments_by_category(dxf_path: Path) -> tuple[list, list]:
-    """Extrait les segments du DXF, séparés en (wall_segs, context_segs)."""
+    """Extrait les segments du DXF, séparés en (wall_segs, context_segs).
+
+    Walke récursivement dans les INSERT/BLOCK (cf `_walk_entities`) — couvre
+    aussi bien les DXF "tout-modelspace" (AutoCAD plat) que les DXF "tout-blocs"
+    (Archicad/Revit).
+    """
     doc = ezdxf.readfile(str(dxf_path))
     msp = doc.modelspace()
 
@@ -68,11 +108,11 @@ def extract_segments_by_category(dxf_path: Path) -> tuple[list, list]:
 
     walls: list = []
     context: list = []
-    for entity in msp:
+    for entity, effective_layer in _walk_entities(msp):
         segs = _entity_segments(entity)
         if not segs:
             continue
-        if entity.dxf.layer in wall_layers:
+        if effective_layer in wall_layers:
             walls.extend(segs)
         else:
             # Ignore le mobilier/cotes très volumineux : on garde mais en gris pâle.
