@@ -44,3 +44,5 @@ svgpathtools==1.6.1
 SQLAlchemy==2.0.35
 alembic==1.13.3
 factur-x==4.3
+pypdf==6.12.2
+reportlab==4.5.1
