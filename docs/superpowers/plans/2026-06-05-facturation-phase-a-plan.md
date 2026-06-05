@@ -98,7 +98,7 @@ data/
 └── factures/<artisan_id>/<annee>/<numero>.pdf  # archives
 ```
 
-**Sequencing :** 13 tasks séquentielles. Chaque task termine sur un état "tests passants + commit". L'utilisateur peut suspendre entre 2 tasks sans risque.
+**Sequencing :** 14 tasks séquentielles. Chaque task termine sur un état "tests passants + commit". L'utilisateur peut suspendre entre 2 tasks sans risque.
 
 | Task | Sujet | Output |
 |------|-------|--------|
@@ -115,6 +115,9 @@ data/
 | 11 | Factur-X embedder (PDF/A-3 + XML) + emit_facture intégré | Émission complète |
 | 12 | UI page Factures (liste + détail + actions) | Module utilisable bout-en-bout |
 | 13 | Tests E2E AppTest + couverture + polish | Phase A livrée |
+| 14 | Interface abstraite `PAAdapter` (no concrete impl) | Contrat prêt pour Phase D |
+
+**Décision stratégique 2026-06-05** : batIA = passerelle vers un PA tiers (Pennylane / Sage / Cegid / Indy à arbitrer en Phase D). Cette Task 14 pose le contrat d'interface pour que Phase D puisse implémenter l'adaptateur du PA choisi sans toucher au cœur métier.
 
 ---
 
@@ -141,7 +144,7 @@ Ajouter à la fin de `/Users/hadrienpasset/Developer/planRoomRecognition/require
 ```
 SQLAlchemy==2.0.35
 alembic==1.13.3
-facturx==3.6
+factur-x==4.3
 ```
 
 (Versions stables au 2026-06. `facturx` est la lib officielle FactX/ZUGFeRD côté Python.)
@@ -150,7 +153,7 @@ facturx==3.6
 
 Run :
 ```bash
-.venv/bin/pip install SQLAlchemy==2.0.35 alembic==1.13.3 facturx==3.6
+.venv/bin/pip install SQLAlchemy==2.0.35 alembic==1.13.3 factur-x==4.3
 ```
 
 Expected : install OK, pas d'erreur de résolution de version.
@@ -5371,5 +5374,310 @@ Après les 13 tasks, on dispose de :
 - Pipeline d'émission complet : devis → facture → XML CII → PDF visuel → PDF/A-3 → archive
 - Architecture portable vers Symfony+Doctrine (Phase ALGOR-IT future)
 
-**Suite roadmap** : Phase B (suivi+relances), Phase C (Factur-X stricte + signatures), Phase D (intégration PDP partenaire), Phase E (PDP propre).
+**Suite roadmap** : Phase B (suivi+relances), Phase C (validation interopérabilité Factur-X), Phase D (intégration PA partenaire = ÉTAT CIBLE). Phase E abandonnée.
+
+---
+
+## Task 14 : Interface abstraite `PAAdapter` (contrat pour Phase D)
+
+**Files:**
+- Create: `src/facturation/adapters/__init__.py`
+- Create: `src/facturation/adapters/pa/__init__.py`
+- Create: `src/facturation/adapters/pa/base.py` — interface abstraite
+- Create: `src/facturation/adapters/pa/mock.py` — mock pour tests Phase A
+- Create: `tests/facturation/test_pa_adapter.py`
+
+**Objectif** : poser un contrat clair côté nous pour qu'en Phase D, l'implémentation concrète du PA choisi (Pennylane, Sage, etc.) se branche sans toucher au cœur métier. Aucune intégration concrète en Phase A, juste l'interface + un mock pour valider l'architecture.
+
+- [ ] **Step 14.1 : Créer le package**
+
+```bash
+mkdir -p /Users/hadrienpasset/Developer/planRoomRecognition/src/facturation/adapters/pa
+touch /Users/hadrienpasset/Developer/planRoomRecognition/src/facturation/adapters/__init__.py \
+      /Users/hadrienpasset/Developer/planRoomRecognition/src/facturation/adapters/pa/__init__.py
+```
+
+- [ ] **Step 14.2 : Écrire l'interface abstraite `adapters/pa/base.py`**
+
+Créer `/Users/hadrienpasset/Developer/planRoomRecognition/src/facturation/adapters/pa/base.py` :
+
+```python
+"""Interface abstraite `PAAdapter` — contrat batIA ↔ Plateforme Agréée tierce.
+
+batIA = passerelle. Cette interface définit ce que tout PA partenaire
+(Pennylane, Sage, Cegid, Indy, etc.) doit exposer pour qu'on puisse y
+brancher une facture émise.
+
+Implémentation concrète : Phase D, après choix du PA cible. Phase A ne
+livre que cette interface + un mock pour valider l'architecture.
+
+Cycle de vie côté PA (BT-* lifecycle EN16931) :
+- submitted    : envoyé au PA, attente acheminement
+- received     : PA confirme réception
+- routed       : transmis au destinataire via PPF
+- read         : destinataire a accédé
+- accepted     : destinataire a validé (ou délai expiré sans contestation)
+- rejected     : destinataire a refusé
+- paid         : paiement enregistré côté PA / banque
+- disputed     : litige ouvert
+"""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+
+
+class PALifecycleStatus(str, Enum):
+    SUBMITTED = "submitted"
+    RECEIVED = "received"
+    ROUTED = "routed"
+    READ = "read"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    PAID = "paid"
+    DISPUTED = "disputed"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class PASubmissionResult:
+    """Résultat d'un submit_invoice."""
+    pa_submission_id: str        # identifiant interne au PA
+    submitted_at: datetime
+    status: PALifecycleStatus    # status initial (typiquement SUBMITTED ou RECEIVED)
+    raw_response: dict           # payload brut du PA pour debug
+
+
+@dataclass(frozen=True)
+class PAStatusReport:
+    """Snapshot des événements lifecycle d'une facture chez le PA."""
+    pa_submission_id: str
+    current_status: PALifecycleStatus
+    last_event_at: datetime
+    events: list[dict]           # historique des transitions
+
+
+class PAAdapter(ABC):
+    """Contrat batIA ↔ PA. Toute implémentation concrète (Phase D) hérite."""
+
+    @abstractmethod
+    def submit_invoice(self, *, facturx_pdf: bytes, facture_numero: str,
+                       artisan_id: str, client_data: dict) -> PASubmissionResult:
+        """Envoie un PDF/A-3 Factur-X au PA pour transmission au PPF.
+
+        - facturx_pdf : le PDF/A-3 avec XML EN16931 embarqué
+        - facture_numero : référence batIA (logging et reconciliation)
+        - artisan_id : identité émetteur batIA
+        - client_data : métadonnées destinataire (le PA peut router au PPF)
+        """
+        ...
+
+    @abstractmethod
+    def get_status(self, pa_submission_id: str) -> PAStatusReport:
+        """Récupère le lifecycle courant d'une facture déjà soumise."""
+        ...
+
+    @abstractmethod
+    def cancel(self, pa_submission_id: str, motif: str) -> None:
+        """Annule une facture chez le PA si possible (avant routage PPF)."""
+        ...
+
+    @abstractmethod
+    def health_check(self) -> bool:
+        """Vérifie que l'API du PA est joignable (utile pour monitoring)."""
+        ...
+```
+
+- [ ] **Step 14.3 : Écrire un mock `adapters/pa/mock.py`**
+
+Créer `/Users/hadrienpasset/Developer/planRoomRecognition/src/facturation/adapters/pa/mock.py` :
+
+```python
+"""Mock `MockPAAdapter` — implémentation in-memory pour tests Phase A.
+
+NE PAS utiliser en production. Sert uniquement à valider que le contrat
+`PAAdapter` est respecté et que le cœur métier peut s'y brancher.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Optional
+
+from src.facturation.adapters.pa.base import (
+    PAAdapter, PALifecycleStatus, PAStatusReport, PASubmissionResult,
+)
+
+
+class MockPAAdapter(PAAdapter):
+    """Stocke les soumissions en mémoire. Idéal pour tests unitaires/E2E."""
+
+    def __init__(self) -> None:
+        self._submissions: dict[str, dict] = {}
+        self._healthy = True
+
+    def submit_invoice(self, *, facturx_pdf: bytes, facture_numero: str,
+                       artisan_id: str, client_data: dict) -> PASubmissionResult:
+        if not facturx_pdf.startswith(b"%PDF-"):
+            raise ValueError("facturx_pdf doit être un PDF valide")
+        sub_id = f"mock-{uuid.uuid4().hex[:12]}"
+        now = datetime.utcnow()
+        self._submissions[sub_id] = {
+            "facture_numero": facture_numero,
+            "artisan_id": artisan_id,
+            "client_data": client_data,
+            "pdf_size": len(facturx_pdf),
+            "current_status": PALifecycleStatus.SUBMITTED,
+            "submitted_at": now,
+            "events": [{"status": PALifecycleStatus.SUBMITTED.value,
+                        "at": now.isoformat()}],
+        }
+        return PASubmissionResult(
+            pa_submission_id=sub_id, submitted_at=now,
+            status=PALifecycleStatus.SUBMITTED,
+            raw_response={"mock": True, "id": sub_id},
+        )
+
+    def get_status(self, pa_submission_id: str) -> PAStatusReport:
+        sub = self._submissions.get(pa_submission_id)
+        if sub is None:
+            raise KeyError(f"Soumission {pa_submission_id} introuvable")
+        return PAStatusReport(
+            pa_submission_id=pa_submission_id,
+            current_status=sub["current_status"],
+            last_event_at=datetime.fromisoformat(sub["events"][-1]["at"]),
+            events=list(sub["events"]),
+        )
+
+    def cancel(self, pa_submission_id: str, motif: str) -> None:
+        sub = self._submissions.get(pa_submission_id)
+        if sub is None:
+            raise KeyError(f"Soumission {pa_submission_id} introuvable")
+        if sub["current_status"] in (PALifecycleStatus.READ,
+                                      PALifecycleStatus.PAID):
+            raise RuntimeError("Trop tard pour annuler (déjà lue ou payée)")
+        sub["current_status"] = PALifecycleStatus.REJECTED
+        sub["events"].append({"status": "cancelled",
+                              "at": datetime.utcnow().isoformat(),
+                              "motif": motif})
+
+    def health_check(self) -> bool:
+        return self._healthy
+
+    # Helpers test-only
+    def _force_status(self, pa_submission_id: str, status: PALifecycleStatus) -> None:
+        sub = self._submissions[pa_submission_id]
+        sub["current_status"] = status
+        sub["events"].append({"status": status.value,
+                              "at": datetime.utcnow().isoformat()})
+```
+
+- [ ] **Step 14.4 : Tests `test_pa_adapter.py`**
+
+Créer `/Users/hadrienpasset/Developer/planRoomRecognition/tests/facturation/test_pa_adapter.py` :
+
+```python
+"""Tests du contrat PAAdapter + MockPAAdapter."""
+from __future__ import annotations
+import pytest
+
+
+def test_mock_submit_valid_pdf():
+    from src.facturation.adapters.pa.mock import MockPAAdapter
+    from src.facturation.adapters.pa.base import PALifecycleStatus
+    adapter = MockPAAdapter()
+    result = adapter.submit_invoice(
+        facturx_pdf=b"%PDF-1.4\nfake", facture_numero="FAC-2026-0001",
+        artisan_id="artisan-1", client_data={"name": "Jean Dupont"},
+    )
+    assert result.pa_submission_id.startswith("mock-")
+    assert result.status == PALifecycleStatus.SUBMITTED
+
+
+def test_mock_submit_invalid_pdf_raises():
+    from src.facturation.adapters.pa.mock import MockPAAdapter
+    adapter = MockPAAdapter()
+    with pytest.raises(ValueError, match="PDF valide"):
+        adapter.submit_invoice(
+            facturx_pdf=b"not a pdf", facture_numero="FAC-2026-0001",
+            artisan_id="a", client_data={},
+        )
+
+
+def test_mock_get_status_after_submit():
+    from src.facturation.adapters.pa.mock import MockPAAdapter
+    adapter = MockPAAdapter()
+    r = adapter.submit_invoice(
+        facturx_pdf=b"%PDF-1.4\nx", facture_numero="FAC",
+        artisan_id="a", client_data={},
+    )
+    report = adapter.get_status(r.pa_submission_id)
+    assert report.pa_submission_id == r.pa_submission_id
+    assert len(report.events) == 1
+
+
+def test_mock_cancel_avant_lecture():
+    from src.facturation.adapters.pa.mock import MockPAAdapter
+    from src.facturation.adapters.pa.base import PALifecycleStatus
+    adapter = MockPAAdapter()
+    r = adapter.submit_invoice(
+        facturx_pdf=b"%PDF-1.4\nx", facture_numero="FAC",
+        artisan_id="a", client_data={},
+    )
+    adapter.cancel(r.pa_submission_id, motif="Erreur côté client")
+    report = adapter.get_status(r.pa_submission_id)
+    assert report.current_status == PALifecycleStatus.REJECTED
+
+
+def test_mock_cancel_apres_lecture_refuse():
+    from src.facturation.adapters.pa.mock import MockPAAdapter
+    from src.facturation.adapters.pa.base import PALifecycleStatus
+    adapter = MockPAAdapter()
+    r = adapter.submit_invoice(
+        facturx_pdf=b"%PDF-1.4\nx", facture_numero="FAC",
+        artisan_id="a", client_data={},
+    )
+    adapter._force_status(r.pa_submission_id, PALifecycleStatus.READ)
+    with pytest.raises(RuntimeError, match="Trop tard"):
+        adapter.cancel(r.pa_submission_id, motif="X")
+
+
+def test_mock_health_check():
+    from src.facturation.adapters.pa.mock import MockPAAdapter
+    assert MockPAAdapter().health_check() is True
+
+
+def test_paadapter_is_abstract():
+    from src.facturation.adapters.pa.base import PAAdapter
+    with pytest.raises(TypeError, match="abstract"):
+        PAAdapter()
+```
+
+- [ ] **Step 14.5 : Run les tests**
+
+```bash
+cd /Users/hadrienpasset/Developer/planRoomRecognition && .venv/bin/pytest tests/facturation/test_pa_adapter.py -v
+```
+
+Expected : 7 verts.
+
+- [ ] **Step 14.6 : Commit Task 14**
+
+```bash
+git add src/facturation/adapters/ tests/facturation/test_pa_adapter.py && git commit -m "feat(facturation): interface abstraite PAAdapter + mock pour Phase D
+
+batIA = passerelle vers un PA tiers (décision 2026-06-05). Cette task
+pose le contrat d'interface que Phase D implémentera avec le PA choisi
+(Pennylane / Sage / Cegid / Indy à arbitrer).
+
+- adapters/pa/base.py : PAAdapter abstrait + PALifecycleStatus enum
+  + PASubmissionResult + PAStatusReport dataclasses
+- adapters/pa/mock.py : MockPAAdapter in-memory pour tests
+- Tests : 7 verts (submit valide/invalide, get_status, cancel timing,
+  health_check, abstract enforcement)
+
+Phase A — Task 14 : architecture prête pour intégration PA Phase D."
+```
 

@@ -1,0 +1,128 @@
+{# Template Factur-X / CII EN16931 (profile COMFORT). #}<?xml version="1.0" encoding="UTF-8"?>
+<rsm:CrossIndustryInvoice
+    xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
+    xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
+    xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100"
+    xmlns:qdt="urn:un:unece:uncefact:data:standard:QualifiedDataType:100">
+
+  <rsm:ExchangedDocumentContext>
+    <ram:BusinessProcessSpecifiedDocumentContextParameter>
+      <ram:ID>A1</ram:ID>
+    </ram:BusinessProcessSpecifiedDocumentContextParameter>
+    <ram:GuidelineSpecifiedDocumentContextParameter>
+      <ram:ID>urn:cen.eu:en16931:2017</ram:ID>
+    </ram:GuidelineSpecifiedDocumentContextParameter>
+  </rsm:ExchangedDocumentContext>
+
+  <rsm:ExchangedDocument>
+    <ram:ID>{{ facture.numero }}</ram:ID>
+    <ram:TypeCode>{{ facture_type_value }}</ram:TypeCode>
+    <ram:IssueDateTime>
+      <udt:DateTimeString format="102">{{ format_date(facture.date_emission) }}</udt:DateTimeString>
+    </ram:IssueDateTime>
+    {% if facture.objet %}<ram:IncludedNote>
+      <ram:Content>{{ facture.objet }}</ram:Content>
+    </ram:IncludedNote>{% endif %}
+  </rsm:ExchangedDocument>
+
+  <rsm:SupplyChainTradeTransaction>
+    {% for ligne in facture.lignes %}
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:AssociatedDocumentLineDocument>
+        <ram:LineID>{{ ligne.ordre }}</ram:LineID>
+      </ram:AssociatedDocumentLineDocument>
+      <ram:SpecifiedTradeProduct>
+        <ram:Name>{{ ligne.designation }}</ram:Name>
+      </ram:SpecifiedTradeProduct>
+      <ram:SpecifiedLineTradeAgreement>
+        <ram:NetPriceProductTradePrice>
+          <ram:ChargeAmount>{{ "%.4f" | format(ligne.prix_unitaire_ht|float) }}</ram:ChargeAmount>
+        </ram:NetPriceProductTradePrice>
+      </ram:SpecifiedLineTradeAgreement>
+      <ram:SpecifiedLineTradeDelivery>
+        <ram:BilledQuantity unitCode="{{ ligne_unite[ligne.ordre] }}">{{ "%.4f" | format(ligne.quantite|float) }}</ram:BilledQuantity>
+      </ram:SpecifiedLineTradeDelivery>
+      <ram:SpecifiedLineTradeSettlement>
+        <ram:ApplicableTradeTax>
+          <ram:TypeCode>VAT</ram:TypeCode>
+          <ram:CategoryCode>{{ ligne_categorie[ligne.ordre] }}</ram:CategoryCode>
+          <ram:RateApplicablePercent>{{ "%.2f" | format(ligne.taux_tva|float) }}</ram:RateApplicablePercent>
+        </ram:ApplicableTradeTax>
+        <ram:SpecifiedTradeSettlementLineMonetarySummation>
+          <ram:LineTotalAmount>{{ "%.2f" | format(ligne.montant_ht_ligne|float) }}</ram:LineTotalAmount>
+        </ram:SpecifiedTradeSettlementLineMonetarySummation>
+      </ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>
+    {% endfor %}
+
+    <ram:ApplicableHeaderTradeAgreement>
+      <ram:SellerTradeParty>
+        <ram:Name>{{ facture.artisan.raison_sociale }}</ram:Name>
+        <ram:SpecifiedLegalOrganization>
+          <ram:ID schemeID="0002">{{ facture.artisan.siret }}</ram:ID>
+        </ram:SpecifiedLegalOrganization>
+        <ram:PostalTradeAddress>
+          <ram:PostcodeCode>{{ facture.artisan.adresse_cp }}</ram:PostcodeCode>
+          <ram:LineOne>{{ facture.artisan.adresse_rue }}</ram:LineOne>
+          <ram:CityName>{{ facture.artisan.adresse_ville }}</ram:CityName>
+          <ram:CountryID>{{ facture.artisan.adresse_pays }}</ram:CountryID>
+        </ram:PostalTradeAddress>
+        <ram:URIUniversalCommunication>
+          <ram:URIID schemeID="EM">{{ facture.artisan.email }}</ram:URIID>
+        </ram:URIUniversalCommunication>
+        <ram:SpecifiedTaxRegistration>
+          <ram:ID schemeID="VA">{{ facture.artisan.numero_tva_intra }}</ram:ID>
+        </ram:SpecifiedTaxRegistration>
+      </ram:SellerTradeParty>
+      <ram:BuyerTradeParty>
+        <ram:Name>{{ facture.client.nom_ou_raison }}</ram:Name>
+        {% if facture.client.siret %}<ram:SpecifiedLegalOrganization>
+          <ram:ID schemeID="0002">{{ facture.client.siret }}</ram:ID>
+        </ram:SpecifiedLegalOrganization>{% endif %}
+        <ram:PostalTradeAddress>
+          <ram:PostcodeCode>{{ facture.client.adresse_cp }}</ram:PostcodeCode>
+          <ram:LineOne>{{ facture.client.adresse_rue }}</ram:LineOne>
+          <ram:CityName>{{ facture.client.adresse_ville }}</ram:CityName>
+          <ram:CountryID>{{ facture.client.adresse_pays }}</ram:CountryID>
+        </ram:PostalTradeAddress>
+      </ram:BuyerTradeParty>
+      {% if facture.reference_devis %}<ram:BuyerOrderReferencedDocument>
+        <ram:IssuerAssignedID>{{ facture.reference_devis }}</ram:IssuerAssignedID>
+      </ram:BuyerOrderReferencedDocument>{% endif %}
+    </ram:ApplicableHeaderTradeAgreement>
+
+    <ram:ApplicableHeaderTradeDelivery>
+      <ram:ActualDeliverySupplyChainEvent>
+        <ram:OccurrenceDateTime>
+          <udt:DateTimeString format="102">{{ format_date(facture.date_emission) }}</udt:DateTimeString>
+        </ram:OccurrenceDateTime>
+      </ram:ActualDeliverySupplyChainEvent>
+    </ram:ApplicableHeaderTradeDelivery>
+
+    <ram:ApplicableHeaderTradeSettlement>
+      <ram:InvoiceCurrencyCode>{{ facture.devise }}</ram:InvoiceCurrencyCode>
+      {% for taux, vals in totals.par_taux.items() %}
+      <ram:ApplicableTradeTax>
+        <ram:CalculatedAmount>{{ "%.2f" | format(vals.tva|float) }}</ram:CalculatedAmount>
+        <ram:TypeCode>VAT</ram:TypeCode>
+        <ram:BasisAmount>{{ "%.2f" | format(vals.base_ht|float) }}</ram:BasisAmount>
+        <ram:CategoryCode>S</ram:CategoryCode>
+        <ram:RateApplicablePercent>{{ "%.2f" | format(taux|float) }}</ram:RateApplicablePercent>
+      </ram:ApplicableTradeTax>
+      {% endfor %}
+      <ram:SpecifiedTradePaymentTerms>
+        <ram:DueDateDateTime>
+          <udt:DateTimeString format="102">{{ format_date(facture.date_echeance) }}</udt:DateTimeString>
+        </ram:DueDateDateTime>
+      </ram:SpecifiedTradePaymentTerms>
+      <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+        <ram:LineTotalAmount>{{ "%.2f" | format(totals.montant_ht|float) }}</ram:LineTotalAmount>
+        <ram:TaxBasisTotalAmount>{{ "%.2f" | format(totals.montant_ht|float) }}</ram:TaxBasisTotalAmount>
+        <ram:TaxTotalAmount currencyID="{{ facture.devise }}">{{ "%.2f" | format(totals.total_tva|float) }}</ram:TaxTotalAmount>
+        <ram:GrandTotalAmount>{{ "%.2f" | format(totals.montant_ttc|float) }}</ram:GrandTotalAmount>
+        {% if facture.acompte_montant_ht and facture.acompte_montant_ht|float > 0 %}<ram:TotalPrepaidAmount>{{ "%.2f" | format(facture.acompte_montant_ht|float) }}</ram:TotalPrepaidAmount>{% endif %}
+        <ram:DuePayableAmount>{{ "%.2f" | format(facture.montant_du_ttc|float) }}</ram:DuePayableAmount>
+      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+    </ram:ApplicableHeaderTradeSettlement>
+  </rsm:SupplyChainTradeTransaction>
+</rsm:CrossIndustryInvoice>

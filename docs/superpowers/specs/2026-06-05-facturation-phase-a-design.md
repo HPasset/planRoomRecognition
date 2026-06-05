@@ -12,15 +12,22 @@
 
 batIA est un SaaS B2B pour électriciens artisans qui couvre le pipeline complet : analyse de plans → devis → étude → approvisionnement → **facturation**. La facturation est livrée par ALGOR-IT dans `batia-webapp` (Symfony+React, audit en cours, cf spec `2026-06-03-batia-webapp-onboarding-design.md`), mais on veut **développer la facturation côté prototype Streamlit en parallèle** pour valider le besoin et le data model avant intégration ALGOR-IT.
 
-**Ambition long-terme stratégique** : batIA devient *Plateforme de Dématérialisation Partenaire* enregistrée DGFiP (statut "PDP" / "Plateforme Agréée"), pour créer un switching cost maximal et positionner batIA comme outil tout-en-un. Cette ambition (phase E) est **inatteignable en 2026** pour un fondateur solo (cf section 8), mais elle dicte les contraintes d'architecture dès la Phase A :
+**Ambition stratégique (révisée 2026-06-05 après synchro associé)** : batIA devient **passerelle de facturation vers un PA (Plateforme Agréée DGFiP) tiers**, plutôt que PDP elle-même. batIA assume la **couche métier en amont** (UX artisan, génération devis/factures Factur-X, intégration avec le pipeline ML batIA), et **délègue à un PA partenaire** la couche régulée (transmission au PPF, signature numérique, archivage légal 10 ans, audit DGFiP). Cette approche est :
 
-- Data model strictement EN16931 dès J+1
-- Factur-X EN16931 (COMFORT) embarqué dans chaque facture
-- Numérotation séquentielle légale (CGI art. 286)
-- Hash SHA-256 + archivage propre + audit log (préparation traçabilité PDP)
-- Architecture séparée (domaine / persistence / présentation) pour portabilité vers Symfony
+- **Pragmatique** : faisable en solo founder + équipe naissante d'ici beta 2026
+- **Conforme** : le PA gère le régulé pour nous
+- **Compétitive** : majorité des SaaS BTP se positionnent ainsi sur la réforme
+- **Switching cost préservé** : verrouillage par intégration profonde (plan → devis → facture → conciliation banque → fournisseurs), pas par statut juridique
 
-Le chemin vers E passe par A → B → C → D. Phase A est la fondation.
+Le chemin se simplifie : **A → B → C → D** (intégration PA partenaire = état cible). Plus de Phase E "devenir PDP".
+
+Contraintes d'architecture pour Phase A (allégées vs version précédente du spec) :
+- Data model strictement EN16931 dès J+1 (le PA exige Factur-X conforme à l'arrivée)
+- Factur-X EN16931 (COMFORT) embarqué dans chaque facture (input du PA)
+- Numérotation séquentielle légale CGI art. 286 (responsabilité du SaaS amont)
+- Architecture séparée domaine/persistence/présentation pour portabilité Symfony
+- Pas de signature XAdES, pas d'archivage 10 ans propre (délégués au PA)
+- Hash SHA-256 conservé pour traçabilité interne et support utilisateur
 
 ## 2. Objectifs Phase A
 
@@ -460,11 +467,13 @@ Sortie : PDF/A-3 conforme, archivable, ouvrable dans tout PDF reader.
 
 ### 7.6 Archivage et intégrité
 
+**Note positionnement** (révisé 2026-06-05) : batIA = passerelle vers un PA. L'archivage **légal 10 ans** est délégué au PA partenaire. L'archive locale ci-dessous sert au confort utilisateur (téléchargement, support, audit interne) et n'a pas valeur légale.
+
 - **Dossier** : `data/factures/<artisan_id>/<annee>/<numero>.pdf`
-- **Hash SHA-256** calculé à l'émission, stocké dans `Facture.hash_sha256`
+- **Hash SHA-256** calculé à l'émission, stocké dans `Facture.hash_sha256` (traçabilité support)
 - **Read-only après émission** : pas de regénération possible (sauf émission d'avoir)
 - **AuditLog** : chaque changement de statut, paiement, etc. tracé
-- **Pas de signature XAdES** en Phase A (Phase C/D)
+- **Pas de signature XAdES** : déléguée au PA, qui signe quand il transmet au PPF
 
 ### 7.7 Validation à la génération (algo)
 
@@ -505,8 +514,10 @@ Cible : **≥85% sur `services/` et `factur_x/`**, ≥70% sur `models/` et UI.
 |---|---|
 | Envoi email auto | Nécessite SMTP + templates. Phase B. Phase A : bouton "Télécharger PDF" |
 | Relances automatiques | Phase B. Phase A : badges visuels jours de retard |
-| Intégration PPF | Phase D (statut PDP) |
-| Signature XAdES dans XML | Phase C/D, conformité PDP stricte |
+| Intégration concrète avec un PA partenaire (Pennylane/Sage/etc.) | Phase D — après choix du PA cible. Phase A pose juste l'interface `PAAdapter` |
+| Signature XAdES dans XML | Délégué définitivement au PA (n'est pas notre responsabilité dans le modèle passerelle) |
+| Devenir PDP enregistré DGFiP | **Définitivement hors stratégie batIA** (décision 2026-06-05 : on reste passerelle) |
+| Archivage légal 10 ans | Délégué au PA (le PA est responsable légal de la conservation) |
 | Tableau de bord financier | Phase B |
 | Export comptable (FEC, Sage, Cegid, EBP) | Phase B |
 | Multi-devise | Toujours EUR (data model le supporte, UI ne propose pas) |
@@ -515,7 +526,9 @@ Cible : **≥85% sur `services/` et `factur_x/`**, ≥70% sur `models/` et UI.
 | Auth multi-utilisateur réelle | Streamlit = single-user. Multi-user = webapp ALGOR-IT |
 | Avoir partiel par ligne | Phase A : avoir global. Phase B : par ligne |
 
-## 10. Roadmap esquissée B → E
+## 10. Roadmap esquissée B → D
+
+> **Nouveau modèle stratégique (2026-06-05)** : batIA = passerelle vers un PA tiers. Phase D est désormais l'**aboutissement** et non plus une étape transitoire. Phase E (batIA PDP enregistré) est **abandonnée définitivement**.
 
 **Phase B — Suivi & gestion avancée** (~2 semaines, après A)
 - Tableau de bord financier (CA, créances, prévisions)
@@ -526,22 +539,25 @@ Cible : **≥85% sur `services/` et `factur_x/`**, ≥70% sur `models/` et UI.
 - Modèles de lignes réutilisables
 - Multi-utilisateur prototype (préparation port webapp)
 
-**Phase C — Conformité Factur-X stricte + signatures** (~1-2 semaines)
-- Signature XAdES dans XML
-- Validation officielle DGFiP
-- Profile EXTENDED pour B2B exigeants
-- Archivage 10 ans renforcé
+**Phase C — Validation interopérabilité Factur-X** (~1 semaine)
+- Tests avec validateurs officiels DGFiP (validateur Factur-X public)
+- Profile EXTENDED si demandé par certains PA
+- Tests d'intégration avec PA candidats (envoyer un fichier de test sans contrat encore)
 
-**Phase D — Intégration PDP partenaire** (1-3 mois)
-- Choix partenaire : Pennylane / Sage / Cegid / Lemonway / PDP indé
-- API d'envoi/réception via leur infra qui parle au PPF
-- batIA = *client* d'un PDP, gain marché immédiat réforme 2026-09
+**Phase D — Intégration PA partenaire = ÉTAT CIBLE** (1-3 mois)
+- **Choix du PA partenaire** (à arbitrer Q3 2026) parmi :
+  - Pennylane (français, gros écosystème compta, API ouverte) — favori
+  - Sage 50/100 (catalogue PA déclarés)
+  - Cegid Loop
+  - Indy (orienté indépendants/TPE)
+  - PDP indé spécialisé BTP
+- Contractualiser (tarification : gratuit base + au volume facture le plus souvent)
+- Implémenter `PAAdapter` concret pour le PA choisi (via interface posée en Task 14 Phase A)
+- Webhooks lifecycle (envoyé → reçu → lu → payé → contesté)
+- batIA = passerelle. L'artisan ne voit pas le PA, juste les statuts retournés
+- Gain marché immédiat sur la réforme (2026-09 réception, 2027-09 émission complète)
 
-**Phase E — batIA devient PDP enregistré DGFiP** (12-24 mois, 2027-2028)
-- Pré-requis : équipe (RSSI, devs EDI, compliance), ISO 27001, cautionnement, fonds (€1M+ Seed)
-- Dossier DGFiP (cahier des charges, audit, validation)
-- Migration des données et clients du PDP partenaire
-- Switching cost maximal : batIA gère le bout-en-bout
+**Phase E — abandonnée** : devenir PDP enregistré n'est plus l'ambition (cf section 1). batIA reste passerelle, le switching cost vient de l'intégration profonde (plans → devis → facture → conciliation) pas du statut juridique.
 
 ## 11. Critères d'acceptation Phase A
 
