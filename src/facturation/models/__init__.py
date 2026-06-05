@@ -9,6 +9,9 @@ from src.facturation.models.client import Client
 from src.facturation.models.compteur import Compteur
 from src.facturation.models.devis import DevisDB
 from src.facturation.models.facture import Facture, FactureLigne
+from src.facturation.models.avenant import Avenant
+from src.facturation.models.paiement import Paiement
+from src.facturation.models.audit_log import AuditLog
 from src.facturation.models.enums import (
     ActionAudit,
     CategorieTVA,
@@ -30,6 +33,9 @@ __all__ = [
     "DevisDB",
     "Facture",
     "FactureLigne",
+    "Avenant",
+    "Paiement",
+    "AuditLog",
     "ActionAudit",
     "CategorieTVA",
     "DevisStatut",
