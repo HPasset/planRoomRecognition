@@ -4,6 +4,7 @@ Les modèles concrets (Artisan, Client, ...) seront ajoutés dans les tasks
 suivantes. Ce fichier est l'unique point d'import pour Alembic autogenerate.
 """
 from src.facturation.db import Base
+from src.facturation.models.artisan import Artisan
 from src.facturation.models.enums import (
     ActionAudit,
     CategorieTVA,
@@ -19,6 +20,7 @@ from src.facturation.models.enums import (
 
 __all__ = [
     "Base",
+    "Artisan",
     "ActionAudit",
     "CategorieTVA",
     "DevisStatut",
