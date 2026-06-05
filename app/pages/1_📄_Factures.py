@@ -25,6 +25,11 @@ from src.facturation.services.statuts import (
 st.set_page_config(page_title="batIA — Factures", page_icon="📄", layout="wide")
 st.title("📄 Factures")
 
+# Flash message persistant à travers les st.rerun()
+_last = st.session_state.pop("_last_facture_created", None)
+if _last:
+    st.success(f"✓ Facture **{_last}** créée en brouillon — visible dans l'onglet 📋 Liste")
+
 SessionLocal = get_session_factory()
 session = SessionLocal()
 try:
@@ -158,7 +163,8 @@ try:
                 if st.button("➕ Créer facture d'acompte", type="primary"):
                     try:
                         f = create_acompte(session, d.id, pourcentage=int(pct))
-                        st.success(f"Facture {f.numero} créée en brouillon")
+                        st.session_state["_last_facture_created"] = f.numero
+                        st.toast(f"✓ Facture {f.numero} créée en brouillon", icon="✅")
                         st.rerun()
                     except ValueError as e:
                         st.error(f"Erreur : {e}")
@@ -168,7 +174,8 @@ try:
                 if st.button("➕ Créer facture de situation", type="primary"):
                     try:
                         f = create_situation(session, d.id, int(pct), designation=desig)
-                        st.success(f"Facture {f.numero} créée en brouillon")
+                        st.session_state["_last_facture_created"] = f.numero
+                        st.toast(f"✓ Facture {f.numero} créée en brouillon", icon="✅")
                         st.rerun()
                     except ValueError as e:
                         st.error(f"Erreur : {e}")
@@ -176,7 +183,8 @@ try:
                 if st.button("➕ Créer facture de solde", type="primary"):
                     try:
                         f = create_solde(session, d.id)
-                        st.success(f"Facture {f.numero} créée en brouillon")
+                        st.session_state["_last_facture_created"] = f.numero
+                        st.toast(f"✓ Facture {f.numero} créée en brouillon", icon="✅")
                         st.rerun()
                     except ValueError as e:
                         st.error(f"Erreur : {e}")
