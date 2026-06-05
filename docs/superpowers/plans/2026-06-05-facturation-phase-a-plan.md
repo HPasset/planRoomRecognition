@@ -144,7 +144,7 @@ Ajouter à la fin de `/Users/hadrienpasset/Developer/planRoomRecognition/require
 ```
 SQLAlchemy==2.0.35
 alembic==1.13.3
-facturx==3.6
+factur-x==4.3
 ```
 
 (Versions stables au 2026-06. `facturx` est la lib officielle FactX/ZUGFeRD côté Python.)
@@ -153,7 +153,7 @@ facturx==3.6
 
 Run :
 ```bash
-.venv/bin/pip install SQLAlchemy==2.0.35 alembic==1.13.3 facturx==3.6
+.venv/bin/pip install SQLAlchemy==2.0.35 alembic==1.13.3 factur-x==4.3
 ```
 
 Expected : install OK, pas d'erreur de résolution de version.
