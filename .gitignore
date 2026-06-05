@@ -23,3 +23,10 @@ experiments/wall_detection_eval/test_plans/
 # Generated presentations (kept in docs/ via the .py generator + .md source)
 *.pptx
 .superpowers/
+
+# Facturation
+data/batia.db
+data/batia.db-journal
+data/batia.db-wal
+data/batia.db-shm
+data/factures/
