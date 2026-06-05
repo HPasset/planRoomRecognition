@@ -1,0 +1,51 @@
+# Wall-only Mask2Former — DWG + FR fine-tune (CLOUD A10G).
+#
+# Dataset : data/processed/walls_dwg_only_v3 (149 DWG v2 + N FR annotés CVAT)
+# Init    : poids depuis wall_only_dwg_v2/best.pt (pas le baseline COCO).
+#           Continue l'apprentissage existant plutôt que from-scratch — gain
+#           sur les FR sans re-apprendre la base depuis zéro.
+# Compute : Modal A10G 24 GB. Estim ~30-45 min selon N.
+#
+# Différences vs v2 :
+# - Dataset : 149 → 149+N paires (FR annotés ajoutés)
+# - LR plus basse : fine-tune, pas from-scratch (×0.3 sur les 2 LR)
+# - Epochs : 40 → 20 (la base est déjà bonne, suffit à intégrer les FR)
+# - Early stop patience : 8 → 5
+# - Paths cloud : /data/walls_dwg_only_v3, /runs/wall_only_dwg_v3
+
+run_name: wall_only_dwg_v3
+seed: 42
+
+data:
+  dataset_root: /data/walls_dwg_only_v3
+  image_size: 640
+  batch_size: 4
+
+model:
+  backbone: facebook/mask2former-swin-tiny-coco-panoptic
+
+optimizer:
+  lr_backbone: 3.0e-6     # /3 vs v2 — backbone déjà bien adapté
+  lr_head: 3.0e-5         # /3 vs v2 — head légèrement adapté seulement
+  weight_decay: 0.05
+  grad_accumulation: 2
+  grad_clip_norm: 1.0
+
+scheduler:
+  type: cosine
+  warmup_steps: 50
+
+training:
+  epochs: 20
+  early_stop_patience: 5
+  mixed_precision: "no"
+  oversample_rare_classes: false
+
+logging:
+  tracker: wandb
+  project: batia-segmentation
+  log_image_count: 5
+
+checkpoint:
+  output_dir: /runs/wall_only_dwg_v3
+  save_every_n_epochs: 1
