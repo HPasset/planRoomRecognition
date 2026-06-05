@@ -261,7 +261,8 @@ def build_devis_lines_initial(
         for eq, qty in d.items.items():
             if qty <= 0:
                 continue
-            # Four / Plaque / Convecteur sont "circuit-only" : présents dans le
+            # Électroménager / chauffage (Four, Plaque, LV, LL, SL, Chaudière,
+            # Convecteur, Sèche-serviettes) : circuit-only — présents dans le
             # tableau électrique mais hors devis facturable (fournis par l'occupant).
             if eq in CIRCUIT_ONLY_EQUIPMENT_TYPES:
                 continue
@@ -631,11 +632,48 @@ def main():
     # --- Sidebar ---
     with st.sidebar:
         st.header("Plan d'entrée")
+
+        # Wrapper léger pour réutiliser un plan cached en session_state à
+        # travers les navigations entre pages. file_uploader ne préserve PAS
+        # son état entre navigations — sans cette cache, l'artisan perd son
+        # plan + son devis dès qu'il bascule sur 📋 Devis ou 📄 Factures.
+        class _CachedUpload:
+            def __init__(self, bytes_, name):
+                self._bytes = bytes_
+                self.name = name
+            def getvalue(self):
+                return self._bytes
+
         uploaded = st.file_uploader(
             "Plan (PNG / JPEG)",
             type=["png", "jpg", "jpeg"],
             help="Le fichier reste 100% en local."
         )
+
+        if uploaded is not None:
+            # Upload frais : cache pour les navigations futures
+            st.session_state["_cached_plan_bytes"] = uploaded.getvalue()
+            st.session_state["_cached_plan_name"] = uploaded.name
+        elif "_cached_plan_bytes" in st.session_state:
+            # Aucun upload en cours mais cache présent (retour de navigation)
+            uploaded = _CachedUpload(
+                st.session_state["_cached_plan_bytes"],
+                st.session_state["_cached_plan_name"],
+            )
+            st.caption(f"📎 Plan en session : **{uploaded.name}**")
+            if st.button("🔄 Charger un nouveau plan", use_container_width=True):
+                for _k in (
+                    "_cached_plan_bytes", "_cached_plan_name",
+                    "_last_loaded_img_hash",
+                ):
+                    st.session_state.pop(_k, None)
+                # Wipe aussi tous les états devis_*/pastille_*/equipments_*
+                for _k in list(st.session_state.keys()):
+                    if _k.startswith(("devis_", "pastille_", "equipments_",
+                                       "surface_", "ocr_", "seg_", "_eq_",
+                                       "canvas_reset_")):
+                        del st.session_state[_k]
+                st.rerun()
 
         # OCR : toujours actif (MVP OCR-first)
         st.markdown("---")
@@ -1125,7 +1163,7 @@ def main():
 
     # Boutons d'action : Générer (pré-trigger) / Recalculer (post-trigger)
     # / Réinitialiser. Tous visibles ensemble, sémantiques selon état.
-    _b1, _b2, _b3, _ = st.columns([1.5, 1.5, 1.5, 3])
+    _b1, _b2, _ = st.columns([1.5, 1.5, 4.5])
     devis_state_key = f"devis_generated_{img_hash}"
     if devis_state_key not in st.session_state:
         st.session_state[devis_state_key] = True
@@ -1172,6 +1210,110 @@ def main():
         for k in keys_to_del:
             del st.session_state[k]
 
+    def _sync_editor_key_from_pastilles():
+        """Reflète l'état pastilles courant dans editor_key.
+
+        Source de vérité = pastilles_state. Sans cette sync, editor_key reste
+        figé sur les rooms d'origine de l'OCR → `compute_devis_global` (et
+        donc le tableau électrique) ignore les drag-in/drag-out canvas.
+        Préserve Surface / Notes pour les pastilles existantes (matching
+        par _pastille_id).
+        """
+        if editor_key not in st.session_state:
+            return
+        pastilles = st.session_state.get(f"pastilles_state_{img_hash}", [])
+        df_prev = st.session_state[editor_key]
+        prev_by_pid: dict[str, dict] = {}
+        if "_pastille_id" in df_prev.columns:
+            for _ix in df_prev.index:
+                _pid = df_prev.loc[_ix, "_pastille_id"]
+                if _pid is not None and not pd.isna(_pid):
+                    prev_by_pid[str(_pid)] = {
+                        "Inclure": bool(df_prev.loc[_ix, "Inclure"]),
+                        "Surface (m²)": float(df_prev.loc[_ix, "Surface (m²)"]),
+                        "Notes / texte OCR": str(
+                            df_prev.loc[_ix, "Notes / texte OCR"]
+                        ),
+                    }
+        new_rows: list[dict] = []
+        next_id = int(st.session_state.get(next_id_key, 0))
+        for p in pastilles:
+            pid = str(p["id"])
+            ptype = str(p.get("type", ""))
+            prev = prev_by_pid.get(pid, {})
+            new_rows.append({
+                "_id": next_id,
+                "_pastille_id": pid,
+                "Inclure": prev.get("Inclure", True),
+                "Type": ptype,
+                "Surface (m²)": prev.get("Surface (m²)", 0.0),
+                "Notes / texte OCR": prev.get("Notes / texte OCR", ""),
+            })
+            next_id += 1
+        # Purge les widget-states orphelins (rows supprimées) avant rebuild
+        prev_rids = set()
+        if "_id" in df_prev.columns:
+            prev_rids = {int(df_prev.loc[_ix, "_id"]) for _ix in df_prev.index}
+        new_rids = {r["_id"] for r in new_rows}
+        for _orphan_rid in prev_rids - new_rids:
+            for _suffix in ("type", "inc", "surf", "notes"):
+                _wkey = f"{editor_key}_{_suffix}_{_orphan_rid}"
+                st.session_state.pop(_wkey, None)
+        st.session_state[editor_key] = pd.DataFrame(
+            new_rows,
+            columns=["_id", "_pastille_id", "Inclure", "Type",
+                     "Surface (m²)", "Notes / texte OCR"],
+        )
+        st.session_state[next_id_key] = next_id
+
+    def _rebuild_devis_global_from_editor():
+        """Recalcule devis_global_{img_hash} depuis editor_key courant.
+
+        Ne touche PAS à devis_lines_{img_hash} (maintenu en cascade par les
+        handlers add/remove pastille). Seul le snapshot consommé par le
+        tableau électrique est rafraîchi.
+
+        Utilise le pastille_id comme room_id du Devis. Combiné au passage
+        de `room_labels` à generate_tableau, ça préserve les labels d'origine
+        ("Chambre 1, Chambre 3" reste tel quel après drag-out de Chambre 2
+        au lieu d'être re-numéroté en "Chambre 1, Chambre 2").
+        """
+        df = st.session_state.get(editor_key)
+        if df is None or len(df) == 0:
+            return
+        _surface_by_pid: dict[str, float] = st.session_state.get(
+            f"surface_by_pid_{img_hash}", {},
+        )
+        rooms_input: list[dict] = []
+        for _idx, _row in df.iterrows():
+            if not _row.get("Inclure", False):
+                continue
+            _label = _row.get("Type")
+            if not _label or _label not in DEVIS_LABEL_TO_PARAMS:
+                continue
+            _c2_class, _forced_hint = DEVIS_LABEL_TO_PARAMS[_label]
+            _pid = _row.get("_pastille_id")
+            _pid_str = (
+                str(_pid) if _pid is not None and not pd.isna(_pid) else None
+            )
+            _surface = float(_row.get("Surface (m²)") or 0.0)
+            if _pid_str and _pid_str in _surface_by_pid:
+                _surface = _surface_by_pid[_pid_str]
+            rooms_input.append({
+                # room_id = pid (si dispo) → permet à generate_tableau de
+                # mapper room → label pastille via room_labels.
+                "id": _pid_str or f"row_{_idx + 1:03d}",
+                "c2_class": _c2_class,
+                "surface_m2": _surface if _surface > 0 else None,
+                "ocr_hint": _forced_hint or _row.get(
+                    "Notes / texte OCR", "",
+                ),
+            })
+        if rooms_input:
+            st.session_state[f"devis_global_{img_hash}"] = (
+                compute_devis_global(rooms_input, handicap=devis_handicap)
+            )
+
     with _b1:
         if st.button(
             "💡 Générer devis",
@@ -1196,16 +1338,6 @@ def main():
             _trigger_devis_regen()
             st.rerun()
     with _b2:
-        if st.button(
-            "🔄 Recalculer devis",
-            key=f"top_recalc_{img_hash}",
-            disabled=not _devis_triggered,
-            help="Recalcule le devis depuis les pièces actuelles (utile "
-                 "après modif handicap, surface, etc.).",
-        ):
-            _trigger_devis_regen()
-            st.rerun()
-    with _b3:
         if st.button(
             "↺ Réinitialiser",
             key=f"top_reset_{img_hash}",
@@ -1700,6 +1832,16 @@ def main():
                 st.session_state[
                     f"pastille_to_devis_room_{img_hash}"
                 ] = _pid_to_room_map
+                # Empêche le sync block (ligne ~1756) de réécrire
+                # equipments_state avec l'écho React stale au prochain rerun
+                # (sinon les équipements supprimés réapparaissent côté canvas
+                # le temps d'un rerun avant que React n'ait re-fait son
+                # useEffect pour drop les ids absents de la prop).
+                st.session_state[f"_eq_just_populated_{img_hash}"] = True
+                # Sync editor_key + rebuild devis_global pour que le tableau
+                # électrique reflète la suppression sans clic supplémentaire.
+                _sync_editor_key_from_pastilles()
+                _rebuild_devis_global_from_editor()
                 st.rerun()
 
         # Pastille ajoutée (drag depuis palette pièces) → ajout devis +
@@ -1824,6 +1966,10 @@ def main():
                 f"pastille_to_devis_room_{img_hash}"
             ] = _pid_to_room_map
             st.session_state[f"_eq_just_populated_{img_hash}"] = True
+            # Sync editor_key + rebuild devis_global pour que le tableau
+            # électrique reflète l'ajout sans clic supplémentaire.
+            _sync_editor_key_from_pastilles()
+            _rebuild_devis_global_from_editor()
             st.rerun()
 
         if added_palette_eqs and devis_lines_key in st.session_state:
@@ -1880,6 +2026,8 @@ def main():
                         k = f"{editor_key}_{prefix}_{rid}"
                         if k in st.session_state:
                             del st.session_state[k]
+                # Sync tableau électrique avec le nouvel editor_key
+                _rebuild_devis_global_from_editor()
                 st.rerun()
 
         # Phase 3 : sync DataFrame éditeur : ajoute row pour chaque pastille
@@ -1914,6 +2062,8 @@ def main():
                     st.session_state[f"{editor_key}_type_{rid}"] = row["Type"]
                     st.session_state[f"{editor_key}_surf_{rid}"] = 0.0
                     st.session_state[f"{editor_key}_notes_{rid}"] = row["Notes / texte OCR"]
+                # Sync tableau électrique avec le nouvel editor_key
+                _rebuild_devis_global_from_editor()
                 st.rerun()
 
     # Debug expander (utile pendant le dev, à retirer en prod)
@@ -2256,7 +2406,11 @@ def main():
                     df_devis_current.loc[_idx, "Prix HT (€)"]
                 )
 
-            # Callback générique : sync widget value → DataFrame
+            # Callback générique : sync widget value → DataFrame.
+            # Cas spécial "qty" : reconcile aussi equipments_state +
+            # _equip_ids pour que les pastilles canvas suivent (sinon Qté et
+            # nombre de pastilles divergent → décrément buggy au prochain
+            # drag-out).
             def _on_devis_edit(rid: int, widget_suffix: str, df_field: str, caster):
                 wkey = f"{devis_lines_key}_{widget_suffix}_{rid}"
                 if wkey not in st.session_state:
@@ -2268,17 +2422,52 @@ def main():
                     return
                 df_cur = st.session_state[devis_lines_key]
                 mask = df_cur["_id"] == rid
-                df_cur.loc[mask, df_field] = caster(st.session_state[wkey])
+                new_val = caster(st.session_state[wkey])
+                df_cur.loc[mask, df_field] = new_val
+                if widget_suffix == "qty":
+                    from src.planrec.nfc_equipments import (
+                        reconcile_equipments_for_line,
+                    )
+                    line_idx = df_cur[mask].index[0]
+                    line_room = str(df_cur.at[line_idx, "Pièce"])
+                    line_label = str(df_cur.at[line_idx, "Équipement"])
+                    line_type = _DEVIS_LABEL_TO_EQUIP_TYPE.get(line_label)
+                    if line_type is not None:
+                        pastilles_state = st.session_state.get(
+                            pastilles_state_key, [],
+                        )
+                        pastilles_by_room = {
+                            str(p.get("label", "")): (
+                                int(p["x"]), int(p["y"]),
+                            )
+                            for p in pastilles_state
+                        }
+                        smart_placer = _make_smart_placer(
+                            seg_result=result if enable_segmentation else None,
+                            image_size=(image_w, image_h),
+                            pastilles_by_room=pastilles_by_room,
+                        )
+                        current_eq = list(
+                            st.session_state.get(equipments_state_key, []),
+                        )
+                        new_eq_state, new_line_ids = (
+                            reconcile_equipments_for_line(
+                                current_state=current_eq,
+                                line_room=line_room,
+                                line_type=line_type,
+                                new_qty=int(new_val),
+                                smart_placer=smart_placer,
+                            )
+                        )
+                        st.session_state[equipments_state_key] = new_eq_state
+                        df_cur.at[line_idx, "_equip_ids"] = new_line_ids
+                        # Force React à re-prendre l'état Python comme source
+                        # de vérité (sinon les pastilles supprimées re-echoent
+                        # depuis le canvas et créent une boucle).
+                        st.session_state[
+                            f"_eq_just_populated_{img_hash}"
+                        ] = True
                 st.session_state[devis_lines_key] = df_cur
-
-            # Astuce UX V1 : auto-reconcile équipements après modif Qté
-            # reporté en V2 (simplification — éviter les surprises de
-            # repositionnement automatique en cours d'édition).
-            st.caption(
-                "ℹ Astuce : après modification de Qté, cliquer à nouveau sur "
-                "'Générer devis' pour repositionner les nouvelles icônes "
-                "équipements."
-            )
 
             # Layout "Ajouter une ligne" : selectbox pièce + bouton
             col_add_piece, col_add_btn, _ = st.columns([2, 1, 2])
@@ -2720,10 +2909,24 @@ def main():
                 "Clique sur **💡 Générer devis** pour lancer l'analyse."
             )
         else:
+            # Construit room_labels (room_id=pid → label pastille) pour
+            # préserver les noms d'origine ("Chambre 3" reste "Chambre 3"
+            # après drag-out de Chambre 2 au lieu d'être renommé "Chambre 2"
+            # par cat_seen). Sans ce mapping, generate_tableau re-indexe
+            # séquentiellement et l'user voit des labels inattendus.
+            _pastilles_for_labels = st.session_state.get(
+                pastilles_state_key, [],
+            )
+            _room_labels = {
+                str(p["id"]): str(p.get("label", ""))
+                for p in _pastilles_for_labels
+                if p.get("label")
+            }
             tableau = _nfc_tab.generate_tableau(
                 devis_global=_devis_global,
                 heating_enabled=_heating,
                 typology_override=_typo_override,
+                room_labels=_room_labels,
             )
 
             # Bandeau de notes / warnings
