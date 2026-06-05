@@ -34,7 +34,9 @@ def register_paiement(session: Session, facture_id: str, montant: Decimal,
                  .filter(Paiement.facture_id == facture_id).all())
     total_paye = sum((pp.montant for pp in paiements), Decimal("0"))
 
-    if total_paye >= facture.montant_ttc:
+    # Pour solde/situation, montant_du_ttc est ce qui reste réellement dû
+    seuil = facture.montant_du_ttc if facture.montant_du_ttc is not None else facture.montant_ttc
+    if total_paye >= seuil:
         facture.statut = FactureStatut.PAYEE
         facture.date_paiement = datetime.utcnow()
     elif total_paye > Decimal("0"):
