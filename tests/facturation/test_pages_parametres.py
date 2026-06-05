@@ -48,3 +48,34 @@ def test_creation_artisan_via_form(at):
     at.button[0].click().run()
     assert not at.exception
     assert any("Artisan enregistré" in str(s.value) for s in at.success)
+
+
+def test_page_charge_avec_artisan_existant(tmp_path, monkeypatch):
+    """Régression : SQLite renvoie forme_juridique comme str (pas Enum) au reload.
+    La page doit gérer les deux cas sans planter sur .value."""
+    monkeypatch.setenv("BATIA_DB_PATH", str(tmp_path / "test.db"))
+    from src.facturation.models import Base  # noqa: F401
+    from src.facturation.db import reset_engine, init_db, get_session_factory
+    reset_engine(); init_db()
+
+    SessionLocal = get_session_factory()
+    s = SessionLocal()
+    from src.facturation.services.artisan import create_or_update_artisan
+    from src.facturation.models import FormeJuridique
+    create_or_update_artisan(
+        s, raison_sociale="batIA pré-existant",
+        forme_juridique=FormeJuridique.SARL,
+        siret="98765432109876", numero_tva_intra="FR98987654321",
+        adresse_rue="2 av", adresse_cp="92100", adresse_ville="Boulogne",
+        adresse_pays="FR", email="h@b.com",
+        iban="FR7612345987650123456789014",
+    )
+    s.close()
+
+    at = AppTest.from_file(str(PAGE), default_timeout=15)
+    at.run()
+    assert not at.exception, f"Exception sur reload avec artisan existant : {at.exception}"
+    # Champ rempli avec la valeur DB
+    inputs = {ti.label: ti for ti in at.text_input}
+    assert inputs["Raison sociale"].value == "batIA pré-existant"
+    reset_engine()

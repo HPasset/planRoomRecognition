@@ -31,7 +31,11 @@ try:
                 max_chars=14,
             )
             forme_options = [f.value for f in FormeJuridique]
-            forme_default = current.forme_juridique.value if current else "EI"
+            if current:
+                fj = current.forme_juridique
+                forme_default = fj.value if hasattr(fj, "value") else fj
+            else:
+                forme_default = "EI"
             forme = st.selectbox(
                 "Forme juridique", forme_options,
                 index=forme_options.index(forme_default),

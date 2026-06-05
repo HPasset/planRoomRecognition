@@ -30,10 +30,11 @@ try:
             st.info("Aucun client pour l'instant.")
         else:
             for c in clients:
-                with st.expander(f"{c.nom_ou_raison} — {c.adresse_ville} ({c.type.value})"):
+                ctype = c.type.value if hasattr(c.type, "value") else c.type
+                with st.expander(f"{c.nom_ou_raison} — {c.adresse_ville} ({ctype})"):
                     col1, col2 = st.columns([3, 1])
                     with col1:
-                        st.write(f"**Type** : {c.type.value}")
+                        st.write(f"**Type** : {ctype}")
                         st.write(f"**Adresse** : {c.adresse_rue}, {c.adresse_cp} {c.adresse_ville}")
                         st.write(f"**Email** : {c.email}")
                         if c.telephone:
