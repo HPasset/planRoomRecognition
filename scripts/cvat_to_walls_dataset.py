@@ -113,15 +113,34 @@ def main():
     cvat = args.cvat_export
     out = args.out
 
-    # Vérifications structure CVAT
-    labelmap_path = cvat / "labelmap.txt"
-    images_dir = cvat / "JPEGImages"
-    masks_dir = cvat / "SegmentationClass"
-    if not labelmap_path.exists():
-        print(f"ERROR: labelmap.txt absent dans {cvat}")
+    if not cvat.exists():
+        print(f"ERROR: Le dossier d'export CVAT n'existe pas : {cvat}")
+        print("\nWorkflow attendu :")
+        print("  1. Annoter les plans dans CVAT (project batia-walls-fr)")
+        print("  2. Project Actions → Export project dataset")
+        print("  3. Format = 'Segmentation mask 1.1', coche 'Save images'")
+        print("  4. Download ZIP, dézipper dans ce chemin")
+        print("  5. Relancer ce script")
         sys.exit(1)
+
+    # Si l'export contient un sous-dossier task (project-level export),
+    # on trouve le bon répertoire qui contient labelmap.txt.
+    candidates = [cvat] + list(cvat.iterdir() if cvat.is_dir() else [])
+    cvat_root = next((c for c in candidates
+                      if c.is_dir() and (c / "labelmap.txt").exists()), None)
+    if cvat_root is None:
+        print(f"ERROR: labelmap.txt introuvable dans {cvat} ou ses sous-dossiers.")
+        print("  Vérifie que l'export CVAT est bien au format")
+        print("  'Segmentation mask 1.1' (pas COCO, pas YOLO, etc.)")
+        sys.exit(1)
+    if cvat_root != cvat:
+        print(f"Sous-dossier task détecté : {cvat_root.name}")
+
+    labelmap_path = cvat_root / "labelmap.txt"
+    images_dir = cvat_root / "JPEGImages"
+    masks_dir = cvat_root / "SegmentationClass"
     if not images_dir.exists() or not masks_dir.exists():
-        print(f"ERROR: JPEGImages/ ou SegmentationClass/ absent dans {cvat}")
+        print(f"ERROR: JPEGImages/ ou SegmentationClass/ absent dans {cvat_root}")
         sys.exit(1)
 
     # Output
