@@ -6,6 +6,7 @@ suivantes. Ce fichier est l'unique point d'import pour Alembic autogenerate.
 from src.facturation.db import Base
 from src.facturation.models.artisan import Artisan
 from src.facturation.models.client import Client
+from src.facturation.models.devis import DevisDB
 from src.facturation.models.enums import (
     ActionAudit,
     CategorieTVA,
@@ -23,6 +24,7 @@ __all__ = [
     "Base",
     "Artisan",
     "Client",
+    "DevisDB",
     "ActionAudit",
     "CategorieTVA",
     "DevisStatut",
