@@ -49,6 +49,12 @@ class DevisDB(Base):
     signature_client_blob: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Plan d'origine — persistance cross-session : permet de réouvrir un
+    # devis ancien (après fermeture du navigateur) et voir l'image du plan.
+    plan_image_blob: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+    plan_image_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    plan_image_mime: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
