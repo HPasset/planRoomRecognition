@@ -192,3 +192,68 @@ def beside_door(door_bbox: tuple[int, int, int, int], edge: Edge,
     delta = half + margin / L
     t_side = t_door + delta if (t_door + delta) <= 1.0 else t_door - delta
     return point_on_edge(edge, t_side, inset, centroid)
+
+
+# ---------------------------------------------------------------------------
+# Couche C — Raffinement : snap mur + anti-collision
+# ---------------------------------------------------------------------------
+
+def _nearest_point_on_segment(p: Point, seg: tuple[int, int, int, int]) -> FPoint:
+    ax, ay, bx, by = seg
+    dx, dy = bx - ax, by - ay
+    L2 = dx * dx + dy * dy
+    if L2 == 0:
+        return (float(ax), float(ay))
+    t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2))
+    return (ax + t * dx, ay + t * dy)
+
+
+def snap_to_wall(p: Point, wall_lines: list[tuple[int, int, int, int]],
+                 max_dist: float, inset: int, centroid: Point) -> tuple[Point, float]:
+    """Recale `p` à `inset` px à l'intérieur du mur détecté le plus proche.
+
+    Si aucun mur dans `max_dist`, retourne `p` inchangé (moved=0).
+    """
+    best_q = None
+    best_d = max_dist
+    for seg in wall_lines:
+        q = _nearest_point_on_segment(p, seg)
+        d = math.hypot(p[0] - q[0], p[1] - q[1])
+        if d < best_d:
+            best_d = d
+            best_q = q
+    if best_q is None:
+        return (p, 0.0)
+    # direction vers l'intérieur depuis le mur
+    vx, vy = centroid[0] - best_q[0], centroid[1] - best_q[1]
+    vlen = math.hypot(vx, vy) or 1.0
+    out = (int(round(best_q[0] + vx / vlen * inset)),
+           int(round(best_q[1] + vy / vlen * inset)))
+    return (out, math.hypot(p[0] - out[0], p[1] - out[1]))
+
+
+def resolve_collisions(points: list[Point], min_gap: int,
+                       iterations: int = 8) -> list[Point]:
+    """Écarte itérativement les points plus proches que `min_gap`."""
+    pts = [list(map(float, p)) for p in points]
+    n = len(pts)
+    for _ in range(iterations):
+        moved = False
+        for i in range(n):
+            for j in range(i + 1, n):
+                dx = pts[j][0] - pts[i][0]
+                dy = pts[j][1] - pts[i][1]
+                dist = math.hypot(dx, dy)
+                if dist < min_gap:
+                    moved = True
+                    if dist < 1e-6:
+                        dx, dy, dist = 1.0, 0.0, 1.0
+                    push = (min_gap - dist) / 2.0
+                    ux, uy = dx / dist, dy / dist
+                    pts[i][0] -= ux * push
+                    pts[i][1] -= uy * push
+                    pts[j][0] += ux * push
+                    pts[j][1] += uy * push
+        if not moved:
+            break
+    return [(int(round(x)), int(round(y))) for x, y in pts]
