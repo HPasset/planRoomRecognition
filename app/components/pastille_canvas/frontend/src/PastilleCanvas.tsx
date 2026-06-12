@@ -647,16 +647,18 @@ const EquipmentChip = memo(function EquipmentChip({
         zIndex: 2,
         touchAction: "none",
         cursor: "grab",
-        width: 20,
-        height: 20,
+        width: 22,
+        height: 22,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "rgba(255,255,255,0.6)",
+        background: "rgba(255,255,255,0.95)",
         borderRadius: "50%",
+        // Anneau net pour que la pastille ne se fonde jamais dans le dessin
+        // du plan (meubles, murs, cotes). Halo orange si placement à valider.
         boxShadow: equipment.uncertain
-          ? "0 0 0 3px rgba(255,152,0,0.85)"
-          : "0 1px 2px rgba(0,0,0,0.15)",
+          ? "0 0 0 3px rgba(255,152,0,0.9), 0 1px 3px rgba(0,0,0,0.4)"
+          : "0 0 0 1.5px rgba(50,50,50,0.6), 0 1px 3px rgba(0,0,0,0.35)",
       }}
       title={equipment.uncertain
         ? `${equipment.type} (${equipment.room}) — Placement auto à vérifier`
