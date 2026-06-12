@@ -89,3 +89,62 @@ def point_on_edge(edge: Edge, t: float, inset: int, centroid: Point) -> Point:
     px, py = edge.point_at(max(0.0, min(1.0, t)))
     nx, ny = edge.inward_normal(centroid)
     return (int(round(px + nx * inset)), int(round(py + ny * inset)))
+
+
+def _point_seg_dist(p: FPoint, a: Point, b: Point) -> float:
+    """Distance d'un point au segment [a,b]."""
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    L2 = dx * dx + dy * dy
+    if L2 == 0:
+        return math.hypot(p[0] - ax, p[1] - ay)
+    t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2))
+    projx, projy = ax + t * dx, ay + t * dy
+    return math.hypot(p[0] - projx, p[1] - projy)
+
+
+def _bbox_corners(bbox: tuple[int, int, int, int]) -> list[Point]:
+    x1, y1, x2, y2 = bbox
+    return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+
+
+def nearest_edge(bbox: tuple[int, int, int, int], edges: list[Edge]) -> Edge:
+    """Arête contre laquelle la bbox est plaquée = la plus proche.
+
+    Distance bbox↔arête = min sur les 4 coins de la bbox de la distance
+    au segment de l'arête. Sert pour `wall_behind` (lit) et `edge_of` (porte).
+    """
+    best = edges[0]
+    best_d = float("inf")
+    corners = _bbox_corners(bbox)
+    for e in edges:
+        d = min(_point_seg_dist(c, e.a, e.b) for c in corners)
+        if d < best_d:
+            best_d = d
+            best = e
+    return best
+
+
+def opposite_edge(edge: Edge, edges: list[Edge]) -> Edge:
+    """Arête ~parallèle la plus éloignée de `edge` (le « mur d'en face »)."""
+    ux, uy = edge.unit_dir()
+    mx, my = edge.midpoint
+    best = None
+    best_score = -1.0
+    for e in edges:
+        if e is edge:
+            continue
+        ex, ey = e.unit_dir()
+        parallelism = abs(ux * ex + uy * ey)   # 1 = parallèle, 0 = perpendiculaire
+        dist = math.hypot(e.midpoint[0] - mx, e.midpoint[1] - my)
+        score = parallelism * dist
+        if score > best_score:
+            best_score = score
+            best = e
+    return best if best is not None else edge
+
+
+# Alias sémantiques (même implémentation, intentions distinctes)
+wall_behind = nearest_edge   # mur tête-de-lit
+edge_of = nearest_edge       # mur portant la porte
