@@ -158,6 +158,7 @@ DEFAULT_CHECKPOINT = "runs/segmentation/stage_b_finetune_v1/checkpoints/best.pt"
 
 # === YOLO Brique A (détection meubles, 9 classes NFC) — purement visuel ===
 YOLO_BRIQUE_A_CHECKPOINT = "runs/detect/runs/detect/brique_a_v1/weights/best.pt"
+YOLO_DOORS_CHECKPOINT = "runs/train/v3_doors_windows/weights/best.pt"
 BATIA_YOLO_CLASSES = [
     "Bathtub", "Shower", "WashBasin", "Toilet", "KitchenSink",
     "Cooktop", "Refrigerator", "WashingMachine", "Bed",
@@ -219,6 +220,36 @@ def run_yolo_brique_a(image_bytes: bytes, conf_threshold: float) -> list[dict]:
         for box in r.boxes:
             cls_id = int(box.cls.item())
             cls_name = model.names[cls_id]
+            conf_score = float(box.conf.item())
+            x1, y1, x2, y2 = [float(v) for v in box.xyxy[0].cpu().numpy()]
+            out.append({
+                "class_name": cls_name,
+                "confidence": conf_score,
+                "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+            })
+    return out
+
+
+@st.cache_resource(show_spinner=False)
+def load_yolo_doors_model(checkpoint_path: str):
+    """Lazy-load YOLO portes/fenêtres (classes {0: door, 1: window})."""
+    from ultralytics import YOLO
+    return YOLO(checkpoint_path)
+
+
+@st.cache_data(show_spinner=False)
+def run_yolo_doors(image_bytes: bytes, conf_threshold: float) -> list[dict]:
+    """Inférence YOLO portes/fenêtres. Même format de sortie que brique A."""
+    model = load_yolo_doors_model(YOLO_DOORS_CHECKPOINT)
+    img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    results = model.predict(source=img, conf=conf_threshold, verbose=False)
+    out: list[dict] = []
+    for r in results:
+        if r.boxes is None:
+            continue
+        for box in r.boxes:
+            cls_id = int(box.cls.item())
+            cls_name = model.names[cls_id]   # "door" | "window"
             conf_score = float(box.conf.item())
             x1, y1, x2, y2 = [float(v) for v in box.xyxy[0].cpu().numpy()]
             out.append({
@@ -1498,6 +1529,15 @@ def main():
             )
         else:
             raw_boxes = run_yolo_brique_a(img_bytes, yolo_conf_threshold)
+            # Détection portes/fenêtres (modèle séparé) — alimente le placement
+            # intelligent. Checkpoint .pt gitignored : skip discret si absent
+            # (pas de crash), le placement retombera sur sa dégradation porte.
+            if Path(YOLO_DOORS_CHECKPOINT).exists():
+                st.session_state[f"doors_{img_hash}"] = run_yolo_doors(
+                    img_bytes, yolo_conf_threshold,
+                )
+            else:
+                st.session_state[f"doors_{img_hash}"] = []
             yolo_boxes = [
                 {
                     "class_name": b["class_name"],
