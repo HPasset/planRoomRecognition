@@ -148,3 +148,47 @@ def opposite_edge(edge: Edge, edges: list[Edge]) -> Edge:
 # Alias sémantiques (même implémentation, intentions distinctes)
 wall_behind = nearest_edge   # mur tête-de-lit
 edge_of = nearest_edge       # mur portant la porte
+
+
+def _project_t(point: Point, edge: Edge) -> float:
+    """Paramètre t (non clampé) de la projection de `point` sur l'axe de l'arête."""
+    ax, ay = edge.a
+    dx = edge.b[0] - ax
+    dy = edge.b[1] - ay
+    L2 = dx * dx + dy * dy
+    if L2 == 0:
+        return 0.0
+    return ((point[0] - ax) * dx + (point[1] - ay) * dy) / L2
+
+
+def project_extents(bbox: tuple[int, int, int, int], edge: Edge) -> tuple[float, float]:
+    """Empreinte d'une bbox projetée sur l'arête → (t_min, t_max) clampés [0,1]."""
+    ts = [_project_t(c, edge) for c in _bbox_corners(bbox)]
+    lo = max(0.0, min(ts))
+    hi = min(1.0, max(ts))
+    return (lo, hi)
+
+
+def triangle_apex(p1: Point, p2: Point, edge: Edge, inset: int, centroid: Point) -> Point:
+    """Point sur `edge` formant un triangle équilibré avec p1,p2.
+
+    = projection du milieu de [p1,p2] sur l'arête, décalée `inset` vers l'intérieur.
+    """
+    mid = ((p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0)
+    t = max(0.0, min(1.0, _project_t((int(mid[0]), int(mid[1])), edge)))
+    return point_on_edge(edge, t, inset, centroid)
+
+
+def beside_door(door_bbox: tuple[int, int, int, int], edge: Edge,
+                inset: int, centroid: Point, margin: int = 8) -> Point:
+    """Point intérieur juste à côté de l'ouverture de porte, sur le mur `edge`."""
+    dcx = (door_bbox[0] + door_bbox[2]) / 2.0
+    dcy = (door_bbox[1] + door_bbox[3]) / 2.0
+    t_door = _project_t((int(dcx), int(dcy)), edge)
+    # demi-largeur de la porte projetée sur l'arête
+    ts = [_project_t(c, edge) for c in _bbox_corners(door_bbox)]
+    half = (max(ts) - min(ts)) / 2.0
+    L = edge.length or 1.0
+    delta = half + margin / L
+    t_side = t_door + delta if (t_door + delta) <= 1.0 else t_door - delta
+    return point_on_edge(edge, t_side, inset, centroid)
