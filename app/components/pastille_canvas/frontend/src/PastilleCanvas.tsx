@@ -56,6 +56,7 @@ export interface EquipmentInstance {
   x: number;
   y: number;
   color: string;
+  uncertain?: boolean;
 }
 
 /**
@@ -650,9 +651,13 @@ const EquipmentChip = memo(function EquipmentChip({
         justifyContent: "center",
         background: "rgba(255,255,255,0.6)",
         borderRadius: "50%",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
+        boxShadow: equipment.uncertain
+          ? "0 0 0 3px rgba(255,152,0,0.85)"
+          : "0 1px 2px rgba(0,0,0,0.15)",
       }}
-      title={`${equipment.type} (${equipment.room})`}
+      title={equipment.uncertain
+        ? `${equipment.type} (${equipment.room}) — Placement auto à vérifier`
+        : `${equipment.type} (${equipment.room})`}
     >
       <SvgEquipIcon svgId={svgId} color={equipment.color} size={14} />
     </div>
@@ -904,6 +909,13 @@ function PastilleCanvas({ args }: ComponentProps) {
   useEffect(() => {
     const incoming = equipments ?? [];
     const incomingIds = new Set(incoming.map((e) => e.id));
+    // Rooms encore valides côté Python (i.e. au moins une pastille pièce
+    // existe encore avec ce label). Une room qui disparaît de la map signe
+    // un drag-out de pastille pièce → les équipements "new_*" rattachés à
+    // cette room sont devenus orphelins, on les drop aussi.
+    const validRooms = new Set(
+      Object.values(pastille_to_devis_room ?? {}),
+    );
     setEquipmentsState((prev) => {
       const currentIds = new Set(prev.map((e) => e.id));
       if (incomingIds.size === currentIds.size
@@ -912,15 +924,24 @@ function PastilleCanvas({ args }: ComponentProps) {
       }
       // Garde les équipements "new_*" même absents d'incoming : ajout
       // palette pending que Python n'a pas encore acquitté.
-      const filtered = prev.filter(
-        (e) => incomingIds.has(e.id) || e.id.startsWith("new_"),
-      );
+      // MAIS : si la room de l'équipement n'est plus valide (pastille pièce
+      // drag-outée), drop quand même — sinon les "new_*" deviennent des
+      // orphelins jamais supprimables par Python.
+      const filtered = prev.filter((e) => {
+        if (incomingIds.has(e.id)) return true;
+        if (!e.id.startsWith("new_")) return false;
+        return validRooms.has(e.room);
+      });
       const added = incoming.filter((e) => !currentIds.has(e.id));
       return [...filtered, ...added];
     });
-  }, [equipments]);
+  }, [equipments, pastille_to_devis_room]);
 
-  // Handler drop équipement existant (commit position ou suppression hors plan)
+  // Handler drop équipement existant (commit position ou suppression hors plan).
+  // Drag = validation manuelle → efface uncertain pour que le halo disparaisse.
+  // La valeur updated est incluse dans le payload envoyé à Python via l'effet
+  // setComponentValue (equipmentsState), donc Python voit uncertain=false après
+  // un drag.
   const handleEquipmentDrop = useCallback(
     (id: string, drop: EquipDropResult) => {
       if (!drop.insideImage) {
@@ -928,7 +949,9 @@ function PastilleCanvas({ args }: ComponentProps) {
       } else {
         setEquipmentsState((prev) =>
           prev.map((e) =>
-            e.id === id ? { ...e, x: drop.finalImgX, y: drop.finalImgY } : e,
+            e.id === id
+              ? { ...e, x: drop.finalImgX, y: drop.finalImgY, uncertain: false }
+              : e,
           ),
         );
       }

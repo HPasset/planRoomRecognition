@@ -79,9 +79,10 @@ def pastille_canvas(
             confidence, color} en coord image originale. Dessinés en overlay
             SVG (rectangles + labels) au-dessus des polygones segmentation
             mais SOUS les pastilles. Non interactifs. Purement visuel.
-        equipments: optionnel, liste de dicts {id, type, room, x, y, color}
-            où x/y sont en coordonnées image originale. Instances équipements
-            individuelles affichées sur le plan (1 prise = 1 instance).
+        equipments: optionnel, liste de dicts {id, type, room, x, y, color,
+            uncertain} où x/y sont en coordonnées image originale. `uncertain`
+            (bool) → halo orange « à vérifier » autour de l'icône. Instances
+            équipements individuelles affichées sur le plan (1 prise = 1 instance).
         equip_palette: optionnel, liste de dicts {type, label, color, svg_id}
             décrivant les types d'équipements disponibles dans la palette
             sous le canvas.
