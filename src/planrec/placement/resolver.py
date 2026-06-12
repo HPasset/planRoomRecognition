@@ -63,7 +63,7 @@ def place_room(ctx: RoomContext, counts: dict[str, int]) -> list[PlacedEquipment
     bed = _find(ctx.furniture, {"Bed", "Double Bed", "Single Bed"})
     door = _find(ctx.openings, {"door", "Door", "Single Door", "Double Door"})
 
-    head_wall = g.wall_behind(bed.bbox, edges) if bed else None
+    head_wall = g.bed_head_wall(bed.bbox, edges) if bed else None
     door_wall = g.edge_of(door.bbox, edges) if door else None
 
     remaining = dict(counts)
@@ -122,9 +122,16 @@ def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
     if a.kind == "adjacent":
         ref = by_id.get(a.ref)
         if ref is not None:
-            x = ref.x + ACCOLE_GAP
-            y = ref.y
-            return x, y, ref.uncertain, "RJ45 accolée à la prise"
+            if head_wall is not None:
+                ux, uy = head_wall.unit_dir()
+                # le long du mur, vers l'intérieur de la pièce (centroïde)
+                if (centroid[0] - ref.x) * ux + (centroid[1] - ref.y) * uy < 0:
+                    ux, uy = -ux, -uy
+                x = int(round(ref.x + ux * ACCOLE_GAP))
+                y = int(round(ref.y + uy * ACCOLE_GAP))
+            else:
+                x, y = ref.x + ACCOLE_GAP, ref.y
+            return x, y, ref.uncertain, "RJ45 accolée à la prise (continuité mur)"
         x, y = g.point_on_edge(edges[0], 0.1, INSET, centroid)
         return x, y, True, "prise de référence absente"
 
@@ -142,7 +149,7 @@ def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
     if a.kind == "beside_door":
         if door and door_wall is not None:
             x, y = g.beside_door(door.bbox, door_wall, INSET, centroid)
-            return x, y, False, "interrupteur à côté de la porte"
+            return x, y, True, "interrupteur côté dégagé porte (sens d'ouverture inconnu, à vérifier)"
         x, y = g.point_on_edge(edges[0], 0.5, INSET, centroid)
         return x, y, True, "porte absente : interrupteur approximatif"
 

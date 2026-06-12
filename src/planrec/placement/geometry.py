@@ -150,6 +150,30 @@ wall_behind = nearest_edge   # mur tête-de-lit
 edge_of = nearest_edge       # mur portant la porte
 
 
+def bed_head_wall(bbox: tuple[int, int, int, int], edges: list[Edge],
+                  flush_tol: float = 30.0) -> Edge:
+    """Mur tête-de-lit = mur derrière la tête de lit (côté court du lit).
+
+    Le côté court (têtière) est perpendiculaire au grand axe du lit : pour un
+    lit « portrait » (hauteur >= largeur) la têtière est contre un mur
+    HORIZONTAL ; pour un lit « paysage » contre un mur VERTICAL. On choisit,
+    parmi les murs contre lesquels le lit est plaqué (`flush_tol`) et de la
+    bonne orientation, le plus proche. Replis : mur plaqué le plus proche,
+    sinon mur le plus proche tout court. Résout l'ambiguïté du lit en coin.
+    """
+    x1, y1, x2, y2 = bbox
+    w, h = x2 - x1, y2 - y1
+    head_orient = "H" if h >= w else "V"
+
+    def gap(e: Edge) -> float:
+        return min(_point_seg_dist(c, e.a, e.b) for c in _bbox_corners(bbox))
+
+    flush = [e for e in edges if gap(e) <= flush_tol]
+    oriented = [e for e in flush if e.orientation == head_orient]
+    pool = oriented or flush or list(edges)
+    return min(pool, key=gap)
+
+
 def _project_t(point: Point, edge: Edge) -> float:
     """Paramètre t (non clampé) de la projection de `point` sur l'axe de l'arête."""
     ax, ay = edge.a
@@ -181,16 +205,17 @@ def triangle_apex(p1: Point, p2: Point, edge: Edge, inset: int, centroid: Point)
 
 def beside_door(door_bbox: tuple[int, int, int, int], edge: Edge,
                 inset: int, centroid: Point, margin: int = 8) -> Point:
-    """Point intérieur juste à côté de l'ouverture de porte, sur le mur `edge`."""
+    """Point intérieur à côté de l'ouverture, côté dégagé (vers le centre du mur)."""
     dcx = (door_bbox[0] + door_bbox[2]) / 2.0
     dcy = (door_bbox[1] + door_bbox[3]) / 2.0
     t_door = _project_t((int(dcx), int(dcy)), edge)
-    # demi-largeur de la porte projetée sur l'arête
     ts = [_project_t(c, edge) for c in _bbox_corners(door_bbox)]
     half = (max(ts) - min(ts)) / 2.0
     L = edge.length or 1.0
     delta = half + margin / L
-    t_side = t_door + delta if (t_door + delta) <= 1.0 else t_door - delta
+    # côté dégagé = vers le centre du mur (loin du coin le plus proche)
+    side_sign = 1.0 if t_door < 0.5 else -1.0
+    t_side = max(0.0, min(1.0, t_door + side_sign * delta))
     return point_on_edge(edge, t_side, inset, centroid)
 
 

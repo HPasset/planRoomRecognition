@@ -54,7 +54,13 @@ def test_full_bedroom_layout():
     light = g["LightPoint"][0]
     assert abs(light.x - 100) <= 20 and abs(light.y - 100) <= 20
 
-    assert all(not p.uncertain for p in placed)
+    # le point lumineux, les prises et la RJ45 ne sont pas incertains ;
+    # l'interrupteur l'est toujours (sens d'ouverture porte inconnu).
+    for p in placed:
+        if p.equip_key == "Switch":
+            assert p.uncertain is True
+        else:
+            assert p.uncertain is False
 
 
 def test_missing_bed_falls_back_and_marks_uncertain():
