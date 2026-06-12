@@ -14,6 +14,7 @@ from src.planrec.placement import geometry as g
 INSET = 15
 MIN_GAP = 22
 ACCOLE_GAP = 22
+FLANK_GAP = 25          # décalage au-delà des extrémités du lit pour flanquer les chevets
 SNAP_MAX = 20
 UNCERTAIN_MOVE = 18
 
@@ -116,9 +117,17 @@ def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
     if a.kind == "bed_side":
         if bed and head_wall is not None:
             t_min, t_max = g.project_extents(bed.bbox, head_wall)
-            t = t_min if a.side == LEFT else t_max
+            # On flanque le lit : on pousse la prise JUSTE AU-DELÀ de l'extrémité
+            # du lit (dans l'espace libre à côté), pas sur le coin du lit. Sinon
+            # les deux prises se posent sur le matelas/coins et la têtière paraît
+            # n'en avoir qu'une (noyée dans le mobilier).
+            flank_dt = FLANK_GAP / (head_wall.length or 1.0)
+            if a.side == LEFT:
+                t = max(0.0, t_min - flank_dt)
+            else:
+                t = min(1.0, t_max + flank_dt)
             x, y = g.point_on_edge(head_wall, t, INSET, centroid)
-            reason = f"prise côté {a.side} du lit"
+            reason = f"prise côté {a.side} du lit (au-delà de l'extrémité, contre le mur)"
         else:
             t = 0.25 if a.side == LEFT else 0.75
             x, y = g.point_on_edge(edges[0], t, INSET, centroid)
@@ -140,6 +149,10 @@ def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
                     ux, uy = -ux, -uy
                 x = int(round(ref.x + ux * ACCOLE_GAP))
                 y = int(round(ref.y + uy * ACCOLE_GAP))
+                # rester sur le segment du mur tête-de-lit (la prise de réf peut
+                # déjà être à l'extrémité ; ne pas déborder du mur).
+                t_clamp = max(0.0, min(1.0, g._project_t((x, y), head_wall)))
+                x, y = g.point_on_edge(head_wall, t_clamp, INSET, centroid)
             else:
                 x, y = ref.x + ACCOLE_GAP, ref.y
             return x, y, ref.uncertain, "RJ45 accolée à la prise (continuité mur)"

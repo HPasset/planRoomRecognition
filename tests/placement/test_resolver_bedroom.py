@@ -26,11 +26,12 @@ def test_full_bedroom_layout():
     assert len(g["Switch"]) == 1
     assert len(g["LightPoint"]) == 1
 
-    # 2 prises contre le mur du haut, de part et d'autre du lit (x 40..160)
+    # 2 prises contre le mur du haut, de part et d'autre du lit (x 40..160),
+    # flanquant le lit JUSTE AU-DELÀ de ses extrémités (pas sur les coins).
     head_sockets = sorted([p for p in g["Prise"] if p.y < 60], key=lambda p: p.x)
     assert len(head_sockets) == 2
-    assert head_sockets[0].x < 60          # côté gauche du lit
-    assert head_sockets[1].x > 140         # côté droit du lit
+    assert head_sockets[0].x < 40          # au-delà du bord gauche du lit (x=40)
+    assert head_sockets[1].x > 160         # au-delà du bord droit du lit (x=160)
     for s in head_sockets:
         assert s.y <= 25                   # plaquées au mur du haut (inset)
 
