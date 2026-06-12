@@ -602,13 +602,18 @@ def _build_bedroom_layout_index(seg_result, df_devis, pastilles_by_room,
     appelle le moteur de placement (lit + porte + murs) et accumule un index
     {(room_label, equip_key, idx) -> PlacedEquipment}. Les pièces sans spec
     (toutes sauf BedRoom au pilote) sont ignorées → l'appelant garde l'ancien
-    placement. Retourne {} si la segmentation est absente.
+    placement.
+
+    Retourne un tuple ``(index, bedroom_rooms)`` où ``bedroom_rooms`` est
+    l'ensemble des ``room_label`` dont le polygone seg est de type BedRoom
+    (collecté même pour les chambres n'ayant produit aucune entrée d'index).
+    Retourne ``({}, set())`` si la segmentation est absente.
     """
     from src.planrec.placement.contracts import Detection, RoomContext
     from src.planrec.placement.adapter import build_room_layout_index
 
     if seg_result is None:
-        return {}
+        return {}, set()
     counts_by_room: dict[str, dict[str, int]] = {}
     for li in df_devis.index:
         room = str(df_devis.at[li, "Pièce"])
@@ -628,16 +633,18 @@ def _build_bedroom_layout_index(seg_result, df_devis, pastilles_by_room,
                 for d in (doors or [])]
 
     index: dict = {}
+    bedroom_rooms: set[str] = set()
     for room_label, center in pastilles_by_room.items():
         seg_room = _match_seg_room(seg_result, center)
         if seg_room is None or seg_room.type != "BedRoom":
             continue
+        bedroom_rooms.add(room_label)
         poly = [(int(p[0]), int(p[1])) for p in seg_room.polygon]
         ctx = RoomContext(room_type="BedRoom", polygon=poly,
                           furniture=furn, openings=openings, wall_lines=[])
         index.update(build_room_layout_index(
             room_label, ctx, counts_by_room.get(room_label, {})))
-    return index
+    return index, bedroom_rooms
 
 
 def _make_smart_placer(
@@ -645,6 +652,7 @@ def _make_smart_placer(
     image_size: tuple[int, int],
     pastilles_by_room: dict[str, tuple[int, int]],
     bedroom_layout_index: dict | None = None,
+    bedroom_rooms: set | None = None,
 ):
     """Build a smart_placer(equip_type, room, idx, n_of_type) → (x, y) callback.
 
@@ -684,8 +692,12 @@ def _make_smart_placer(
         pe = layout_index.get((room, equip_type, idx))
         if pe is not None:
             return (pe.x, pe.y)
+        # Placement polygone/périmètre réservé aux CHAMBRES. Toutes les autres
+        # pièces → cluster simple autour de la pastille. bedroom_rooms=None
+        # (2e site d'appel) préserve l'ancien comportement (toutes éligibles).
+        is_bedroom = bedroom_rooms is None or room in bedroom_rooms
         polygon = poly_by_room.get(room)
-        if polygon and len(polygon) >= 3:
+        if is_bedroom and polygon and len(polygon) >= 3:
             return smart_placement_with_polygon(
                 equip_type=equip_type,
                 polygon=polygon,
@@ -695,6 +707,7 @@ def _make_smart_placer(
                 instance_index=idx,
                 n_of_type=n_of_type,
             )
+        # non-chambre (ou chambre sans polygone) → cluster simple autour pastille
         center = pastilles_by_room.get(
             room, (image_size[0] // 2, image_size[1] // 2),
         )
@@ -714,6 +727,59 @@ def _make_smart_placer(
     return placer
 
 
+def _bedroom_debug_records(seg_result, df_devis, pastilles_by_room, raw_furniture, doors):
+    """Détails géométriques par chambre, pour le panneau debug."""
+    from src.planrec.placement.contracts import Detection, RoomContext
+    from src.planrec.placement.resolver import place_room
+    from src.planrec.placement import geometry as _geo
+    if seg_result is None:
+        return []
+    counts_by_room = {}
+    for li in df_devis.index:
+        room = str(df_devis.at[li, "Pièce"])
+        label = str(df_devis.at[li, "Équipement"])
+        equip = _DEVIS_LABEL_TO_EQUIP_TYPE.get(label)
+        if equip is None:
+            continue
+        counts_by_room.setdefault(room, {})[equip] = int(df_devis.at[li, "Qté"])
+    furn = [Detection(b["class_name"], (int(b["x1"]), int(b["y1"]), int(b["x2"]), int(b["y2"])), b["confidence"]) for b in (raw_furniture or [])]
+    openings = [Detection(d["class_name"], (int(d["x1"]), int(d["y1"]), int(d["x2"]), int(d["y2"])), d["confidence"]) for d in (doors or [])]
+    records = []
+    for room_label, center in pastilles_by_room.items():
+        seg_room = _match_seg_room(seg_result, center)
+        if seg_room is None or seg_room.type != "BedRoom":
+            continue
+        poly = [(int(p[0]), int(p[1])) for p in seg_room.polygon]
+        ctx = RoomContext(room_type="BedRoom", polygon=poly, furniture=furn, openings=openings, wall_lines=[])
+        # géométrie clé
+        edges = _geo.room_edges(poly)
+        bed = max((d for d in furn if d.cls in {"Bed", "Double Bed", "Single Bed"}),
+                  key=lambda d: d.confidence, default=None)
+        # CAVEAT : `furn` est GLOBAL (comme dans _build_bedroom_layout_index) →
+        # le resolver prend le lit le + confiant de TOUT le plan, donc un lit
+        # de la chambre 2 peut servir la chambre 1. On le surface tel quel ici
+        # pour que le debug reflète fidèlement le comportement réel.
+        head = None
+        if bed is not None:
+            hw = _geo.bed_head_wall(bed.bbox, edges)
+            head = {"a": hw.a, "b": hw.b, "orientation": hw.orientation}
+        placed = place_room(ctx, counts_by_room.get(room_label, {}))
+        records.append({
+            "chambre": room_label,
+            "polygone_bbox": [min(p[0] for p in poly), min(p[1] for p in poly),
+                              max(p[0] for p in poly), max(p[1] for p in poly)],
+            "n_sommets_polygone": len(poly),
+            "lit_bbox": list(bed.bbox) if bed else None,
+            "lit_largeur_hauteur": ([bed.bbox[2]-bed.bbox[0], bed.bbox[3]-bed.bbox[1]] if bed else None),
+            "mur_tete_de_lit": head,
+            "counts": counts_by_room.get(room_label, {}),
+            "equipements_places": [
+                {"type": p.equip_key, "x": p.x, "y": p.y,
+                 "uncertain": p.uncertain, "reason": p.reason} for p in placed],
+        })
+    return records
+
+
 def main():
     st.set_page_config(
         page_title="batIA — Détection de pièces",
@@ -731,6 +797,7 @@ def main():
     show_doors = False
     show_windows = False
     show_walls_overlay = False
+    show_placement_debug = False
     with st.sidebar:
         st.header("Plan d'entrée")
 
@@ -875,6 +942,10 @@ def main():
             help="Superpose les segments de murs (masque Wall du modèle) sur "
                  "le plan en overlay SVG magenta. Indépendant du snap-to-walls.",
             disabled=not enable_segmentation,
+        )
+        show_placement_debug = st.checkbox(
+            "🔬 Debug placement (chambres)", value=False,
+            help="Affiche la géométrie utilisée par le moteur de placement.",
         )
         wall_algorithm = st.selectbox(
             "Algorithme d'extraction de lignes",
@@ -1807,17 +1878,18 @@ def main():
             # Source du Bed : boxes BRUTES en session (non filtrées par les
             # cases à cocher de l'overlay) — yolo_boxes peut exclure le Bed.
             _raw_furn = st.session_state.get(f"yolo_raw_boxes_{img_hash}", [])
-            _bedroom_index = (
-                _build_bedroom_layout_index(
+            if enable_segmentation:
+                _bedroom_index, _bedroom_rooms = _build_bedroom_layout_index(
                     result, _df_devis, _pastilles_by_room, _raw_furn, _doors)
-                if enable_segmentation else {}
-            )
+            else:
+                _bedroom_index, _bedroom_rooms = {}, set()
 
             _placer = _make_smart_placer(
                 seg_result=result if enable_segmentation else None,
                 image_size=(image_w, image_h),
                 pastilles_by_room=_pastilles_by_room,
                 bedroom_layout_index=_bedroom_index,
+                bedroom_rooms=_bedroom_rooms,
             )
 
             # Réconciliation : itère chaque ligne devis, conserve les
@@ -1885,6 +1957,8 @@ def main():
             st.session_state[devis_lines_key] = _df_devis
             st.session_state[devis_lines_nid_key] = _next_id_after
             st.session_state[equipments_state_key] = _current_eq
+            # Persiste pour le panneau debug placement (scope outer).
+            st.session_state[f"pastilles_by_room_{img_hash}"] = _pastilles_by_room
             if _old_ids != _new_ids:
                 st.session_state[f"_eq_just_populated_{img_hash}"] = True
 
@@ -1897,6 +1971,39 @@ def main():
             _wm = cv2.imread(str(_wm_path), cv2.IMREAD_GRAYSCALE)
             if _wm is not None and _wm.max() > 0:
                 _wall_overlay_lines = extract_wall_lines(_wm)
+        # Le mask seg murs est souvent vide sur plans FR (Wall non annoté) →
+        # fallback extraction image (Canny+Hough) pour qu'un overlay s'affiche.
+        if not _wall_overlay_lines:
+            _wall_overlay_lines = extract_lines_from_image(image_bgr)
+        st.caption(f"🧱 Murs overlay : {len(_wall_overlay_lines)} segments")
+
+    # Panneau debug placement (chambres) — récupère df_devis / pastilles depuis
+    # la session (ils ne sont définis qu'à l'intérieur du bloc devis ci-dessus).
+    if show_placement_debug:
+        with st.expander("🔬 Debug placement (chambres)", expanded=True):
+            _raw_furn_dbg = st.session_state.get(f"yolo_raw_boxes_{img_hash}", [])
+            _doors_dbg = st.session_state.get(f"doors_{img_hash}", [])
+            st.write({
+                "murs_overlay_actif": bool(show_walls_overlay),
+                "segments_murs_extraits": len(_wall_overlay_lines),
+                "n_furniture_brut": len(_raw_furn_dbg),
+                "n_portes_fenetres": len(_doors_dbg),
+            })
+            try:
+                _df_devis_dbg = st.session_state.get(f"devis_lines_{img_hash}")
+                _pastilles_dbg = st.session_state.get(
+                    f"pastilles_by_room_{img_hash}", {})
+                if _df_devis_dbg is None or not _pastilles_dbg:
+                    st.info(
+                        "Génère le devis (et active la segmentation) pour "
+                        "peupler les détails de placement.")
+                else:
+                    _recs = _bedroom_debug_records(
+                        result if enable_segmentation else None,
+                        _df_devis_dbg, _pastilles_dbg, _raw_furn_dbg, _doors_dbg)
+                    st.json(_recs)
+            except Exception as _e:
+                st.warning(f"debug indisponible: {_e}")
 
     # On envoie TOUJOURS l'état complet à React (source de vérité Python).
     # L'affichage est contrôlé via equip_visible_types : la liste vide
