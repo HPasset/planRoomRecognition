@@ -580,10 +580,71 @@ def _find_devis_line_idx(
     return matches.index[0]
 
 
+def _match_seg_room(seg_result, center: tuple[int, int]):
+    """Retourne la RoomDetection dont le polygone contient `center`, sinon None."""
+    if seg_result is None or not getattr(seg_result, "rooms", None):
+        return None
+    for sr in seg_result.rooms:
+        poly = [(int(p[0]), int(p[1])) for p in sr.polygon]
+        if len(poly) < 3:
+            continue
+        if cv2.pointPolygonTest(np.array(poly, np.int32),
+                                (float(center[0]), float(center[1])), False) >= 0:
+            return sr
+    return None
+
+
+def _build_bedroom_layout_index(seg_result, df_devis, pastilles_by_room,
+                                raw_furniture, doors):
+    """Construit l'index de placement intelligent pour les CHAMBRES détectées.
+
+    Pour chaque pièce dont le polygone de segmentation est de type BedRoom,
+    appelle le moteur de placement (lit + porte + murs) et accumule un index
+    {(room_label, equip_key, idx) -> PlacedEquipment}. Les pièces sans spec
+    (toutes sauf BedRoom au pilote) sont ignorées → l'appelant garde l'ancien
+    placement. Retourne {} si la segmentation est absente.
+    """
+    from src.planrec.placement.contracts import Detection, RoomContext
+    from src.planrec.placement.adapter import build_room_layout_index
+
+    if seg_result is None:
+        return {}
+    counts_by_room: dict[str, dict[str, int]] = {}
+    for li in df_devis.index:
+        room = str(df_devis.at[li, "Pièce"])
+        label = str(df_devis.at[li, "Équipement"])
+        equip = _DEVIS_LABEL_TO_EQUIP_TYPE.get(label)
+        if equip is None:
+            continue
+        counts_by_room.setdefault(room, {})[equip] = int(df_devis.at[li, "Qté"])
+
+    furn = [Detection(b["class_name"],
+                      (int(b["x1"]), int(b["y1"]), int(b["x2"]), int(b["y2"])),
+                      b["confidence"])
+            for b in (raw_furniture or [])]
+    openings = [Detection(d["class_name"],
+                          (int(d["x1"]), int(d["y1"]), int(d["x2"]), int(d["y2"])),
+                          d["confidence"])
+                for d in (doors or [])]
+
+    index: dict = {}
+    for room_label, center in pastilles_by_room.items():
+        seg_room = _match_seg_room(seg_result, center)
+        if seg_room is None or seg_room.type != "BedRoom":
+            continue
+        poly = [(int(p[0]), int(p[1])) for p in seg_room.polygon]
+        ctx = RoomContext(room_type="BedRoom", polygon=poly,
+                          furniture=furn, openings=openings, wall_lines=[])
+        index.update(build_room_layout_index(
+            room_label, ctx, counts_by_room.get(room_label, {})))
+    return index
+
+
 def _make_smart_placer(
     seg_result,
     image_size: tuple[int, int],
     pastilles_by_room: dict[str, tuple[int, int]],
+    bedroom_layout_index: dict | None = None,
 ):
     """Build a smart_placer(equip_type, room, idx, n_of_type) → (x, y) callback.
 
@@ -617,7 +678,12 @@ def _make_smart_placer(
                     poly_by_room[room_label] = poly
                     break
 
+    layout_index = bedroom_layout_index or {}
+
     def placer(equip_type: str, room: str, idx: int, n_of_type: int):
+        pe = layout_index.get((room, equip_type, idx))
+        if pe is not None:
+            return (pe.x, pe.y)
         polygon = poly_by_room.get(room)
         if polygon and len(polygon) >= 3:
             return smart_placement_with_polygon(
@@ -1529,6 +1595,19 @@ def main():
             )
         else:
             raw_boxes = run_yolo_brique_a(img_bytes, yolo_conf_threshold)
+            # Stocke les boxes BRUTES (non filtrées par yolo_allowed_classes)
+            # pour le moteur de placement chambre : le Bed peut être décoché
+            # par l'utilisateur dans l'overlay visuel, mais le placement en a
+            # besoin. yolo_boxes (filtré) ne convient donc pas comme source.
+            st.session_state[f"yolo_raw_boxes_{img_hash}"] = [
+                {
+                    "class_name": b["class_name"],
+                    "x1": int(b["x1"]), "y1": int(b["y1"]),
+                    "x2": int(b["x2"]), "y2": int(b["y2"]),
+                    "confidence": float(b["confidence"]),
+                }
+                for b in raw_boxes
+            ]
             # Détection portes/fenêtres (modèle séparé) — alimente le placement
             # intelligent. Checkpoint .pt gitignored : skip discret si absent
             # (pas de crash), le placement retombera sur sa dégradation porte.
@@ -1688,10 +1767,21 @@ def main():
                 _pid_to_devis_room
             )
 
+            _doors = st.session_state.get(f"doors_{img_hash}", [])
+            # Source du Bed : boxes BRUTES en session (non filtrées par les
+            # cases à cocher de l'overlay) — yolo_boxes peut exclure le Bed.
+            _raw_furn = st.session_state.get(f"yolo_raw_boxes_{img_hash}", [])
+            _bedroom_index = (
+                _build_bedroom_layout_index(
+                    result, _df_devis, _pastilles_by_room, _raw_furn, _doors)
+                if enable_segmentation else {}
+            )
+
             _placer = _make_smart_placer(
                 seg_result=result if enable_segmentation else None,
                 image_size=(image_w, image_h),
                 pastilles_by_room=_pastilles_by_room,
+                bedroom_layout_index=_bedroom_index,
             )
 
             # Réconciliation : itère chaque ligne devis, conserve les
@@ -1729,6 +1819,21 @@ def main():
                 _e for _e in _current_eq
                 if (_e["room"], _e["type"]) in _valid_rooms_types
             ]
+
+            # Propage le flag `uncertain` du moteur de placement vers les
+            # instances, par position ordinale dans chaque (pièce, type).
+            # Ne concerne QUE les pièces passées par le moteur (chambres) :
+            # les autres restent uncertain=False. NB : ce bloc ne tourne qu'à
+            # la (re)génération du devis ; un drag manuel ultérieur efface le
+            # flag côté canvas (cf composant). TODO: re-vérifier si le moteur
+            # gagne d'autres types de pièces.
+            _seen: dict[tuple[str, str], int] = {}
+            for _e in _current_eq:
+                _key2 = (_e["room"], _e["type"])
+                _i2 = _seen.get(_key2, 0)
+                _seen[_key2] = _i2 + 1
+                _pe = _bedroom_index.get((_e["room"], _e["type"], _i2))
+                _e["uncertain"] = bool(_pe.uncertain) if _pe is not None else False
 
             for _line_idx, _ids in _ids_by_line.items():
                 _df_devis.at[_line_idx, "_equip_ids"] = _ids

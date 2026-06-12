@@ -23,6 +23,7 @@ class EquipmentInstance(TypedDict):
     x: int         # px image originale
     y: int
     color: str     # CSS color
+    uncertain: bool  # placement auto à re-vérifier (halo orange)
 
 
 # Mapping label devis (FR) + couleur (CSS) + svg_id (pour le composant React)
@@ -125,6 +126,7 @@ def generate_equipments_from_devis_global(
                     "x": 0,
                     "y": 0,
                     "color": color,
+                    "uncertain": False,
                 })
     return instances
 
@@ -296,6 +298,7 @@ def reconcile_equipments_for_line(
                 "x": x,
                 "y": y,
                 "color": color,
+                "uncertain": False,
             })
     else:
         keep = line_existing[:new_qty]
