@@ -632,6 +632,12 @@ def _build_bedroom_layout_index(seg_result, df_devis, pastilles_by_room,
                           d["confidence"])
                 for d in (doors or [])]
 
+    def _inside(det: "Detection", contour) -> bool:
+        # centre de la bbox dans le polygone de la pièce
+        cx = (det.bbox[0] + det.bbox[2]) / 2.0
+        cy = (det.bbox[1] + det.bbox[3]) / 2.0
+        return cv2.pointPolygonTest(contour, (cx, cy), False) >= 0
+
     index: dict = {}
     bedroom_rooms: set[str] = set()
     for room_label, center in pastilles_by_room.items():
@@ -640,8 +646,14 @@ def _build_bedroom_layout_index(seg_result, df_devis, pastilles_by_room,
             continue
         bedroom_rooms.add(room_label)
         poly = [(int(p[0]), int(p[1])) for p in seg_room.polygon]
+        # Filtre le mobilier/ouvertures à CETTE pièce (centre bbox dans le
+        # polygone) : sinon le resolver prendrait le lit le plus confiant
+        # toutes pièces confondues (une chambre emprunterait le lit d'une autre).
+        _contour = np.array(poly, np.int32)
+        _furn_room = [d for d in furn if _inside(d, _contour)]
+        _open_room = [d for d in openings if _inside(d, _contour)]
         ctx = RoomContext(room_type="BedRoom", polygon=poly,
-                          furniture=furn, openings=openings, wall_lines=[])
+                          furniture=_furn_room, openings=_open_room, wall_lines=[])
         index.update(build_room_layout_index(
             room_label, ctx, counts_by_room.get(room_label, {})))
     return index, bedroom_rooms
@@ -750,15 +762,22 @@ def _bedroom_debug_records(seg_result, df_devis, pastilles_by_room, raw_furnitur
         if seg_room is None or seg_room.type != "BedRoom":
             continue
         poly = [(int(p[0]), int(p[1])) for p in seg_room.polygon]
-        ctx = RoomContext(room_type="BedRoom", polygon=poly, furniture=furn, openings=openings, wall_lines=[])
+        # Filtre mobilier/ouvertures à CETTE pièce (idem _build_bedroom_layout_index)
+        _contour = np.array(poly, np.int32)
+
+        def _inside(det):
+            cx = (det.bbox[0] + det.bbox[2]) / 2.0
+            cy = (det.bbox[1] + det.bbox[3]) / 2.0
+            return cv2.pointPolygonTest(_contour, (cx, cy), False) >= 0
+
+        furn_room = [d for d in furn if _inside(d)]
+        open_room = [d for d in openings if _inside(d)]
+        ctx = RoomContext(room_type="BedRoom", polygon=poly,
+                          furniture=furn_room, openings=open_room, wall_lines=[])
         # géométrie clé
         edges = _geo.room_edges(poly)
-        bed = max((d for d in furn if d.cls in {"Bed", "Double Bed", "Single Bed"}),
+        bed = max((d for d in furn_room if d.cls in {"Bed", "Double Bed", "Single Bed"}),
                   key=lambda d: d.confidence, default=None)
-        # CAVEAT : `furn` est GLOBAL (comme dans _build_bedroom_layout_index) →
-        # le resolver prend le lit le + confiant de TOUT le plan, donc un lit
-        # de la chambre 2 peut servir la chambre 1. On le surface tel quel ici
-        # pour que le debug reflète fidèlement le comportement réel.
         head = None
         if bed is not None:
             hw = _geo.bed_head_wall(bed.bbox, edges)
