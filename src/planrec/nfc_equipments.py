@@ -289,7 +289,11 @@ def reconcile_equipments_for_line(
         n_to_add = new_qty - len(line_existing)
         color = EQUIP_TYPES[line_type]["color"]
         for i in range(n_to_add):
-            idx_in_type = len(keep) + i
+            # idx_in_type = rang de l'instance dans son type = nb d'instances
+            # DÉJÀ existantes avant cette boucle + i. NB : ne pas utiliser
+            # len(keep), qui grossit à chaque append → on sauterait un index sur
+            # deux (0,2,4…) et une position du moteur ne serait jamais demandée.
+            idx_in_type = len(line_existing) + i
             x, y = smart_placer(line_type, line_room, idx_in_type, new_qty)
             keep.append({
                 "id": generate_equipment_id(),

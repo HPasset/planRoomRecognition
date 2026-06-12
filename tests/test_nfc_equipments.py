@@ -69,11 +69,15 @@ def test_generate_equipments_from_devis_simple():
 
 
 def test_generate_equipments_kitchen_qty_explodes():
-    """Cuisine NFC sur le canvas : 6 prises + 1 lum + 1 inter.
+    """Cuisine NFC sur le canvas : 9 prises + 1 lum + 1 inter.
 
-    Les sous-types V1.2 (Four, Plaque, LV) sont dans devis.items mais
-    MASQUÉS sur le canvas (cf. CANVAS_HIDDEN_EQUIP_KEYS) — ils n'apparaissent
-    pas comme pastilles sur le plan.
+    Détail des 9 prises : 6 prises normales (dont 4 au-dessus plan travail)
+    + 3 alimentations spécialisées (Plaque/Four/LV) que l'artisan pose même
+    si l'occupant fournit l'appareil. Cf. retour métier 2026-06-03.
+
+    Les sous-types V1.2 (Four, Plaque, LV) sont dans devis.items pour
+    alimenter le tableau électrique (1 circuit dédié chacun), mais MASQUÉS
+    sur le canvas (cf. CANVAS_HIDDEN_EQUIP_KEYS).
     """
     from src.planrec.nfc_rules import compute_devis_global
 
@@ -86,8 +90,8 @@ def test_generate_equipments_kitchen_qty_explodes():
     type_counts: dict[str, int] = {}
     for inst in instances:
         type_counts[inst["type"]] = type_counts.get(inst["type"], 0) + 1
-    # Pastilles visibles : 6 prises + 1 lum + 1 interrupteur en cuisine NFC
-    assert type_counts.get("Prise", 0) >= 6
+    # Pastilles visibles : 9 prises + 1 lum + 1 interrupteur en cuisine NFC
+    assert type_counts.get("Prise", 0) == 9
     assert type_counts.get("LightPoint", 0) >= 1
     assert type_counts.get("Switch", 0) >= 1
     # Sous-types V1.2 masqués du canvas (présents dans devis.items côté NFC
@@ -237,6 +241,34 @@ def test_reconcile_add_when_qty_increases():
     assert len(line_instances) == 5
     assert len(line_ids) == 5
     assert len(placer_calls) == 3
+    # Les index demandés au placer doivent suivre le rang d'instance : 2 déjà
+    # présentes → on demande 2, 3, 4 (et SURTOUT pas 2, 4, 6 : un index sauté
+    # ferait perdre une position du moteur de placement).
+    assert [c[2] for c in placer_calls] == [2, 3, 4]
+
+
+def test_reconcile_fresh_requests_consecutive_indices_from_zero():
+    """État vide, Qté 3 : le placer est appelé sur idx 0,1,2 — aucun sauté.
+
+    Régression : `idx = len(keep)+i` (keep grandit à chaque append) produisait
+    0,2,4 → l'idx 1 du moteur n'était jamais demandé et une prise disparaissait
+    (chevet haut de la Chambre 2 introuvable sur le canvas).
+    """
+    placer_calls = []
+    def fake_placer(typ, room, idx, n):
+        placer_calls.append(idx)
+        return (idx, idx)
+
+    new_state, line_ids = reconcile_equipments_for_line(
+        current_state=[],
+        line_room="Chambre 2",
+        line_type="Prise",
+        new_qty=3,
+        smart_placer=fake_placer,
+    )
+    assert placer_calls == [0, 1, 2]
+    assert len(line_ids) == 3
+    assert sorted((i["x"], i["y"]) for i in new_state) == [(0, 0), (1, 1), (2, 2)]
 
 
 def test_reconcile_remove_when_qty_decreases():
@@ -414,32 +446,40 @@ def test_circuit_only_equipment_types_contains_oven_cooktop_convector():
     assert EquipmentType.CONVECTOR in CIRCUIT_ONLY_EQUIPMENT_TYPES
 
 
-def test_circuit_only_excludes_dishwasher_washing_machine_boiler():
-    """Lave-vaisselle, Lave-linge, Sèche-linge, Chaudière restent facturés
-    (l'artisan pose ces équipements). Le Sèche-serviettes a été ajouté en
-    circuit-only le 2026-06-02 sur retour métier (fourni par l'occupant)."""
+def test_circuit_only_excludes_billable_artisan_equipment():
+    """Les types posés par l'artisan (prises, points lumineux, interrupteurs,
+    RJ45) restent facturés. Tous les appareils électroménagers / chauffage
+    fournis par l'occupant sont circuit-only (présents dans le tableau
+    électrique, hors devis facturable)."""
     from src.planrec.nfc_rules import (
         CIRCUIT_ONLY_EQUIPMENT_TYPES,
         EquipmentType,
     )
     for keep in (
-        EquipmentType.DISHWASHER,
-        EquipmentType.WASHING_MACHINE,
-        EquipmentType.DRYER,
-        EquipmentType.BOILER,
         EquipmentType.SOCKET,
         EquipmentType.LIGHT_POINT,
         EquipmentType.SWITCH,
         EquipmentType.RJ45,
     ):
         assert keep not in CIRCUIT_ONLY_EQUIPMENT_TYPES
-    # TOWEL_WARMER désormais circuit-only
-    assert EquipmentType.TOWEL_WARMER in CIRCUIT_ONLY_EQUIPMENT_TYPES
+    # Types circuit-only : appareils fournis par l'occupant
+    for hidden in (
+        EquipmentType.OVEN,
+        EquipmentType.COOKTOP,
+        EquipmentType.DISHWASHER,
+        EquipmentType.WASHING_MACHINE,
+        EquipmentType.DRYER,
+        EquipmentType.BOILER,
+        EquipmentType.CONVECTOR,
+        EquipmentType.TOWEL_WARMER,
+    ):
+        assert hidden in CIRCUIT_ONLY_EQUIPMENT_TYPES
 
 
 def test_build_devis_lines_initial_filters_circuit_only_types():
-    """build_devis_lines_initial() doit exclure les lignes Four/Plaque/Convecteur
-    mais conserver les équipements posés par l'artisan + les autres spécialisés."""
+    """build_devis_lines_initial() doit exclure tous les équipements fournis
+    par l'occupant (Four/Plaque/LV/LL/SL/Chaudière/Convecteur/Sèche-serv) mais
+    conserver les équipements posés par l'artisan."""
     from app.streamlit_app import build_devis_lines_initial
     from src.planrec.nfc_pricing import DEFAULT_PRICES_HT
     from src.planrec.nfc_rules import compute_devis_global
@@ -447,19 +487,26 @@ def test_build_devis_lines_initial_filters_circuit_only_types():
     rooms = [
         {"id": "K1", "c2_class": "Kitchen"},
         {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "S1", "c2_class": "Bath"},
+        {"id": "C1", "c2_class": "Storage"},
     ]
     devis = compute_devis_global(rooms, heating_enabled=True)
     lines, _ = build_devis_lines_initial(devis, DEFAULT_PRICES_HT)
     labels = {line["Équipement"] for line in lines}
 
-    # Hors devis facturable
+    # Hors devis facturable (fournis par l'occupant)
     assert "Four" not in labels
     assert "Plaque de cuisson" not in labels
+    assert "Lave-vaisselle" not in labels
+    assert "Lave-linge" not in labels
+    assert "Sèche-linge" not in labels
+    assert "Chaudière/cumulus" not in labels
     assert "Convecteur" not in labels
+    assert "Sèche-serviettes" not in labels
     # Conservés (artisan pose)
-    assert "Lave-vaisselle" in labels
     assert "Prise de courant" in labels
     assert "Point lumineux" in labels
+    assert "Interrupteur" in labels
 
 
 def test_canvas_hidden_equip_keys_contains_all_v12_subtypes():
