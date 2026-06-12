@@ -122,10 +122,14 @@ def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
     if a.kind == "adjacent":
         ref = by_id.get(a.ref)
         if ref is not None:
-            if head_wall is not None:
+            if head_wall is not None and bed is not None:
                 ux, uy = head_wall.unit_dir()
-                # le long du mur, vers l'intérieur de la pièce (centroïde)
-                if (centroid[0] - ref.x) * ux + (centroid[1] - ref.y) * uy < 0:
+                # le long du mur, vers l'EXTÉRIEUR du lit (côté opposé au lit),
+                # pour ne pas se retrouver sur le matelas. Direction = depuis le
+                # centre du lit vers la prise de réf, prolongée.
+                bcx = (bed.bbox[0] + bed.bbox[2]) / 2.0
+                bcy = (bed.bbox[1] + bed.bbox[3]) / 2.0
+                if (ref.x - bcx) * ux + (ref.y - bcy) * uy < 0:
                     ux, uy = -ux, -uy
                 x = int(round(ref.x + ux * ACCOLE_GAP))
                 y = int(round(ref.y + uy * ACCOLE_GAP))

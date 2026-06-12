@@ -40,10 +40,12 @@ def test_full_bedroom_layout():
     assert far[0].y >= 175
     assert abs(far[0].x - 100) <= 25
 
-    # RJ45 accolée à une prise tête-de-lit
+    # RJ45 accolée à une prise tête-de-lit, mais côté EXTÉRIEUR du lit
+    # (hors de l'emprise x du lit 40..160, pas sur le matelas).
     rj = g["RJ45"][0]
     dists = [((rj.x - s.x) ** 2 + (rj.y - s.y) ** 2) ** 0.5 for s in head_sockets]
     assert min(dists) <= 30
+    assert rj.x < 40 or rj.x > 160
 
     # interrupteur côté porte (bas, vers x=150)
     sw = g["Switch"][0]
