@@ -58,9 +58,16 @@ def place_room(ctx: RoomContext, counts: dict[str, int]) -> list[PlacedEquipment
     if abs(area2) < 1.0:   # aire ~nulle → polygone dégénéré, on n'invente pas de positions
         return []
 
+    bed = _find(ctx.furniture, {"Bed", "Double Bed", "Single Bed"})
+    if bed is None:
+        # Sans lit détecté, le moteur chambre n'a aucune valeur ajoutée (tout
+        # son placement est relatif au lit). Il décline → l'appelant retombe
+        # sur le placement périmétrique propre de la pièce (réparti sur les
+        # murs + lumière au centre) plutôt que d'entasser une dégradation.
+        return []
+
     edges = g.room_edges(ctx.polygon)
     centroid = g.polygon_centroid(ctx.polygon)
-    bed = _find(ctx.furniture, {"Bed", "Double Bed", "Single Bed"})
     door = _find(ctx.openings, {"door", "Door", "Single Door", "Double Door"})
 
     head_wall = g.bed_head_wall(bed.bbox, edges) if bed else None

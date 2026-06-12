@@ -65,14 +65,13 @@ def test_full_bedroom_layout():
             assert p.uncertain is False
 
 
-def test_missing_bed_falls_back_and_marks_uncertain():
+def test_missing_bed_declines_so_caller_falls_back_to_perimeter():
+    # Sans lit, le moteur chambre décline (retourne []) : l'appelant retombe
+    # sur le placement périmétrique propre de la pièce plutôt qu'une
+    # dégradation entassée.
     ctx = RoomContext(room_type="BedRoom", polygon=POLY,
                       furniture=[], openings=[DOOR])
-    placed = place_room(ctx, COUNTS)
-    sockets = [p for p in placed if p.equip_key == "Prise"]
-    assert len(sockets) == 3
-    # sans lit, les prises tête-de-lit sont incertaines
-    assert any(p.uncertain for p in sockets)
+    assert place_room(ctx, COUNTS) == []
 
 
 def test_missing_door_marks_switch_uncertain():
