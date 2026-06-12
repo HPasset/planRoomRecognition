@@ -61,6 +61,7 @@ def pastille_canvas(
     equip_palette: list[dict] | None = None,
     equip_visible_types: list[str] | None = None,
     pastille_to_devis_room: dict[str, str] | None = None,
+    wall_lines: list | None = None,
     key: str | None = None,
 ) -> dict | None:
     """Render le canvas pastilles + palette.
@@ -86,6 +87,10 @@ def pastille_canvas(
         equip_palette: optionnel, liste de dicts {type, label, color, svg_id}
             décrivant les types d'équipements disponibles dans la palette
             sous le canvas.
+        wall_lines: optionnel, liste de [x1, y1, x2, y2] (ou tuples) en
+            coordonnées image originale. Dessinés en overlay SVG comme segments
+            magenta (stroke rgba(217,70,239,0.9)) non interactifs, sous les
+            pastilles. Typiquement issu de extract_wall_lines(wall_mask).
         key: clé Streamlit unique pour le component
 
     Returns:
@@ -118,6 +123,7 @@ def pastille_canvas(
         equip_palette=equip_palette or [],
         equip_visible_types=equip_visible_types,
         pastille_to_devis_room=pastille_to_devis_room or {},
+        wall_lines=[list(seg) for seg in (wall_lines or [])],
         key=key,
         default=None,
     )

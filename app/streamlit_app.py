@@ -727,6 +727,10 @@ def main():
     )
 
     # --- Sidebar ---
+    # Defaults pour les toggles overlay (redéfinis dans la sidebar ci-dessous)
+    show_doors = False
+    show_windows = False
+    show_walls_overlay = False
     with st.sidebar:
         st.header("Plan d'entrée")
 
@@ -866,6 +870,12 @@ def main():
             help="Dessine les lignes de murs extraites en magenta vif sur "
                  "l'overlay. Utile pour comprendre ce que le snap utilise."
         )
+        show_walls_overlay = st.checkbox(
+            "Afficher les murs détectés", value=False,
+            help="Superpose les segments de murs (masque Wall du modèle) sur "
+                 "le plan en overlay SVG magenta. Indépendant du snap-to-walls.",
+            disabled=not enable_segmentation,
+        )
         wall_algorithm = st.selectbox(
             "Algorithme d'extraction de lignes",
             options=["hough", "lsd"],
@@ -948,6 +958,8 @@ def main():
         yolo_class_checks: dict[str, bool] = {
             name: True for name in BATIA_YOLO_CLASSES
         }
+        show_doors = False
+        show_windows = False
         if enable_yolo:
             yolo_conf_threshold = st.slider(
                 "Seuil confiance YOLO", 0.05, 1.0, 0.25, 0.05,
@@ -960,6 +972,9 @@ def main():
                     yolo_class_checks[cls_name] = st.checkbox(
                         cls_name, value=True, key=f"yolo_cls_{cls_name}"
                     )
+            st.markdown("**Ouvertures**")
+            show_doors = st.checkbox("Porte", value=True, key="ov_doors")
+            show_windows = st.checkbox("Fenêtre", value=True, key="ov_windows")
         yolo_allowed_classes = {n for n, on in yolo_class_checks.items() if on}
 
         # Équipements électriques : toujours auto-affichés sur le plan, tous
@@ -1630,6 +1645,27 @@ def main():
                 for b in raw_boxes
                 if b["class_name"] in yolo_allowed_classes
             ]
+            # Overlay portes/fenêtres — réutilise le même rendu SVG rect que
+            # les meubles YOLO, mais couleurs distinctes + labels FR.
+            _doors_det = st.session_state.get(f"doors_{img_hash}", [])
+            _OPENING_LABELS = {"door": "Porte", "window": "Fenêtre"}
+            _OPENING_COLORS = {
+                "door": "rgb(46, 204, 113)",
+                "window": "rgb(52, 152, 219)",
+            }
+            for _d in _doors_det:
+                _cls = _d["class_name"]
+                if _cls == "door" and not show_doors:
+                    continue
+                if _cls == "window" and not show_windows:
+                    continue
+                yolo_boxes.append({
+                    "class_name": _OPENING_LABELS.get(_cls, _cls),
+                    "x1": int(_d["x1"]), "y1": int(_d["y1"]),
+                    "x2": int(_d["x2"]), "y2": int(_d["y2"]),
+                    "confidence": round(float(_d["confidence"]), 2),
+                    "color": _OPENING_COLORS.get(_cls, "rgb(155,89,182)"),
+                })
 
     equipments_state_key = f"equipments_state_{img_hash}"
     if equipments_state_key not in st.session_state:
@@ -1852,6 +1888,16 @@ def main():
             if _old_ids != _new_ids:
                 st.session_state[f"_eq_just_populated_{img_hash}"] = True
 
+    # Overlay murs (indépendant du snap-to-walls) — segments [x1,y1,x2,y2]
+    # passés au canvas comme lignes SVG magenta non-interactives.
+    _wall_overlay_lines: list[tuple[int, int, int, int]] = []
+    if show_walls_overlay and enable_segmentation and result is not None:
+        _wm_path = Path(result.walls.mask_path)
+        if _wm_path.exists():
+            _wm = cv2.imread(str(_wm_path), cv2.IMREAD_GRAYSCALE)
+            if _wm is not None and _wm.max() > 0:
+                _wall_overlay_lines = extract_wall_lines(_wm)
+
     # On envoie TOUJOURS l'état complet à React (source de vérité Python).
     # L'affichage est contrôlé via equip_visible_types : la liste vide
     # cache tous les types, None (toggle off) cache aussi. Filtrer côté
@@ -1873,6 +1919,7 @@ def main():
         pastille_to_devis_room=st.session_state.get(
             f"pastille_to_devis_room_{img_hash}", {},
         ),
+        wall_lines=_wall_overlay_lines,
         key=f"pastille_canvas_{img_hash}_{st.session_state.get(f'canvas_reset_counter_{img_hash}', 0)}",
     )
 

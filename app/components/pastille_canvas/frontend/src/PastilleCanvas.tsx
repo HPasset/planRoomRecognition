@@ -81,6 +81,9 @@ interface Args {
   equip_palette?: EquipmentPaletteType[];
   equip_visible_types?: string[];
   pastille_to_devis_room?: Record<string, string>;
+  /** Segments de murs [[x1,y1,x2,y2], ...] en coord image originale (px).
+   *  Dessinés en overlay SVG magenta non-interactif, sous les pastilles. */
+  wall_lines?: number[][];
 }
 
 interface DropResult {
@@ -784,6 +787,7 @@ function PastilleCanvas({ args }: ComponentProps) {
     equip_palette,
     equip_visible_types,
     pastille_to_devis_room,
+    wall_lines,
   } = typedArgs;
 
   const [pastilles, setPastilles] = useState<Pastille[]>(initial_pastilles ?? []);
@@ -1133,6 +1137,37 @@ function PastilleCanvas({ args }: ComponentProps) {
                 </g>
               );
             })}
+          </svg>
+        )}
+        {/* SVG overlay murs détectés (masque Wall). Segments magenta non
+            interactifs, sous les pastilles. Même viewBox image px que YOLO. */}
+        {wall_lines && wall_lines.length > 0 && (
+          <svg
+            className="pc-walls-overlay"
+            viewBox={`0 0 ${image_width} ${image_height}`}
+            preserveAspectRatio="none"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              pointerEvents: "none",
+              zIndex: 0,
+            }}
+          >
+            {wall_lines.map((seg, idx) => (
+              <line
+                key={`wall_${idx}`}
+                x1={seg[0]}
+                y1={seg[1]}
+                x2={seg[2]}
+                y2={seg[3]}
+                stroke="rgba(217,70,239,0.9)"
+                strokeWidth={2}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
           </svg>
         )}
         {pastilles.map((p) => (
