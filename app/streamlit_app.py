@@ -1365,7 +1365,7 @@ def main():
 
     # Boutons d'action : Générer (pré-trigger) / Recalculer (post-trigger)
     # / Réinitialiser. Tous visibles ensemble, sémantiques selon état.
-    _b1, _b2, _ = st.columns([1.5, 1.5, 4.5])
+    _b1, _b2, _b3, _ = st.columns([1.5, 1.5, 2.0, 3.0])
     devis_state_key = f"devis_generated_{img_hash}"
     if devis_state_key not in st.session_state:
         st.session_state[devis_state_key] = True
@@ -1568,6 +1568,31 @@ def main():
             )
             # Garde _devis_triggered=True → l'OCR + auto-gen tournent au
             # prochain rerun, comme un clic 'Générer devis' fresh.
+            st.session_state[_devis_triggered_key] = True
+            st.rerun()
+    with _b3:
+        if st.button(
+            "♻️ Replacer équipements",
+            key=f"top_replace_equip_{img_hash}",
+            disabled=not _devis_triggered,
+            help="Recalcule la position de TOUS les équipements depuis le "
+                 "moteur (placement intelligent chambres), en gardant tes "
+                 "pastilles et le devis. À utiliser après une amélioration du "
+                 "placement ou pour repartir d'un placement propre. Efface les "
+                 "déplacements manuels d'équipements.",
+        ):
+            # Réconciliation = seul chemin qui (re)place les équipements, et il
+            # n'est rejoué que si devis_lines est absent (cf garde ligne ~1778)
+            # ET ne replace que si equipments_state est vide (sinon positions
+            # conservées). On force donc les deux, + re-mount du canvas (React
+            # owns positions : sans changement de `key`, les nouvelles
+            # positions ne seraient jamais affichées). Pastilles/éditeur gardés.
+            _trigger_devis_regen()
+            _eq_key = f"equipments_state_{img_hash}"
+            if _eq_key in st.session_state:
+                del st.session_state[_eq_key]
+            _rc_key = f"canvas_reset_counter_{img_hash}"
+            st.session_state[_rc_key] = st.session_state.get(_rc_key, 0) + 1
             st.session_state[_devis_triggered_key] = True
             st.rerun()
 
