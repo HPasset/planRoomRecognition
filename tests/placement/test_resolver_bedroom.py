@@ -66,11 +66,15 @@ def test_full_bedroom_layout():
             assert p.uncertain is False
 
 
-def test_corner_single_bed_sockets_on_free_side_not_in_blocked_corner():
-    # Lit UNE PLACE portrait dans le coin haut-droit : têtière contre le mur du
-    # HAUT, grand côté DROIT plaqué au mur de DROITE (inaccessible). Les 2 prises
-    # de chevet doivent longer le côté LIBRE (mur de gauche) — une à la tête,
-    # une au pied — et AUCUNE ne doit tomber dans le coin bloqué (haut-droite).
+def test_corner_single_bed_L_layout_along_the_two_walls_it_touches():
+    # Lit UNE PLACE portrait dans le coin haut-droit : têtière (côté COURT)
+    # contre le mur du HAUT, grand côté DROIT (côté LONG) plaqué au mur de
+    # DROITE (inaccessible). Placement attendu en L :
+    #   - prise chevet TÊTE sur le mur du HAUT, côté LIBRE (gauche du lit) ;
+    #   - prise 2 dans la CONTINUITÉ du grand côté : mur de DROITE, au-delà du
+    #     PIED (bas) du lit ;
+    #   - 3e prise sur le mur LIBRE d'en face (gauche), à l'aplomb du lit.
+    # AUCUNE prise ne tombe dans le coin coincé (haut-droite).
     bed_corner = Detection(cls="Bed", bbox=(130, 2, 190, 150), confidence=0.95)
     door = Detection(cls="door", bbox=(20, 195, 50, 200), confidence=0.9)
     ctx = RoomContext(room_type="BedRoom", polygon=POLY,
@@ -80,23 +84,27 @@ def test_corner_single_bed_sockets_on_free_side_not_in_blocked_corner():
     prises = g["Prise"]
     assert len(prises) == 3
 
-    # 2 prises de chevet sur le mur côté LIBRE (gauche, x petit), étalées tête↔pied
-    left = sorted([p for p in prises if p.x <= 30], key=lambda p: p.y)
-    assert len(left) == 2
-    assert left[0].y < 100         # une à la tête (haut)
-    assert left[1].y > 90          # une au pied (bas)
+    # prise chevet TÊTE : mur du haut (y petit), côté LIBRE (à gauche du lit x<130)
+    head_socket = [p for p in prises if p.y <= 30]
+    assert len(head_socket) == 1
+    assert head_socket[0].x < 130
 
-    # AUCUNE prise dans le coin bloqué (haut-droite, contre le mur de droite)
+    # prise CONTINUITÉ grand côté : mur de droite (x grand), au-delà du pied (bas)
+    long_socket = [p for p in prises if p.x >= 175 and p.y > 150]
+    assert len(long_socket) == 1
+
+    # 3e prise : mur LIBRE d'en face (gauche, x petit), à mi-hauteur du lit
+    free_socket = [p for p in prises if p.x <= 30 and 40 < p.y < 150]
+    assert len(free_socket) == 1
+
+    # AUCUNE prise dans le coin bloqué (haut-droite, tête × côté bloqué)
     assert all(not (p.x > 150 and p.y < 60) for p in prises)
 
-    # 3e prise sur le mur d'en face (bas), à l'aplomb du lit (pas collée aux 2 autres)
-    far = [p for p in prises if p.y >= 175]
-    assert len(far) == 1
-    assert far[0].x > 60           # étalée vers le lit, pas dans le coin gauche
-
-    # RJ45 accolée à la prise de chevet TÊTE (haut-gauche)
+    # RJ45 accolée à la prise de chevet TÊTE, côté libre (gauche)
     rj = g["RJ45"][0]
-    assert min(((rj.x - s.x) ** 2 + (rj.y - s.y) ** 2) ** 0.5 for s in left) <= 35
+    hs = head_socket[0]
+    assert ((rj.x - hs.x) ** 2 + (rj.y - hs.y) ** 2) ** 0.5 <= 35
+    assert rj.x < 130
 
 
 def test_missing_bed_declines_so_caller_falls_back_to_perimeter():

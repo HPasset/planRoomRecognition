@@ -130,21 +130,32 @@ def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
             return x, y, True, "lit absent : prise répartie"
 
         if len(blocked_long) == 1:
-            # Lit en coin : un grand côté est contre un mur (inaccessible). Les
-            # deux chevets longent le mur du côté LIBRE (le mur d'en face du mur
-            # bloqué) — un à la tête, un au pied du lit. Aucune prise n'atterrit
-            # dans le coin coincé.
-            free_wall = g.opposite_edge(blocked_long[0], edges)
-            t_lo, t_hi = g.project_extents(bed.bbox, free_wall)
-            hm = head_wall.midpoint
-            p_lo, p_hi = free_wall.point_at(t_lo), free_wall.point_at(t_hi)
-            d_lo = math.hypot(p_lo[0] - hm[0], p_lo[1] - hm[1])
-            d_hi = math.hypot(p_hi[0] - hm[0], p_hi[1] - hm[1])
-            head_t, foot_t = (t_lo, t_hi) if d_lo <= d_hi else (t_hi, t_lo)
-            t = head_t if a.side == LEFT else foot_t   # LEFT(prise_1)=tête, RIGHT=pied
-            x, y = g.point_on_edge(free_wall, t, INSET, centroid)
-            rule_wall[rule.rule_id] = free_wall
-            return x, y, False, "prise chevet côté accessible (lit en coin, grand côté au mur)"
+            # Lit « une place » en coin : têtière (côté COURT) contre le mur
+            # tête, un grand côté (côté LONG) contre `blocked_wall`. Placement
+            # en L, le long des deux murs que touche le lit :
+            #   - prise_1 (chevet tête, LEFT) → sur le MUR TÊTE, au-delà de
+            #     l'extrémité du côté LIBRE (opposé au mur bloqué).
+            #   - prise_2 (RIGHT) → dans la CONTINUITÉ du grand côté : sur
+            #     `blocked_wall`, au-delà du PIED du lit (zone dégagée du mur).
+            # Aucune prise ne tombe dans le coin coincé tête×côté bloqué.
+            blocked_wall = blocked_long[0]
+            if a.side == LEFT:
+                wall, ref_mid = head_wall, blocked_wall.midpoint   # fuir le mur bloqué
+                reason = "prise chevet tête, côté accessible (lit en coin)"
+            else:
+                wall, ref_mid = blocked_wall, head_wall.midpoint   # fuir le mur tête
+                reason = "prise dans la continuité du grand côté, au-delà du pied (contre le mur)"
+            t_lo, t_hi = g.project_extents(bed.bbox, wall)
+            p_lo, p_hi = wall.point_at(t_lo), wall.point_at(t_hi)
+            d_lo = math.hypot(p_lo[0] - ref_mid[0], p_lo[1] - ref_mid[1])
+            d_hi = math.hypot(p_hi[0] - ref_mid[0], p_hi[1] - ref_mid[1])
+            flank_dt = FLANK_GAP / (wall.length or 1.0)
+            # on flanque AU-DELÀ de l'extrémité la plus éloignée de `ref_mid`
+            t = (min(1.0, t_hi + flank_dt) if d_hi >= d_lo
+                 else max(0.0, t_lo - flank_dt))
+            x, y = g.point_on_edge(wall, t, INSET, centroid)
+            rule_wall[rule.rule_id] = wall
+            return x, y, False, reason
 
         if len(blocked_long) >= 2:
             # Alcôve : les deux grands côtés bloqués → repli sur le mur tête,
@@ -199,16 +210,15 @@ def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
         p1 = by_id.get(a.refs[0])
         p2 = by_id.get(a.refs[1])
         if head_wall is not None and blocked_long and bed is not None:
-            # Lit en coin : les 2 chevets sont du même côté (mur libre). La 3e
-            # prise va sur le mur d'en face du mur tête, à l'aplomb du lit, pour
-            # l'étaler au lieu de la coller aux deux autres.
-            opp = g.opposite_edge(head_wall, edges)
+            # Lit en coin : 3e prise sur le mur LIBRE d'en face (opposé au grand
+            # côté bloqué), à l'aplomb du lit → triangle avec les 2 chevets.
+            free_wall = g.opposite_edge(blocked_long[0], edges)
             bcx = (bed.bbox[0] + bed.bbox[2]) / 2.0
             bcy = (bed.bbox[1] + bed.bbox[3]) / 2.0
-            t = max(0.0, min(1.0, g._project_t((int(bcx), int(bcy)), opp)))
-            x, y = g.point_on_edge(opp, t, INSET, centroid)
+            t = max(0.0, min(1.0, g._project_t((int(bcx), int(bcy)), free_wall)))
+            x, y = g.point_on_edge(free_wall, t, INSET, centroid)
             unc = bool((p1 and p1.uncertain) or (p2 and p2.uncertain))
-            return x, y, unc, "3e prise mur d'en face (lit en coin)"
+            return x, y, unc, "3e prise mur libre d'en face (lit en coin)"
         if p1 and p2 and head_wall is not None:
             opp = g.opposite_edge(head_wall, edges)
             x, y = g.triangle_apex((p1.x, p1.y), (p2.x, p2.y), opp, INSET, centroid)
