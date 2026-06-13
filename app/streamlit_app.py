@@ -654,8 +654,17 @@ def _build_bedroom_layout_index(seg_result, df_devis, pastilles_by_room,
         _open_room = [d for d in openings if _inside(d, _contour)]
         ctx = RoomContext(room_type="BedRoom", polygon=poly,
                           furniture=_furn_room, openings=_open_room, wall_lines=[])
-        index.update(build_room_layout_index(
-            room_label, ctx, counts_by_room.get(room_label, {})))
+        # Isole CHAQUE chambre : une erreur de placement sur une pièce ne doit
+        # jamais faire tomber tout le devis (les autres pièces — y compris
+        # cuisine/séjour gérées hors moteur — perdraient leur équipement). En
+        # cas d'échec, cette chambre n'entre pas dans l'index → l'appelant
+        # retombe sur l'ancien placement périmétrique pour elle seule.
+        try:
+            index.update(build_room_layout_index(
+                room_label, ctx, counts_by_room.get(room_label, {})))
+        except Exception as _e:   # noqa: BLE001 — robustesse UI volontaire
+            st.warning(f"Placement intelligent indisponible pour {room_label} "
+                       f"(fallback) : {_e}")
     return index, bedroom_rooms
 
 
