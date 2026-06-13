@@ -7,6 +7,8 @@ absente ou quand le raffinement a dû déplacer un point au-delà du seuil.
 """
 from __future__ import annotations
 
+import math
+
 from src.planrec.placement.contracts import Detection, RoomContext, PlacedEquipment
 from src.planrec.placement.spec import SPEC_BY_ROOM_TYPE, Rule, LEFT
 from src.planrec.placement import geometry as g
@@ -74,8 +76,14 @@ def place_room(ctx: RoomContext, counts: dict[str, int]) -> list[PlacedEquipment
     head_wall = g.bed_head_wall(bed.bbox, edges) if bed else None
     door_wall = g.edge_of(door.bbox, edges) if door else None
 
+    # Lit « une place » en coin : un (ou deux) grand côté plaqué à un mur. Le
+    # placement des chevets bascule alors sur le côté accessible (cf _resolve_rule).
+    blocked_long = (g.bed_blocked_long_walls(bed.bbox, edges, head_wall)
+                    if head_wall is not None else [])
+
     remaining = dict(counts)
     by_id: dict[str, PlacedEquipment] = {}
+    rule_wall: dict[str, g.Edge] = {}   # rule_id → mur où la prise a été posée
     placed: list[PlacedEquipment] = []
 
     def take(equip_key: str) -> bool:
@@ -89,6 +97,7 @@ def place_room(ctx: RoomContext, counts: dict[str, int]) -> list[PlacedEquipment
             continue
         x, y, uncertain, reason = _resolve_rule(
             rule, ctx, edges, centroid, bed, door, head_wall, door_wall, by_id,
+            blocked_long, rule_wall,
         )
         pe = PlacedEquipment(equip_key=rule.equip_key, x=x, y=y,
                              confidence=0.9 if not uncertain else 0.5,
@@ -109,50 +118,77 @@ def place_room(ctx: RoomContext, counts: dict[str, int]) -> list[PlacedEquipment
 
 
 def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
-                  head_wall, door_wall, by_id):
+                  head_wall, door_wall, by_id, blocked_long, rule_wall):
     a = rule.anchor
     uncertain = False
     reason = ""
 
     if a.kind == "bed_side":
-        if bed and head_wall is not None:
-            t_min, t_max = g.project_extents(bed.bbox, head_wall)
-            # On flanque le lit : on pousse la prise JUSTE AU-DELÀ de l'extrémité
-            # du lit (dans l'espace libre à côté), pas sur le coin du lit. Sinon
-            # les deux prises se posent sur le matelas/coins et la têtière paraît
-            # n'en avoir qu'une (noyée dans le mobilier).
-            flank_dt = FLANK_GAP / (head_wall.length or 1.0)
-            if a.side == LEFT:
-                t = max(0.0, t_min - flank_dt)
-            else:
-                t = min(1.0, t_max + flank_dt)
-            x, y = g.point_on_edge(head_wall, t, INSET, centroid)
-            reason = f"prise côté {a.side} du lit (au-delà de l'extrémité, contre le mur)"
-        else:
+        if not (bed and head_wall is not None):
             t = 0.25 if a.side == LEFT else 0.75
             x, y = g.point_on_edge(edges[0], t, INSET, centroid)
-            uncertain = True
-            reason = "lit absent : prise répartie"
-        return x, y, uncertain, reason
+            return x, y, True, "lit absent : prise répartie"
+
+        if len(blocked_long) == 1:
+            # Lit en coin : un grand côté est contre un mur (inaccessible). Les
+            # deux chevets longent le mur du côté LIBRE (le mur d'en face du mur
+            # bloqué) — un à la tête, un au pied du lit. Aucune prise n'atterrit
+            # dans le coin coincé.
+            free_wall = g.opposite_edge(blocked_long[0], edges)
+            t_lo, t_hi = g.project_extents(bed.bbox, free_wall)
+            hm = head_wall.midpoint
+            p_lo, p_hi = free_wall.point_at(t_lo), free_wall.point_at(t_hi)
+            d_lo = math.hypot(p_lo[0] - hm[0], p_lo[1] - hm[1])
+            d_hi = math.hypot(p_hi[0] - hm[0], p_hi[1] - hm[1])
+            head_t, foot_t = (t_lo, t_hi) if d_lo <= d_hi else (t_hi, t_lo)
+            t = head_t if a.side == LEFT else foot_t   # LEFT(prise_1)=tête, RIGHT=pied
+            x, y = g.point_on_edge(free_wall, t, INSET, centroid)
+            rule_wall[rule.rule_id] = free_wall
+            return x, y, False, "prise chevet côté accessible (lit en coin, grand côté au mur)"
+
+        if len(blocked_long) >= 2:
+            # Alcôve : les deux grands côtés bloqués → repli sur le mur tête,
+            # extrémité côté libre, marqué incertain.
+            t_min, t_max = g.project_extents(bed.bbox, head_wall)
+            flank_dt = FLANK_GAP / (head_wall.length or 1.0)
+            t = max(0.0, t_min - flank_dt) if a.side == LEFT else min(1.0, t_max + flank_dt)
+            x, y = g.point_on_edge(head_wall, t, INSET, centroid)
+            rule_wall[rule.rule_id] = head_wall
+            return x, y, True, "lit en alcôve (deux côtés bloqués) : placement approximatif"
+
+        # Cas standard (lit accessible des deux côtés) : on flanque le lit JUSTE
+        # AU-DELÀ de chaque extrémité (espace libre à côté), pas sur le coin du
+        # lit. Sinon les deux prises se posent sur le matelas et la têtière
+        # paraît n'en avoir qu'une (noyée dans le mobilier).
+        t_min, t_max = g.project_extents(bed.bbox, head_wall)
+        flank_dt = FLANK_GAP / (head_wall.length or 1.0)
+        t = max(0.0, t_min - flank_dt) if a.side == LEFT else min(1.0, t_max + flank_dt)
+        x, y = g.point_on_edge(head_wall, t, INSET, centroid)
+        rule_wall[rule.rule_id] = head_wall
+        reason = f"prise côté {a.side} du lit (au-delà de l'extrémité, contre le mur)"
+        return x, y, False, reason
 
     if a.kind == "adjacent":
         ref = by_id.get(a.ref)
         if ref is not None:
-            if head_wall is not None and bed is not None:
-                ux, uy = head_wall.unit_dir()
-                # le long du mur, vers l'EXTÉRIEUR du lit (côté opposé au lit),
-                # pour ne pas se retrouver sur le matelas. Direction = depuis le
-                # centre du lit vers la prise de réf, prolongée.
+            # Glisser le long du mur où la prise de réf a réellement été posée
+            # (mur tête en standard, mur du côté libre en lit-en-coin).
+            ref_wall = rule_wall.get(a.ref, head_wall)
+            if ref_wall is not None and bed is not None:
+                ux, uy = ref_wall.unit_dir()
+                # vers l'EXTÉRIEUR du lit (côté opposé au lit), pour ne pas se
+                # retrouver sur le matelas. Direction = du centre du lit vers la
+                # prise de réf, prolongée.
                 bcx = (bed.bbox[0] + bed.bbox[2]) / 2.0
                 bcy = (bed.bbox[1] + bed.bbox[3]) / 2.0
                 if (ref.x - bcx) * ux + (ref.y - bcy) * uy < 0:
                     ux, uy = -ux, -uy
                 x = int(round(ref.x + ux * ACCOLE_GAP))
                 y = int(round(ref.y + uy * ACCOLE_GAP))
-                # rester sur le segment du mur tête-de-lit (la prise de réf peut
-                # déjà être à l'extrémité ; ne pas déborder du mur).
-                t_clamp = max(0.0, min(1.0, g._project_t((x, y), head_wall)))
-                x, y = g.point_on_edge(head_wall, t_clamp, INSET, centroid)
+                # rester sur le segment du mur (la prise de réf peut déjà être à
+                # l'extrémité ; ne pas déborder du mur).
+                t_clamp = max(0.0, min(1.0, g._project_t((x, y), ref_wall)))
+                x, y = g.point_on_edge(ref_wall, t_clamp, INSET, centroid)
             else:
                 x, y = ref.x + ACCOLE_GAP, ref.y
             return x, y, ref.uncertain, "RJ45 accolée à la prise (continuité mur)"
@@ -162,6 +198,17 @@ def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
     if a.kind == "triangle":
         p1 = by_id.get(a.refs[0])
         p2 = by_id.get(a.refs[1])
+        if head_wall is not None and blocked_long and bed is not None:
+            # Lit en coin : les 2 chevets sont du même côté (mur libre). La 3e
+            # prise va sur le mur d'en face du mur tête, à l'aplomb du lit, pour
+            # l'étaler au lieu de la coller aux deux autres.
+            opp = g.opposite_edge(head_wall, edges)
+            bcx = (bed.bbox[0] + bed.bbox[2]) / 2.0
+            bcy = (bed.bbox[1] + bed.bbox[3]) / 2.0
+            t = max(0.0, min(1.0, g._project_t((int(bcx), int(bcy)), opp)))
+            x, y = g.point_on_edge(opp, t, INSET, centroid)
+            unc = bool((p1 and p1.uncertain) or (p2 and p2.uncertain))
+            return x, y, unc, "3e prise mur d'en face (lit en coin)"
         if p1 and p2 and head_wall is not None:
             opp = g.opposite_edge(head_wall, edges)
             x, y = g.triangle_apex((p1.x, p1.y), (p2.x, p2.y), opp, INSET, centroid)

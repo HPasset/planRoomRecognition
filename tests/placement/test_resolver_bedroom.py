@@ -66,6 +66,39 @@ def test_full_bedroom_layout():
             assert p.uncertain is False
 
 
+def test_corner_single_bed_sockets_on_free_side_not_in_blocked_corner():
+    # Lit UNE PLACE portrait dans le coin haut-droit : têtière contre le mur du
+    # HAUT, grand côté DROIT plaqué au mur de DROITE (inaccessible). Les 2 prises
+    # de chevet doivent longer le côté LIBRE (mur de gauche) — une à la tête,
+    # une au pied — et AUCUNE ne doit tomber dans le coin bloqué (haut-droite).
+    bed_corner = Detection(cls="Bed", bbox=(130, 2, 190, 150), confidence=0.95)
+    door = Detection(cls="door", bbox=(20, 195, 50, 200), confidence=0.9)
+    ctx = RoomContext(room_type="BedRoom", polygon=POLY,
+                      furniture=[bed_corner], openings=[door])
+    placed = place_room(ctx, COUNTS)
+    g = _by_key(placed)
+    prises = g["Prise"]
+    assert len(prises) == 3
+
+    # 2 prises de chevet sur le mur côté LIBRE (gauche, x petit), étalées tête↔pied
+    left = sorted([p for p in prises if p.x <= 30], key=lambda p: p.y)
+    assert len(left) == 2
+    assert left[0].y < 100         # une à la tête (haut)
+    assert left[1].y > 90          # une au pied (bas)
+
+    # AUCUNE prise dans le coin bloqué (haut-droite, contre le mur de droite)
+    assert all(not (p.x > 150 and p.y < 60) for p in prises)
+
+    # 3e prise sur le mur d'en face (bas), à l'aplomb du lit (pas collée aux 2 autres)
+    far = [p for p in prises if p.y >= 175]
+    assert len(far) == 1
+    assert far[0].x > 60           # étalée vers le lit, pas dans le coin gauche
+
+    # RJ45 accolée à la prise de chevet TÊTE (haut-gauche)
+    rj = g["RJ45"][0]
+    assert min(((rj.x - s.x) ** 2 + (rj.y - s.y) ** 2) ** 0.5 for s in left) <= 35
+
+
 def test_missing_bed_declines_so_caller_falls_back_to_perimeter():
     # Sans lit, le moteur chambre décline (retourne []) : l'appelant retombe
     # sur le placement périmétrique propre de la pièce plutôt qu'une

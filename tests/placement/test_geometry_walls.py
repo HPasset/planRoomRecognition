@@ -1,5 +1,6 @@
 from src.planrec.placement.geometry import (
     room_edges, nearest_edge, opposite_edge, bed_head_wall,
+    bed_blocked_long_walls,
 )
 
 SQUARE = [(0, 0), (100, 0), (100, 100), (0, 100)]
@@ -44,3 +45,24 @@ def test_bed_head_wall_only_one_flush_wall():
     edges = room_edges(square)
     bed = (40, 2, 160, 90)      # paysage, plaqué seulement en haut (intérieur en x)
     assert bed_head_wall(bed, edges) is edges[0]   # mur du haut (seul plaqué)
+
+
+def test_bed_blocked_long_walls_detects_corner_single_bed():
+    # Lit une place PORTRAIT poussé dans le coin haut-droit : têtière contre le
+    # mur du HAUT, grand côté DROIT plaqué au mur de DROITE (x2=190 ~ x=200).
+    square = [(0, 0), (200, 0), (200, 200), (0, 200)]
+    edges = room_edges(square)
+    bed = (130, 2, 190, 150)
+    head = bed_head_wall(bed, edges)               # mur du haut
+    blocked = bed_blocked_long_walls(bed, edges, head)
+    assert len(blocked) == 1
+    assert blocked[0] is edges[1]                  # mur de droite = côté bloqué
+
+
+def test_bed_blocked_long_walls_none_for_centered_bed():
+    # Lit centré en x (intérieur) : aucun grand côté contre un mur latéral.
+    square = [(0, 0), (200, 0), (200, 200), (0, 200)]
+    edges = room_edges(square)
+    bed = (40, 2, 160, 90)
+    head = bed_head_wall(bed, edges)
+    assert bed_blocked_long_walls(bed, edges, head) == []

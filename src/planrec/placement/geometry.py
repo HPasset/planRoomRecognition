@@ -174,6 +174,29 @@ def bed_head_wall(bbox: tuple[int, int, int, int], edges: list[Edge],
     return min(pool, key=gap)
 
 
+def bed_blocked_long_walls(bbox: tuple[int, int, int, int], edges: list[Edge],
+                           head_wall: Edge, flush_tol: float = 30.0) -> list[Edge]:
+    """Murs du polygone contre lesquels un GRAND côté du lit est plaqué.
+
+    Les grands côtés du lit sont parallèles à son grand axe, donc
+    perpendiculaires au mur tête : un mur tête horizontal implique des grands
+    côtés verticaux (et inversement). On ne teste donc que les murs
+    d'orientation opposée à celle du mur tête, ce qui exclut d'office le mur
+    tête et le mur d'en face. Sert à détecter un lit « une place » en coin dont
+    un côté devient inaccessible.
+
+    Retourne la liste des murs bloquants (0 = lit accessible des deux côtés ;
+    1 = lit en coin ; 2 = alcôve).
+    """
+    head_orient = head_wall.orientation
+    other = "V" if head_orient == "H" else "H"
+
+    def gap(e: Edge) -> float:
+        return min(_point_seg_dist(c, e.a, e.b) for c in _bbox_corners(bbox))
+
+    return [e for e in edges if e.orientation == other and gap(e) <= flush_tol]
+
+
 def _project_t(point: Point, edge: Edge) -> float:
     """Paramètre t (non clampé) de la projection de `point` sur l'axe de l'arête."""
     ax, ay = edge.a
