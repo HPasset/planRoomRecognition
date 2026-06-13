@@ -143,6 +143,29 @@ def test_corner_bed_with_jagged_polygon_corner_uses_corner_branch_not_alcove():
     assert rj.x <= 35
 
 
+def test_rj45_slides_along_wall_when_head_socket_at_wall_end():
+    # Régression Chambre 2 : la prise de tête est flanquée PILE à l'extrémité du
+    # mur tête (lit en coin, têtière au mur gauche, grand côté bas bloqué). La
+    # RJ45 doit longer le MUR (décalage parallèle au mur tête = vertical ici),
+    # pas filer perpendiculairement dans la pièce (continuité du lit).
+    poly = [(0, 0), (200, 0), (200, 150), (0, 150)]
+    bed = Detection(cls="Bed", bbox=(2, 90, 115, 145), confidence=0.95)   # paysage, coin bas-gauche
+    door = Detection(cls="door", bbox=(150, 145, 180, 150), confidence=0.9)
+    ctx = RoomContext(room_type="BedRoom", polygon=poly,
+                      furniture=[bed], openings=[door])
+    placed = place_room(ctx, COUNTS)
+    g = _by_key(placed)
+    rj = g["RJ45"][0]
+    # prise de tête = celle sur le mur gauche (x petit), la plus proche de la RJ45
+    head = min((p for p in g["Prise"] if p.x <= 30),
+               key=lambda p: (p.x - rj.x) ** 2 + (p.y - rj.y) ** 2)
+    dx, dy = abs(rj.x - head.x), abs(rj.y - head.y)
+    # mur tête vertical → décalage RJ45 dominé par l'axe VERTICAL (le long du mur)
+    assert dy > dx
+    # et la RJ45 reste plaquée au mur gauche, pas repoussée dans la pièce
+    assert rj.x <= 30
+
+
 def test_missing_bed_declines_so_caller_falls_back_to_perimeter():
     # Sans lit, le moteur chambre décline (retourne []) : l'appelant retombe
     # sur le placement périmétrique propre de la pièce plutôt qu'une

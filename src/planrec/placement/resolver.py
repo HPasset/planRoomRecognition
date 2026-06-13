@@ -183,23 +183,27 @@ def _resolve_rule(rule: Rule, ctx, edges, centroid, bed, door,
         ref = by_id.get(a.ref)
         if ref is not None:
             # Glisser le long du mur où la prise de réf a réellement été posée
-            # (mur tête en standard, mur du côté libre en lit-en-coin).
+            # (mur tête en standard, mur du côté libre en lit-en-coin). On
+            # raisonne en paramètre `t` LE LONG du mur pour rester plaqué :
+            # décaler la RJ45 d'ACCOLE_GAP côté EXTÉRIEUR du lit (pas sur le
+            # matelas). Si ce côté déborde du segment (la prise est déjà à
+            # l'extrémité du mur — cas lit flanqué juste au bout), on bascule de
+            # l'autre côté : mieux vaut la RJ45 vers le lit MAIS plaquée au mur
+            # que repoussée perpendiculairement dans la pièce (continuité du
+            # lit au lieu du mur).
             ref_wall = rule_wall.get(a.ref, head_wall)
             if ref_wall is not None and bed is not None:
-                ux, uy = ref_wall.unit_dir()
-                # vers l'EXTÉRIEUR du lit (côté opposé au lit), pour ne pas se
-                # retrouver sur le matelas. Direction = du centre du lit vers la
-                # prise de réf, prolongée.
-                bcx = (bed.bbox[0] + bed.bbox[2]) / 2.0
-                bcy = (bed.bbox[1] + bed.bbox[3]) / 2.0
-                if (ref.x - bcx) * ux + (ref.y - bcy) * uy < 0:
-                    ux, uy = -ux, -uy
-                x = int(round(ref.x + ux * ACCOLE_GAP))
-                y = int(round(ref.y + uy * ACCOLE_GAP))
-                # rester sur le segment du mur (la prise de réf peut déjà être à
-                # l'extrémité ; ne pas déborder du mur).
-                t_clamp = max(0.0, min(1.0, g._project_t((x, y), ref_wall)))
-                x, y = g.point_on_edge(ref_wall, t_clamp, INSET, centroid)
+                L = ref_wall.length or 1.0
+                dt = ACCOLE_GAP / L
+                t_ref = g._project_t((ref.x, ref.y), ref_wall)
+                bt_lo, bt_hi = g.project_extents(bed.bbox, ref_wall)
+                bed_mid_t = (bt_lo + bt_hi) / 2.0
+                away = dt if t_ref >= bed_mid_t else -dt   # s'éloigner du lit
+                t_new = t_ref + away
+                if not (0.0 <= t_new <= 1.0):              # déborde → repli
+                    t_new = t_ref - away
+                t_new = max(0.0, min(1.0, t_new))
+                x, y = g.point_on_edge(ref_wall, t_new, INSET, centroid)
             else:
                 x, y = ref.x + ACCOLE_GAP, ref.y
             return x, y, ref.uncertain, "RJ45 accolée à la prise (continuité mur)"
