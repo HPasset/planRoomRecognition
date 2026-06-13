@@ -66,3 +66,21 @@ def test_bed_blocked_long_walls_none_for_centered_bed():
     bed = (40, 2, 160, 90)
     head = bed_head_wall(bed, edges)
     assert bed_blocked_long_walls(bed, edges, head) == []
+
+
+def test_bed_blocked_long_walls_robust_to_jagged_corner():
+    # Reproduit le cas Chambre 3 : polygone de segmentation au coin haut-gauche
+    # DENTELÉ → le grand mur du haut est scindé en un long segment + un micro
+    # fragment (~11px) quasi-colinéaire. Sans dédup par côté, les deux comptent
+    # → bascule à tort en « alcôve ». On doit détecter UN SEUL côté bloqué (le
+    # haut) et retenir le VRAI grand mur, pas le fragment de coin.
+    poly = [(190, 0), (20, 1), (10, 5), (3, 140), (190, 140)]
+    edges = room_edges(poly)
+    bed = (7, 3, 120, 54)              # paysage, têtière (côté court) au mur gauche
+    head = bed_head_wall(bed, edges)
+    assert head.orientation == "V"     # mur tête = mur gauche (côté court)
+    blocked = bed_blocked_long_walls(bed, edges, head)
+    assert len(blocked) == 1           # un seul côté bloqué (le haut), pas deux
+    # le mur retenu est le LONG mur du haut, pas le micro-fragment de coin
+    retained = blocked[0]
+    assert retained.length > 100

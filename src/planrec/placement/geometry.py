@@ -182,19 +182,52 @@ def bed_blocked_long_walls(bbox: tuple[int, int, int, int], edges: list[Edge],
     perpendiculaires au mur tête : un mur tête horizontal implique des grands
     côtés verticaux (et inversement). On ne teste donc que les murs
     d'orientation opposée à celle du mur tête, ce qui exclut d'office le mur
-    tête et le mur d'en face. Sert à détecter un lit « une place » en coin dont
-    un côté devient inaccessible.
+    tête et le mur d'en face.
+
+    On raisonne PAR CÔTÉ du lit (les deux grands côtés) et on ne retient qu'UN
+    seul mur par côté : parmi les murs candidats plaqués (`flush_tol`) à ce
+    côté, celui qui RECOUVRE le plus l'emprise du lit. Sans cela, un coin de
+    polygone de segmentation dentelé (plusieurs arêtes courtes quasi-colinéaires
+    sur le même côté) ferait croire à un second côté bloqué → bascule à tort en
+    « alcôve ». On choisit le recouvrement max (et non la proximité) pour
+    retenir le vrai grand mur plutôt qu'un fragment de coin.
 
     Retourne la liste des murs bloquants (0 = lit accessible des deux côtés ;
-    1 = lit en coin ; 2 = alcôve).
+    1 = lit en coin ; 2 = alcôve réelle).
     """
     head_orient = head_wall.orientation
     other = "V" if head_orient == "H" else "H"
+    x1, y1, x2, y2 = bbox
+    candidates = [e for e in edges if e.orientation == other]
 
-    def gap(e: Edge) -> float:
-        return min(_point_seg_dist(c, e.a, e.b) for c in _bbox_corners(bbox))
+    if other == "H":           # grands côtés horizontaux → côtés haut/bas
+        sides = (y1, y2)
+        def side_coord(e: Edge) -> float:
+            return (e.a[1] + e.b[1]) / 2.0
+        def overlap(e: Edge) -> float:
+            lo, hi = sorted((e.a[0], e.b[0]))
+            return min(x2, hi) - max(x1, lo)
+    else:                      # grands côtés verticaux → côtés gauche/droite
+        sides = (x1, x2)
+        def side_coord(e: Edge) -> float:
+            return (e.a[0] + e.b[0]) / 2.0
+        def overlap(e: Edge) -> float:
+            lo, hi = sorted((e.a[1], e.b[1]))
+            return min(y2, hi) - max(y1, lo)
 
-    return [e for e in edges if e.orientation == other and gap(e) <= flush_tol]
+    blocked: list[Edge] = []
+    for sc in sides:
+        best: Edge | None = None
+        best_ov = 0.0
+        for e in candidates:
+            ov = overlap(e)
+            if ov <= 0 or abs(side_coord(e) - sc) >= flush_tol:
+                continue
+            if ov > best_ov:
+                best_ov, best = ov, e
+        if best is not None:
+            blocked.append(best)
+    return blocked
 
 
 def _project_t(point: Point, edge: Edge) -> float:

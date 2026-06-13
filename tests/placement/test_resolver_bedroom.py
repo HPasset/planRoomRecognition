@@ -107,6 +107,42 @@ def test_corner_single_bed_L_layout_along_the_two_walls_it_touches():
     assert rj.x < 130
 
 
+def test_corner_bed_with_jagged_polygon_corner_uses_corner_branch_not_alcove():
+    # Régression Chambre 3 : un coin de polygone dentelé ne doit PAS faire
+    # basculer en « alcôve ». Lit paysage dans le coin haut-gauche, têtière
+    # (côté court) contre le mur GAUCHE, grand côté HAUT contre le mur du haut.
+    # Attendu : branche « lit en coin », rien d'incertain, prise chevet tête
+    # sur le mur gauche côté LIBRE (bas, sous le lit), continuité sur le mur du
+    # haut au-delà du pied (droite).
+    poly = [(190, 0), (20, 1), (10, 5), (3, 140), (190, 140)]
+    bed = Detection(cls="Bed", bbox=(7, 3, 120, 54), confidence=0.95)
+    door = Detection(cls="door", bbox=(150, 135, 180, 140), confidence=0.9)
+    ctx = RoomContext(room_type="BedRoom", polygon=poly,
+                      furniture=[bed], openings=[door])
+    placed = place_room(ctx, COUNTS)
+    g = _by_key(placed)
+    prises = g["Prise"]
+    assert len(prises) == 3
+
+    # aucune pastille « alcôve » (la branche ratée) ni prise incertaine
+    assert not any("alcôve" in p.reason for p in placed)
+    assert all(not p.uncertain for p in prises)
+
+    # prise chevet tête : mur GAUCHE (x petit), côté LIBRE = sous le lit (y > 54)
+    head_socket = [p for p in prises if p.x <= 30 and p.y > 54]
+    assert len(head_socket) == 1
+
+    # prise continuité du grand côté : mur du HAUT (y petit), au-delà du pied (x > 120)
+    long_socket = [p for p in prises if p.y <= 30 and p.x > 120]
+    assert len(long_socket) == 1
+
+    # RJ45 accolée à la prise de tête (mur gauche), contre le mur (x petit)
+    rj = g["RJ45"][0]
+    hs = head_socket[0]
+    assert ((rj.x - hs.x) ** 2 + (rj.y - hs.y) ** 2) ** 0.5 <= 35
+    assert rj.x <= 35
+
+
 def test_missing_bed_declines_so_caller_falls_back_to_perimeter():
     # Sans lit, le moteur chambre décline (retourne []) : l'appelant retombe
     # sur le placement périmétrique propre de la pièce plutôt qu'une
