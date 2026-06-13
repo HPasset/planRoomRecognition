@@ -788,9 +788,12 @@ def _bedroom_debug_records(seg_result, df_devis, pastilles_by_room, raw_furnitur
         bed = max((d for d in furn_room if d.cls in {"Bed", "Double Bed", "Single Bed"}),
                   key=lambda d: d.confidence, default=None)
         head = None
+        bloques = None
         if bed is not None:
             hw = _geo.bed_head_wall(bed.bbox, edges)
             head = {"a": hw.a, "b": hw.b, "orientation": hw.orientation}
+            bloques = [{"a": e.a, "b": e.b, "orientation": e.orientation}
+                       for e in _geo.bed_blocked_long_walls(bed.bbox, edges, hw)]
         placed = place_room(ctx, counts_by_room.get(room_label, {}))
         records.append({
             "chambre": room_label,
@@ -800,6 +803,7 @@ def _bedroom_debug_records(seg_result, df_devis, pastilles_by_room, raw_furnitur
             "lit_bbox": list(bed.bbox) if bed else None,
             "lit_largeur_hauteur": ([bed.bbox[2]-bed.bbox[0], bed.bbox[3]-bed.bbox[1]] if bed else None),
             "mur_tete_de_lit": head,
+            "grands_cotes_bloques": bloques,
             "counts": counts_by_room.get(room_label, {}),
             "equipements_places": [
                 {"type": p.equip_key, "x": p.x, "y": p.y,
