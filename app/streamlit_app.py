@@ -3258,6 +3258,7 @@ def main():
         from src.planrec import nfc_tableau as _nfc_tab
         from src.planrec import tableau_renderer as _tab_render
         from src.planrec import etiquettes_renderer as _etiq_render
+        from src.planrec import schema_unifilaire as _schema_uni
 
         st.markdown("---")
         st.subheader("⚡ Tableau électrique")
@@ -3317,7 +3318,14 @@ def main():
                 pdf_etiquettes = None
                 etiquettes_err = str(e)
 
-            _col_dl_1, _col_dl_2 = st.columns(2)
+            try:
+                pdf_schema = _schema_uni.render_schema_unifilaire_pdf(tableau)
+                schema_err = None
+            except Exception as e:
+                pdf_schema = None
+                schema_err = str(e)
+
+            _col_dl_1, _col_dl_2, _col_dl_3 = st.columns(3)
             with _col_dl_1:
                 st.download_button(
                     "📄 Télécharger le tableau (PDF A4)",
@@ -3340,6 +3348,22 @@ def main():
                 else:
                     st.error(
                         f"⚠ Étiquettes indisponibles : {etiquettes_err}",
+                        icon="⚠️",
+                    )
+            with _col_dl_3:
+                if pdf_schema is not None:
+                    st.download_button(
+                        "📐 Télécharger le schéma unifilaire (PDF)",
+                        data=pdf_schema,
+                        file_name=f"schema_unifilaire_{tableau.typology}_{img_hash[:8]}.pdf",
+                        mime="application/pdf",
+                        key="dl_schema_unifilaire_pdf",
+                        help="A4 portrait. Pièce destinée au dossier Consuel "
+                             "(AGCP générique à confirmer par l'artisan).",
+                    )
+                else:
+                    st.error(
+                        f"⚠ Schéma unifilaire indisponible : {schema_err}",
                         icon="⚠️",
                     )
 
