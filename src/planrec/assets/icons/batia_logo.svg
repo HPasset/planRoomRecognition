@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 150">
+  <!-- Icon : two overlapping outlined "D" shapes (back = dark navy, front = violet) -->
+  <!-- Back D (dark navy, top-right offset) -->
+  <path d="M 45 25 L 100 25 L 130 55 L 130 95 L 100 125 L 45 125 Q 30 125 30 100 L 30 50 Q 30 25 45 25 Z"
+        fill="none" stroke="#0F1B3E" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Front D (violet, bottom-left offset) -->
+  <path d="M 35 35 L 90 35 L 120 65 L 120 105 L 90 135 L 35 135 Q 20 135 20 110 L 20 60 Q 20 35 35 35 Z"
+        fill="none" stroke="#7B1FA2" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- "Bat" text (bold dark navy) -->
+  <text x="160" y="105" font-family="Helvetica,Arial,sans-serif"
+        font-weight="900" font-size="78" fill="#0F1B3E"
+        letter-spacing="-2">Bat</text>
+
+  <!-- "ia" text (italic dark navy, smaller) -->
+  <text x="298" y="105" font-family="Helvetica,Arial,sans-serif"
+        font-style="italic" font-weight="600" font-size="62" fill="#0F1B3E"
+        letter-spacing="-1">ia</text>
+</svg>

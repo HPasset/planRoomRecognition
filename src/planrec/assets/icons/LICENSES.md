@@ -99,3 +99,13 @@ Source : Custom batIA 2026-06-03
 Auteur : Hadrien Passet
 Licence : CC0
 Notes : Symbole d'alimentation spécialisée générique (cercle + flèche entrante).
+
+## batia_logo.svg
+Source : Hadrien Passet (founder of batIA), 2026-06-03
+Auteur : Hadrien Passet
+Licence : Propriétaire batIA (usage interne au produit batIA exclusivement)
+Notes : Vectorisation du logo de marque batIA, intégré dans le cartouche
+body des étiquettes PDF tableau électrique. Ne PAS redistribuer sans
+autorisation du propriétaire. Ce fichier ne respecte PAS la charte
+(viewBox 0 0 400 150 au lieu de 40x40, couleurs hardcodées au lieu de
+currentColor) car c'est un logo de marque, pas un pictogramme.

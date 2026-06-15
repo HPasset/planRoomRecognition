@@ -18,7 +18,12 @@ SVG_NS = "http://www.w3.org/2000/svg"
 
 
 def _list_svg_files() -> list[Path]:
-    return sorted(ICONS_DIR.glob("*.svg"))
+    """Liste les SVG pictogrammes (exclut batia_logo.svg qui suit une
+    charte différente puisque c'est un logo de marque, pas un picto)."""
+    return sorted(
+        p for p in ICONS_DIR.glob("*.svg")
+        if p.name != "batia_logo.svg"
+    )
 
 
 def test_icons_directory_exists():

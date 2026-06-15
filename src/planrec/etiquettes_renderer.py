@@ -220,56 +220,52 @@ def _draw_picto_in_cell(canvas, svg_id, cell_x_mm, cell_y_mm, cell_w_mm, cell_h_
 
 def _draw_batia_logo_cartouche(canvas, x_mm: float, y_mm: float,
                                 w_mm: float, h_mm: float):
-    """Dessine le logo batIA inline (2 triangles + texte 'Bat ia') dans le
-    cartouche du body strip.
+    """Charge le logo batIA officiel depuis assets/icons/batia_logo.svg
+    et le rend centré dans la cellule du body cartouche.
 
-    Design inspiré du logo batIA officiel — version monochrome inline
-    rendue avec les primitives reportlab pour éviter une dépendance à un
-    fichier SVG externe. La DA finale (logo vectoriel couleur) peut être
-    intégrée plus tard via un chargement de batia_logo.svg dédié.
+    Le logo conserve son aspect ratio (viewBox 400x150 ~ 2.67:1) et est
+    scalé pour tenir dans h_mm en hauteur avec une marge de 2 mm.
     """
-    # Icon : 2 triangles overlappés, hauteur ~60 % du strip body
-    icon_h_mm = h_mm * 0.55
-    icon_x_left_mm = x_mm + 4  # 4 mm de padding à gauche
-    icon_y_bottom_mm = y_mm + (h_mm - icon_h_mm) / 2
+    # Charge le logo (CAS SPÉCIAL : svg_id "batia_logo" + ne pas
+    # appliquer la substitution currentColor → noir, le logo a ses
+    # propres couleurs de marque).
+    svg_path = ICONS_DIR / "batia_logo.svg"
+    if not svg_path.is_file():
+        # Fallback texte si le fichier manque
+        canvas.setFont("Helvetica-Bold", 14)
+        canvas.drawCentredString(
+            (x_mm + w_mm / 2) * mm,
+            (y_mm + h_mm / 2 - 14 * 0.123) * mm,
+            "Bat ia",
+        )
+        return
 
-    canvas.setLineWidth(1.6)
+    raw = svg_path.read_text(encoding="utf-8")
+    # Le logo a ses propres couleurs hex, pas de currentColor à substituer.
+    drawing = svg2rlg(BytesIO(raw.encode("utf-8")))
 
-    # Triangle 1 (gauche)
-    t1_x_left = icon_x_left_mm
-    t1_x_apex = icon_x_left_mm + icon_h_mm / 2
-    t1_x_right = icon_x_left_mm + icon_h_mm
-    t1_y_bot = icon_y_bottom_mm
-    t1_y_top = icon_y_bottom_mm + icon_h_mm
-    canvas.line(t1_x_left * mm, t1_y_bot * mm,
-                t1_x_apex * mm, t1_y_top * mm)
-    canvas.line(t1_x_apex * mm, t1_y_top * mm,
-                t1_x_right * mm, t1_y_bot * mm)
-    canvas.line(t1_x_left * mm, t1_y_bot * mm,
-                t1_x_right * mm, t1_y_bot * mm)
+    # Scale pour que le logo tienne dans (h_mm - 2 mm padding) en hauteur
+    target_h_mm = h_mm - 2.0
+    scale = (target_h_mm * mm) / drawing.height
+    # Aspect ratio préservé
+    drawing_w_mm = drawing.width * scale / mm
+    drawing.width *= scale
+    drawing.height *= scale
+    drawing.scale(scale, scale)
 
-    # Triangle 2 (décalé à droite, overlap visible)
-    offset_mm = icon_h_mm * 0.4
-    t2_x_left = icon_x_left_mm + offset_mm
-    t2_x_apex = t2_x_left + icon_h_mm / 2
-    t2_x_right = t2_x_left + icon_h_mm
-    canvas.line(t2_x_left * mm, t1_y_bot * mm,
-                t2_x_apex * mm, t1_y_top * mm)
-    canvas.line(t2_x_apex * mm, t1_y_top * mm,
-                t2_x_right * mm, t1_y_bot * mm)
-    canvas.line(t2_x_left * mm, t1_y_bot * mm,
-                t2_x_right * mm, t1_y_bot * mm)
+    # Si le logo scalé est plus large que la cellule, re-scale par la largeur
+    if drawing_w_mm > w_mm - 4.0:
+        scale_w = ((w_mm - 4.0) * mm) / drawing.width
+        drawing.width *= scale_w
+        drawing.height *= scale_w
+        drawing.scale(scale_w, scale_w)
+        drawing_w_mm = drawing.width / mm
 
-    # Texte "Bat ia" à droite des triangles
-    text_x_mm = t2_x_right + 4  # 4 mm de gap après les triangles
-    text_y_baseline_mm = y_mm + h_mm / 2 - 14 * 0.123  # centré pour 14 pt
-
-    canvas.setFont("Helvetica-Bold", 14)
-    canvas.drawString(text_x_mm * mm, text_y_baseline_mm * mm, "Bat")
-
-    # "ia" en italique, légèrement plus petit
-    canvas.setFont("Helvetica-Oblique", 13)
-    canvas.drawString((text_x_mm + 11) * mm, text_y_baseline_mm * mm, "ia")
+    # Centre dans la cellule
+    x_logo_mm = x_mm + (w_mm - drawing_w_mm) / 2
+    drawing_h_mm = drawing.height / mm
+    y_logo_mm = y_mm + (h_mm - drawing_h_mm) / 2
+    renderPDF.draw(drawing, canvas, x_logo_mm * mm, y_logo_mm * mm)
 
 
 def _wrap_cell_label(label: str, max_chars: int = 8) -> list[str]:
