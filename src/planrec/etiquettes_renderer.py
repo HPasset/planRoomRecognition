@@ -127,7 +127,8 @@ from src.planrec.nfc_tableau import CircuitType
 # Conventions de dimensions (mm)
 HEADER_STRIP_H_MM = 8.0        # hauteur du strip header (IDx, Qn, ...)
 BODY_STRIP_H_MM = 22.0         # hauteur du strip body (picto + label)
-ROW_VERTICAL_GAP_MM = 6.0      # gap entre 2 rangées RCD
+ROW_VERTICAL_GAP_MM = 4.0      # gap entre rangées RCD (était 6 avant ajout STRIP_INNER_GAP_MM)
+STRIP_INNER_GAP_MM = 2.0       # gap entre header strip et body strip d'une même rangée RCD
 PICTO_SIZE_MM = 12.0           # taille du pictogramme dans la cellule body
 PICTO_TOP_OFFSET_MM = 2.0      # marge haute entre le picto et le bord du strip
 TEXT_BELOW_PICTO_GAP_MM = 1.0  # gap vertical entre picto et label texte
@@ -176,12 +177,16 @@ def _resolve_svg_id_for_circuit(circuit) -> str:
 
 
 def _draw_cell_text(canvas, x_mm, y_mm, w_mm, h_mm, text, font_size=10, bold=False):
-    """Centre un texte dans une cellule rectangulaire (coords origine bas-gauche
-    en mm)."""
+    """Centre un texte dans une cellule rectangulaire (coords origine bas-gauche en mm).
+
+    Centrage vertical : le baseline est positionné à ~0.123 × font_size en
+    dessous du centre du rectangle. Ce facteur (cap_height/2 normalisé en mm)
+    donne un visuel proprement centré pour les polices Helvetica.
+    """
     canvas.setFont("Helvetica-Bold" if bold else "Helvetica", font_size)
     canvas.drawCentredString(
         (x_mm + w_mm / 2) * mm,
-        (y_mm + h_mm / 2 - font_size / 3) * mm,
+        (y_mm + h_mm / 2 - font_size * 0.123) * mm,
         text,
     )
 
@@ -211,6 +216,60 @@ def _draw_picto_in_cell(canvas, svg_id, cell_x_mm, cell_y_mm, cell_w_mm, cell_h_
     x_picto_mm = cell_x_mm + (cell_w_mm - PICTO_SIZE_MM) / 2
     y_picto_mm = cell_y_mm + cell_h_mm - PICTO_TOP_OFFSET_MM - PICTO_SIZE_MM
     renderPDF.draw(drawing, canvas, x_picto_mm * mm, y_picto_mm * mm)
+
+
+def _draw_batia_logo_cartouche(canvas, x_mm: float, y_mm: float,
+                                w_mm: float, h_mm: float):
+    """Dessine le logo batIA inline (2 triangles + texte 'Bat ia') dans le
+    cartouche du body strip.
+
+    Design inspiré du logo batIA officiel — version monochrome inline
+    rendue avec les primitives reportlab pour éviter une dépendance à un
+    fichier SVG externe. La DA finale (logo vectoriel couleur) peut être
+    intégrée plus tard via un chargement de batia_logo.svg dédié.
+    """
+    # Icon : 2 triangles overlappés, hauteur ~60 % du strip body
+    icon_h_mm = h_mm * 0.55
+    icon_x_left_mm = x_mm + 4  # 4 mm de padding à gauche
+    icon_y_bottom_mm = y_mm + (h_mm - icon_h_mm) / 2
+
+    canvas.setLineWidth(1.6)
+
+    # Triangle 1 (gauche)
+    t1_x_left = icon_x_left_mm
+    t1_x_apex = icon_x_left_mm + icon_h_mm / 2
+    t1_x_right = icon_x_left_mm + icon_h_mm
+    t1_y_bot = icon_y_bottom_mm
+    t1_y_top = icon_y_bottom_mm + icon_h_mm
+    canvas.line(t1_x_left * mm, t1_y_bot * mm,
+                t1_x_apex * mm, t1_y_top * mm)
+    canvas.line(t1_x_apex * mm, t1_y_top * mm,
+                t1_x_right * mm, t1_y_bot * mm)
+    canvas.line(t1_x_left * mm, t1_y_bot * mm,
+                t1_x_right * mm, t1_y_bot * mm)
+
+    # Triangle 2 (décalé à droite, overlap visible)
+    offset_mm = icon_h_mm * 0.4
+    t2_x_left = icon_x_left_mm + offset_mm
+    t2_x_apex = t2_x_left + icon_h_mm / 2
+    t2_x_right = t2_x_left + icon_h_mm
+    canvas.line(t2_x_left * mm, t1_y_bot * mm,
+                t2_x_apex * mm, t1_y_top * mm)
+    canvas.line(t2_x_apex * mm, t1_y_top * mm,
+                t2_x_right * mm, t1_y_bot * mm)
+    canvas.line(t2_x_left * mm, t1_y_bot * mm,
+                t2_x_right * mm, t1_y_bot * mm)
+
+    # Texte "Bat ia" à droite des triangles
+    text_x_mm = t2_x_right + 4  # 4 mm de gap après les triangles
+    text_y_baseline_mm = y_mm + h_mm / 2 - 14 * 0.123  # centré pour 14 pt
+
+    canvas.setFont("Helvetica-Bold", 14)
+    canvas.drawString(text_x_mm * mm, text_y_baseline_mm * mm, "Bat")
+
+    # "ia" en italique, légèrement plus petit
+    canvas.setFont("Helvetica-Oblique", 13)
+    canvas.drawString((text_x_mm + 11) * mm, text_y_baseline_mm * mm, "ia")
 
 
 def _wrap_cell_label(label: str, max_chars: int = 8) -> list[str]:
@@ -276,9 +335,11 @@ def render_rcd_row(
         page_usable_width_mm=page_usable_width_mm,
     )
 
-    # Y bas-gauche des deux strips (reportlab Canvas mesure de bas en haut)
+    # Y bas-gauche des deux strips (reportlab Canvas mesure de bas en haut).
+    # STRIP_INNER_GAP_MM laisse un espace blanc visible entre header et body,
+    # comme dans le format Hager (les 2 strips ne se touchent pas).
     y_header_bottom_mm = y_top_mm - HEADER_STRIP_H_MM
-    y_body_bottom_mm = y_header_bottom_mm - BODY_STRIP_H_MM
+    y_body_bottom_mm = y_header_bottom_mm - STRIP_INNER_GAP_MM - BODY_STRIP_H_MM
 
     # -- STRIP HEADER (ligne du haut : index, IDx, Q-numéros, batIA) --
     x_cursor_mm = x_left_mm
@@ -307,12 +368,9 @@ def render_rcd_row(
                         f"Q{q_num}", font_size=9, bold=True)
         x_cursor_mm += DISJONCTEUR_CELL_W_MM
 
-    # Cartouche batIA (header)
+    # Cartouche header : box vide (le logo batIA n'est rendu que dans le body)
     _draw_cell_box(canvas, x_cursor_mm, y_header_bottom_mm,
                    widths["cartouche"], HEADER_STRIP_H_MM)
-    _draw_cell_text(canvas, x_cursor_mm, y_header_bottom_mm,
-                    widths["cartouche"], HEADER_STRIP_H_MM,
-                    "batIA", font_size=9, bold=True)
 
     # -- STRIP BODY (ligne du bas : picto + label par cellule) --
     x_cursor_mm = x_left_mm
@@ -364,22 +422,11 @@ def render_rcd_row(
             )
         x_cursor_mm += DISJONCTEUR_CELL_W_MM
 
-    # Cartouche batIA body : juste un texte stylisé (le logo batIA en SVG sera
-    # ajouté en Task ultérieure si nécessaire)
+    # Cartouche body : box + logo batIA inline (2 triangles + texte "Bat ia")
     _draw_cell_box(canvas, x_cursor_mm, y_body_bottom_mm,
                    widths["cartouche"], BODY_STRIP_H_MM)
-    canvas.setFont("Helvetica-Bold", 11)
-    canvas.drawCentredString(
-        (x_cursor_mm + widths["cartouche"] / 2) * mm,
-        (y_body_bottom_mm + BODY_STRIP_H_MM / 2 - 4) * mm,
-        "batIA",
-    )
-    canvas.setFont("Helvetica", 7)
-    canvas.drawCentredString(
-        (x_cursor_mm + widths["cartouche"] / 2) * mm,
-        (y_body_bottom_mm + BODY_STRIP_H_MM / 2 - 8) * mm,
-        "Tableau électrique",
-    )
+    _draw_batia_logo_cartouche(canvas, x_cursor_mm, y_body_bottom_mm,
+                                widths["cartouche"], BODY_STRIP_H_MM)
 
     return global_q_start + len(row_circuits)
 
@@ -461,7 +508,7 @@ def render_etiquettes_pdf(tableau: Tableau) -> bytes:
                     is_overflow_row=is_overflow,
                     x_left_mm=PAGE_MARGIN_MM,
                 )
-                y_top_mm -= (HEADER_STRIP_H_MM + BODY_STRIP_H_MM + ROW_VERTICAL_GAP_MM)
+                y_top_mm -= (HEADER_STRIP_H_MM + STRIP_INNER_GAP_MM + BODY_STRIP_H_MM + ROW_VERTICAL_GAP_MM)
 
         _draw_footer(canvas, tableau, page_idx, total_pages)
         canvas.showPage()
