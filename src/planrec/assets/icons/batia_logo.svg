@@ -1,19 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 150">
-  <!-- Icon : two overlapping outlined "D" shapes (back = dark navy, front = violet) -->
-  <!-- Back D (dark navy, top-right offset) -->
-  <path d="M 45 25 L 100 25 L 130 55 L 130 95 L 100 125 L 45 125 Q 30 125 30 100 L 30 50 Q 30 25 45 25 Z"
-        fill="none" stroke="#0F1B3E" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
-  <!-- Front D (violet, bottom-left offset) -->
-  <path d="M 35 35 L 90 35 L 120 65 L 120 105 L 90 135 L 35 135 Q 20 135 20 110 L 20 60 Q 20 35 35 35 Z"
-        fill="none" stroke="#7B1FA2" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Back D (dark navy, top-right position) -->
+  <!-- Pentagon vertices: top-left, top-right(higher), right peak, bottom-right, bottom-left -->
+  <path d="M 50 30 L 110 30 L 135 75 L 110 120 L 50 120 Z"
+        fill="none" stroke="#0F1B3E" stroke-width="5"
+        stroke-linejoin="round" stroke-linecap="round"/>
 
-  <!-- "Bat" text (bold dark navy) -->
+  <!-- Front D (violet, bottom-left position, offset by ~15px down-left from back) -->
+  <path d="M 35 45 L 95 45 L 120 90 L 95 135 L 35 135 Z"
+        fill="none" stroke="#7B1FA2" stroke-width="5"
+        stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- "Bat" text -->
   <text x="160" y="105" font-family="Helvetica,Arial,sans-serif"
-        font-weight="900" font-size="78" fill="#0F1B3E"
-        letter-spacing="-2">Bat</text>
+        font-weight="900" font-size="82" fill="#0F1B3E">Bat</text>
 
-  <!-- "ia" text (italic dark navy, smaller) -->
-  <text x="298" y="105" font-family="Helvetica,Arial,sans-serif"
-        font-style="italic" font-weight="600" font-size="62" fill="#0F1B3E"
-        letter-spacing="-1">ia</text>
+  <!-- "ia" text (italic, smaller, same baseline) -->
+  <text x="305" y="105" font-family="Helvetica,Arial,sans-serif"
+        font-style="italic" font-weight="600" font-size="64" fill="#0F1B3E">ia</text>
 </svg>
