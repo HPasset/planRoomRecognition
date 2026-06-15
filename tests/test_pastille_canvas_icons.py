@@ -61,3 +61,47 @@ def test_each_svg_uses_currentcolor_or_no_hardcoded_color():
                 f"{svg.name} : couleur hardcodée '{attr}={value}' interdite "
                 f"(utilise 'currentColor' ou 'white')"
             )
+
+
+def test_each_equipment_type_has_matching_icon():
+    """Pour chaque EquipmentType supporté par batIA (sauf alias internes),
+    il existe un fichier .svg correspondant dans assets/icons/.
+
+    Garde-fou : si on ajoute un nouveau EquipmentType, on doit aussi ajouter
+    son icône, sinon le canvas affichera le fallback '?' à la place.
+    """
+    from src.planrec.nfc_equipments import EQUIP_TYPES
+
+    svg_files = {p.stem for p in _list_svg_files()}
+    # Convertir les svg_id du registre EQUIP_TYPES en stems de fichier
+    expected = {info["svg_id"] for info in EQUIP_TYPES.values()}
+    # Le set d'icônes peut contenir des fichiers en plus (ex. 'differential'
+    # uniquement utilisé par le PDF étiquettes) mais doit couvrir tous
+    # les svg_id du registre.
+    # Le composant React (PastilleCanvas.tsx) résout chaque svg_id vers un
+    # fichier .svg via une lookup explicite : la plupart des svg_id matchent
+    # directement le stem du fichier, mais quelques-uns suivent la convention
+    # "sans underscore" côté Python alors que le fichier porte un underscore.
+    # On encode ici le même mapping que la lookup TSX pour rester aligné.
+    SVG_ID_TO_FILENAME = {
+        "washingmachine": "washing_machine",
+        "towelwarmer": "towel_warmer",
+        "specfeed": "special_feed",
+    }
+    for required in expected:
+        filename = SVG_ID_TO_FILENAME.get(required, required)
+        assert filename in svg_files, (
+            f"svg_id '{required}' du registre EQUIP_TYPES n'a pas de fichier "
+            f"correspondant ('{filename}.svg') dans assets/icons/. Fichiers "
+            f"disponibles : {sorted(svg_files)}"
+        )
+
+
+def test_differential_icon_exists_for_etiquettes():
+    """L'icône 'differential' est requise pour le PDF étiquettes (cellule ID
+    sur chaque rangée RCD), même si elle n'est pas dans EQUIP_TYPES."""
+    svg_files = {p.stem for p in _list_svg_files()}
+    assert "differential" in svg_files, (
+        "differential.svg manquant — utilisé par le PDF étiquettes (cellule "
+        "ID 'Interrupteur différentiel')"
+    )
