@@ -83,6 +83,8 @@ PE_Y = 86.0
 PICTO_TOP_Y = 78.0
 PICTO_SIZE_MM = 9.0
 CARTOUCHE_TOP_Y = 44.0
+
+# Zones horizontales (x, mm)
 LEGEND_RIGHT = 36.0
 SLOTS_LEFT = 38.0
 
@@ -140,7 +142,7 @@ def _draw_cartouche(c: Canvas, tableau: Tableau, cartouche: CartoucheInfo,
     c.setLineWidth(0.8)
     c.rect(x0 * mm, y0 * mm, w * mm, h * mm)
     _draw_batia_logo_cartouche(c, x0 + 1, y0 + 1, 34.0, h - 2)
-    lx = x0 + 36
+    lx = x0 + LEGEND_RIGHT
     c.line(lx * mm, y0 * mm, lx * mm, (y0 + h) * mm)
     fields = [
         ("Projet", cartouche.projet or "—"),
@@ -167,12 +169,170 @@ def _draw_cartouche(c: Canvas, tableau: Tableau, cartouche: CartoucheInfo,
                  "indicatives. L'artisan valide la conformité finale.")
 
 
+def _slot_x(local_slot_idx: int) -> float:
+    """Centre x (mm) d'un slot dans la grille de départs."""
+    slot_w = (FRAME_RIGHT - SLOTS_LEFT) / SLOTS_PER_FOLIO
+    return SLOTS_LEFT + (local_slot_idx + 0.5) * slot_w
+
+
+def _draw_source(c: Canvas, db_calibre: int) -> None:
+    """Alim. BT + disjoncteur de branchement (folio 1), relié à la barre."""
+    x = FRAME_LEFT + 16
+    top = MAIN_BUS_Y + 12
+    c.setLineWidth(1.0)
+    c.line(x * mm, top * mm, x * mm, (MAIN_BUS_Y + 6) * mm)
+    c.line((x - 1.5) * mm, (MAIN_BUS_Y + 8) * mm, x * mm, (MAIN_BUS_Y + 6) * mm)
+    c.line((x + 1.5) * mm, (MAIN_BUS_Y + 8) * mm, x * mm, (MAIN_BUS_Y + 6) * mm)
+    c.setFont("Helvetica", 6)
+    c.drawCentredString(x * mm, (top + 1) * mm, "Alim. BT")
+    bw, bh = 11.0, 8.0
+    c.setLineWidth(1.1)
+    c.rect((x - bw / 2) * mm, (MAIN_BUS_Y - bh / 2) * mm, bw * mm, bh * mm)
+    c.line((x - bw / 2 + 2) * mm, (MAIN_BUS_Y + bh / 2 - 2) * mm,
+           (x + bw / 2 - 2) * mm, (MAIN_BUS_Y - bh / 2 + 2) * mm)
+    c.setFont("Helvetica-Bold", 6)
+    c.drawString((x + bw / 2 + 1) * mm, (MAIN_BUS_Y + 2) * mm, "DB1")
+    c.setFont("Helvetica", 5.5)
+    c.drawString((x + bw / 2 + 1) * mm, (MAIN_BUS_Y - 1.5) * mm, f"{db_calibre} A")
+    c.drawString((x + bw / 2 + 1) * mm, (MAIN_BUS_Y - 4.5) * mm,
+                 f"{AGCP_SENSITIVITY_MA} mA · S")
+    c.setLineWidth(1.4)
+    c.line((x + bw / 2) * mm, MAIN_BUS_Y * mm, SLOTS_LEFT * mm, MAIN_BUS_Y * mm)
+
+
+def _draw_id_symbol(c: Canvas, x: float, rcd: RCD, id_idx: int) -> None:
+    w, h = 12.0, 8.0
+    c.setLineWidth(1.1)
+    c.rect((x - w / 2) * mm, (ID_SYM_Y - h / 2) * mm, w * mm, h * mm)
+    c.line((x - w / 2 + 2) * mm, (ID_SYM_Y + h / 2 - 2) * mm,
+           (x + w / 2 - 2) * mm, (ID_SYM_Y - h / 2 + 2) * mm)
+    c.circle(x * mm, ID_SYM_Y * mm, 1.4 * mm, stroke=1, fill=0)
+    c.setFont("Helvetica-Bold", 6)
+    c.drawCentredString(x * mm, (ID_SYM_Y + h / 2 + 2) * mm, f"ID{id_idx}")
+    c.setFont("Helvetica", 5)
+    c.drawCentredString(x * mm, (ID_SYM_Y - h / 2 - 3) * mm, f"{rcd.amps}A 30mA")
+    c.drawCentredString(x * mm, (ID_SYM_Y - h / 2 - 6) * mm, f"Type {rcd.rcd_type}")
+
+
+def _draw_q_symbol(c: Canvas, x: float, circ, q_idx: int) -> None:
+    w, h = 7.0, 6.0
+    c.setLineWidth(1.0)
+    c.rect((x - w / 2) * mm, (Q_SYM_Y - h / 2) * mm, w * mm, h * mm)
+    c.line((x - w / 2 + 1) * mm, (Q_SYM_Y + h / 2 - 1) * mm,
+           (x + w / 2 - 1) * mm, (Q_SYM_Y - h / 2 + 1) * mm)
+    c.setFont("Helvetica-Bold", 6)
+    c.drawCentredString(x * mm, (Q_SYM_Y + h / 2 + 5) * mm, circuit_repere(q_idx))
+    c.setFont("Helvetica", 5)
+    c.drawCentredString(x * mm, (Q_SYM_Y + h / 2 + 1.5) * mm,
+                        f"{DEFAULT_CURVE} {circ.breaker_amps}A")
+    c.drawCentredString(x * mm, (Q_SYM_Y - h / 2 - 3) * mm, "L1,N")
+
+
+def _draw_earth_drop(c: Canvas, x: float, y: float) -> None:
+    c.setStrokeColor(colors.green)
+    c.setLineWidth(0.8)
+    c.line((x - 2) * mm, y * mm, (x + 2) * mm, y * mm)
+    c.line((x - 1.3) * mm, (y - 0.9) * mm, (x + 1.3) * mm, (y - 0.9) * mm)
+    c.line((x - 0.6) * mm, (y - 1.8) * mm, (x + 0.6) * mm, (y - 1.8) * mm)
+    c.setStrokeColor(colors.black)
+
+
+def _draw_picto_slot(c: Canvas, circ, x: float) -> None:
+    svg_id = resolve_svg_id_for_circuit(circ)
+    try:
+        d = load_icon_as_drawing(svg_id)
+    except FileNotFoundError:
+        return
+    ref = max(d.width, d.height) or 40.0
+    s = (PICTO_SIZE_MM * mm) / ref
+    d.width *= s
+    d.height *= s
+    d.scale(s, s)
+    renderPDF.draw(d, c, (x - PICTO_SIZE_MM / 2) * mm, (PICTO_TOP_Y - PICTO_SIZE_MM) * mm)
+
+
+def _draw_localisation(c: Canvas, circ, x: float) -> None:
+    c.saveState()
+    c.translate(x * mm, (CARTOUCHE_TOP_Y + 2) * mm)
+    c.rotate(90)
+    c.setFont("Helvetica", 5.5)
+    c.drawString(0, -1.5 * mm, (circ.label or "")[:22])
+    c.restoreState()
+
+
 def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
                         folio_idx: int, total: int, id_offset: int,
                         q_offset: int, db_calibre: int) -> None:
-    """Contenu électrique d'un folio (bus + ID + départs + terre + pictos +
-    localisation). Implémenté en Task 2."""
-    pass  # Task 2
+    """Contenu électrique d'un folio : bus principal, source/continuation, ID +
+    bus secondaires, départs Q, barre de terre, pictos, localisation."""
+    # Barre principale
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(1.4)
+    c.line(SLOTS_LEFT * mm, MAIN_BUS_Y * mm, FRAME_RIGHT * mm, MAIN_BUS_Y * mm)
+
+    # Barre de terre PE (verte, pointillés)
+    c.setStrokeColor(colors.green)
+    c.setLineWidth(1.2)
+    c.setDash(4, 2)
+    c.line(SLOTS_LEFT * mm, PE_Y * mm, FRAME_RIGHT * mm, PE_Y * mm)
+    c.setDash()
+    c.setFont("Helvetica", 6)
+    c.setFillColor(colors.green)
+    c.drawRightString((SLOTS_LEFT - 1) * mm, (PE_Y + 1) * mm, "PE1")
+    c.setFillColor(colors.black)
+    c.setStrokeColor(colors.black)
+
+    # Source (folio 1) ou continuation
+    if is_first:
+        _draw_source(c, db_calibre)
+    else:
+        c.setFont("Helvetica-Oblique", 6)
+        c.drawString(SLOTS_LEFT * mm, (MAIN_BUS_Y + 2) * mm,
+                     f"suite du folio {folio_idx}")
+    if folio_idx < total - 1:
+        c.setFont("Helvetica-Oblique", 6)
+        c.drawRightString((FRAME_RIGHT - 1) * mm, (MAIN_BUS_Y + 2) * mm,
+                          f"suite folio {folio_idx + 2}")
+
+    # Légendes colonne gauche
+    c.saveState()
+    c.translate((FRAME_LEFT + 5) * mm, (CARTOUCHE_TOP_Y + 4) * mm)
+    c.rotate(90)
+    c.setFont("Helvetica", 6)
+    c.drawString(0, 0, "Application / Localisation des départs")
+    c.restoreState()
+    c.setFont("Helvetica", 6)
+    c.drawString((FRAME_LEFT + 2) * mm, (PICTO_TOP_Y - PICTO_SIZE_MM / 2) * mm,
+                 "Pictogramme")
+
+    # Slots : ID puis ses départs
+    local = 0
+    id_idx = id_offset
+    q_idx = q_offset
+    for rcd in folio_rcds:
+        id_idx += 1
+        id_x = _slot_x(local)
+        c.setLineWidth(1.0)
+        c.line(id_x * mm, MAIN_BUS_Y * mm, id_x * mm, (ID_SYM_Y + 4) * mm)
+        _draw_id_symbol(c, id_x, rcd, id_idx)
+        local += 1
+        n_q = len(rcd.circuits)
+        if n_q:
+            last_q_x = _slot_x(local + n_q - 1)
+            c.setLineWidth(1.2)
+            c.line(id_x * mm, (ID_SYM_Y - 4) * mm, id_x * mm, SEC_BUS_Y * mm)
+            c.line(id_x * mm, SEC_BUS_Y * mm, last_q_x * mm, SEC_BUS_Y * mm)
+        for circ in rcd.circuits:
+            q_idx += 1
+            qx = _slot_x(local)
+            c.setLineWidth(1.0)
+            c.line(qx * mm, SEC_BUS_Y * mm, qx * mm, (Q_SYM_Y + 4) * mm)
+            _draw_q_symbol(c, qx, circ, q_idx)
+            c.line(qx * mm, (Q_SYM_Y - 4) * mm, qx * mm, PE_Y * mm)
+            _draw_earth_drop(c, qx, PE_Y)
+            _draw_picto_slot(c, circ, qx)
+            _draw_localisation(c, circ, qx)
+            local += 1
 
 
 def render_schema_unifilaire_pdf(tableau: Tableau, cartouche: CartoucheInfo) -> bytes:

@@ -97,3 +97,44 @@ def test_multifolio_pagination():
     from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
     pdf = render_schema_unifilaire_pdf(_make_tableau(4, departs_per_id=3), _cartouche())
     assert len(PdfReader(io.BytesIO(pdf)).pages) == 2
+
+
+def test_schematic_tokens_present():
+    """Repères DB1/ID1/Q1, L1,N, PE1 présents dans le texte du folio 1."""
+    from pypdf import PdfReader
+    import io
+    from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
+    pdf = render_schema_unifilaire_pdf(_make_tableau(2, departs_per_id=2), _cartouche())
+    text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
+    assert "DB1" in text
+    assert "ID1" in text
+    assert "Q1" in text
+    assert "L1,N" in text
+    assert "PE1" in text
+
+
+def test_global_q_numbering_across_folios():
+    """Numérotation Q globale et continue : Q1 sur folio 1, Q12 sur le dernier."""
+    from pypdf import PdfReader
+    import io
+    from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
+    pdf = render_schema_unifilaire_pdf(_make_tableau(4, departs_per_id=3), _cartouche())
+    reader = PdfReader(io.BytesIO(pdf))
+    assert "Q1" in reader.pages[0].extract_text()
+    assert "Q12" in reader.pages[1].extract_text()
+
+
+def test_all_circuit_types_render_without_crash():
+    from src.planrec.nfc_tableau import Tableau, RCD, Circuit, CircuitType
+    from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
+    circuits = [
+        Circuit(id=f"c{i}", type=ct, label=ct.value, breaker_amps=16,
+                cable_section_mm2=1.5, rooms_served=["X"], n_devices=1)
+        for i, ct in enumerate(CircuitType)
+    ]
+    rcd = RCD(id="r", rcd_type="AC", amps=40, sensitivity_ma=30, circuits=circuits)
+    tab = Tableau(typology="T4", typology_source="auto", surface_m2=90.0,
+                  heating_enabled=True, rcds=[rcd], total_modules=0, n_rails=0,
+                  notes=[], warnings=[])
+    pdf = render_schema_unifilaire_pdf(tab, _cartouche(puissance_kva=12))
+    assert pdf.startswith(b"%PDF-")
