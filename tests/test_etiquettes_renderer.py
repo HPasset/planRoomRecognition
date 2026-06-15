@@ -244,3 +244,30 @@ def test_render_etiquettes_pdf_q_numbering_continuous_across_rcds():
     # Sur RCD 2 (global continu) : Q4, Q5
     for q in ("Q4", "Q5"):
         assert q in text
+
+
+def test_render_etiquettes_pdf_overflow_creates_bis_row():
+    """Un RCD à 8 disjoncteurs (limite NFC) produit 2 rangées : 1 puis 1 bis.
+    Vérifié par la présence du texte '1 bis' dans le PDF."""
+    import io
+    from pypdf import PdfReader
+    from src.planrec.etiquettes_renderer import render_etiquettes_pdf
+    from src.planrec.nfc_tableau import Tableau, RCD, Circuit, CircuitType
+
+    circuits = [
+        Circuit(id=f"c{j}", type=CircuitType.SOCKET, label="Prises",
+                breaker_amps=20, cable_section_mm2=2.5)
+        for j in range(8)
+    ]
+    rcd = RCD(id="rcd1", rcd_type="AC", amps=40, sensitivity_ma=30,
+              circuits=circuits)
+    tab = Tableau(typology="T2", typology_source="auto", surface_m2=None,
+                  heating_enabled=False, rcds=[rcd], total_modules=8,
+                  n_rails=1, notes=[], warnings=[])
+    pdf_bytes = render_etiquettes_pdf(tab)
+    text = PdfReader(io.BytesIO(pdf_bytes)).pages[0].extract_text()
+    # Convention : index "1 bis" pour la rangée de débordement
+    assert "1 bis" in text
+    # Les Qn vont de Q1 à Q8 continûment
+    for q in (f"Q{i}" for i in range(1, 9)):
+        assert q in text
