@@ -3320,12 +3320,48 @@ def main():
 
             from datetime import date as _date_su
             from src.planrec.schema_unifilaire import CartoucheInfo as _CartoucheInfo
+
+            _default_kva = _schema_uni.derive_puissance_kva(tableau.typology)
+            _client_nom, _client_ville = "", ""
+            with st.expander("📐 Schéma unifilaire — cartouche", expanded=False):
+                _projet = st.text_input("Projet", key="schema_projet")
+                try:
+                    from src.facturation.db import get_session_factory
+                    from src.facturation.services.artisan import get_default_artisan
+                    from src.facturation.services.clients import list_clients
+                    _sess = get_session_factory()()
+                    try:
+                        _artisan = get_default_artisan(_sess)
+                        _clients = list_clients(_sess, _artisan.id) if _artisan else []
+                    finally:
+                        _sess.close()
+                    _opts = ["— Aucun —"] + [
+                        f"{c.nom_ou_raison} ({c.adresse_ville})" for c in _clients
+                    ]
+                    _sel = st.selectbox("Client", _opts, key="schema_client")
+                    _ci = _opts.index(_sel) - 1
+                    if _ci >= 0:
+                        _client_nom = _clients[_ci].nom_ou_raison
+                        _client_ville = _clients[_ci].adresse_ville
+                except Exception:
+                    _client_nom = st.text_input(
+                        "Client", key="schema_client_text",
+                        help="Référentiel clients indisponible — saisie libre.",
+                    )
+                _puissance = st.number_input(
+                    "Puissance prévisionnelle (kVA)", min_value=3, max_value=36,
+                    value=int(_default_kva), step=3, key="schema_puissance",
+                )
+                _regime = st.selectbox(
+                    "Régime de neutre", ["TT", "TN", "IT"], index=0,
+                    key="schema_regime",
+                )
             _cartouche = _CartoucheInfo(
-                projet="",
-                client_nom="",
-                client_ville="",
-                puissance_kva=_schema_uni.derive_puissance_kva(tableau.typology),
-                regime_neutre="TT",
+                projet=_projet or "",
+                client_nom=_client_nom or "",
+                client_ville=_client_ville or "",
+                puissance_kva=int(_puissance),
+                regime_neutre=_regime,
                 date_iso=_date_su.today().isoformat(),
             )
             try:
