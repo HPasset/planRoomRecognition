@@ -138,3 +138,18 @@ def test_all_circuit_types_render_without_crash():
                   notes=[], warnings=[])
     pdf = render_schema_unifilaire_pdf(tab, _cartouche(puissance_kva=12))
     assert pdf.startswith(b"%PDF-")
+
+
+def test_db_and_id_derived_annotations_in_pdf():
+    """Spec §8 : le DB porte 500 mA + calibre dérivé de la puissance, et les ID
+    portent leur sensibilité 30 mA + type. Pour 12 kVA, DB = 60 A."""
+    from pypdf import PdfReader
+    import io
+    from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
+    pdf = render_schema_unifilaire_pdf(_make_tableau(1, departs_per_id=2),
+                                       _cartouche(puissance_kva=12))
+    text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
+    assert "60 A" in text          # DB calibre dérivé de 12 kVA
+    assert "500 mA" in text        # sensibilité AGCP (sélectif)
+    assert "30mA" in text          # sensibilité ID 30 mA
+    assert "Type A" in text        # type du 1er ID (rcd_type "A")
