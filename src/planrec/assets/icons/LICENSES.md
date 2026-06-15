@@ -75,3 +75,27 @@ Source : Custom batIA 2026-06-03
 Auteur : Hadrien Passet
 Licence : CC0
 Notes : Silhouette générique de sèche-linge avec hublot frontal + vapeur.
+
+## boiler.svg
+Source : Custom batIA 2026-06-03
+Auteur : Hadrien Passet
+Licence : CC0
+Notes : Silhouette générique de cumulus / chauffe-eau.
+
+## convector.svg
+Source : Custom batIA 2026-06-03
+Auteur : Hadrien Passet
+Licence : CC0
+Notes : Silhouette générique de convecteur électrique avec ondulations de chaleur.
+
+## towel_warmer.svg
+Source : Custom batIA 2026-06-03
+Auteur : Hadrien Passet
+Licence : CC0
+Notes : Silhouette générique de sèche-serviettes.
+
+## special_feed.svg
+Source : Custom batIA 2026-06-03
+Auteur : Hadrien Passet
+Licence : CC0
+Notes : Symbole d'alimentation spécialisée générique (cercle + flèche entrante).
