@@ -40,6 +40,7 @@ pycocotools==2.0.8
 accelerate==1.1.1
 matplotlib==3.9.2
 tqdm==4.66.6
+svglib==1.5.1
 svgpathtools==1.6.1
 SQLAlchemy==2.0.35
 alembic==1.13.3
