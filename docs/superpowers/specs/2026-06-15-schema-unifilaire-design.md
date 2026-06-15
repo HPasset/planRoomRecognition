@@ -1,3 +1,5 @@
+> ⚠️ **REMPLACÉE** par [2026-06-15-schema-unifilaire-hager-design.md](2026-06-15-schema-unifilaire-hager-design.md) (format Hager paysage). Ce document décrit la première version portrait colonnes-par-ID, livrée puis abandonnée. Conservé pour l'historique.
+
 # Schéma unifilaire du tableau électrique — Design
 
 **Date** : 2026-06-15
