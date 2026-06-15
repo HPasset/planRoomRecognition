@@ -271,3 +271,20 @@ def test_render_etiquettes_pdf_overflow_creates_bis_row():
     # Les Qn vont de Q1 à Q8 continûment
     for q in (f"Q{i}" for i in range(1, 9)):
         assert q in text
+
+
+def test_render_etiquettes_pdf_empty_tableau_returns_warning_page():
+    """Un Tableau sans aucun RCD ne doit pas crasher mais émettre une page
+    avec un message d'avertissement."""
+    import io
+    from pypdf import PdfReader
+    from src.planrec.etiquettes_renderer import render_etiquettes_pdf
+    from src.planrec.nfc_tableau import Tableau
+
+    empty = Tableau(typology="T1", typology_source="auto", surface_m2=None,
+                    heating_enabled=False, rcds=[], total_modules=0,
+                    n_rails=0, notes=[], warnings=[])
+    pdf_bytes = render_etiquettes_pdf(empty)
+    assert pdf_bytes.startswith(b"%PDF-")
+    text = PdfReader(io.BytesIO(pdf_bytes)).pages[0].extract_text()
+    assert "Aucun RCD" in text or "vide" in text
