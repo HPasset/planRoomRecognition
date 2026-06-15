@@ -10,7 +10,7 @@ from pathlib import Path
 from reportlab.graphics.shapes import Drawing
 from svglib.svglib import svg2rlg
 
-from src.planrec.nfc_tableau import CircuitType
+from src.planrec.nfc_tableau import Circuit, CircuitType
 
 ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 
@@ -61,7 +61,7 @@ LABEL_PREFIX_TO_SVG_ID: dict[str, str] = {
 }
 
 
-def resolve_svg_id_for_circuit(circuit) -> str:
+def resolve_svg_id_for_circuit(circuit: Circuit) -> str:
     """Picto le plus adapté : priorité au préfixe du label, fallback CircuitType."""
     label = circuit.label or ""
     for prefix, svg_id in LABEL_PREFIX_TO_SVG_ID.items():

@@ -15,8 +15,6 @@ from src.planrec.icon_assets import (
     ICONS_DIR,
     load_icon_as_drawing,
     resolve_svg_id_for_circuit as _resolve_svg_id_for_circuit,
-    CIRCUIT_TYPE_TO_SVG_ID,
-    LABEL_PREFIX_TO_SVG_ID,
 )
 
 
