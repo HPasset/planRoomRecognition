@@ -201,6 +201,7 @@ def _draw_source(c: Canvas, db_calibre: int) -> None:
 
 
 def _draw_id_symbol(c: Canvas, x: float, rcd: RCD, id_idx: int) -> None:
+    """Symbole interrupteur différentiel (ID) + repère, calibre, type."""
     w, h = 12.0, 8.0
     c.setLineWidth(1.1)
     c.rect((x - w / 2) * mm, (ID_SYM_Y - h / 2) * mm, w * mm, h * mm)
@@ -210,11 +211,12 @@ def _draw_id_symbol(c: Canvas, x: float, rcd: RCD, id_idx: int) -> None:
     c.setFont("Helvetica-Bold", 6)
     c.drawCentredString(x * mm, (ID_SYM_Y + h / 2 + 2) * mm, f"ID{id_idx}")
     c.setFont("Helvetica", 5)
-    c.drawCentredString(x * mm, (ID_SYM_Y - h / 2 - 3) * mm, f"{rcd.amps}A 30mA")
+    c.drawCentredString(x * mm, (ID_SYM_Y - h / 2 - 3) * mm, f"{rcd.amps}A {rcd.sensitivity_ma}mA")
     c.drawCentredString(x * mm, (ID_SYM_Y - h / 2 - 6) * mm, f"Type {rcd.rcd_type}")
 
 
 def _draw_q_symbol(c: Canvas, x: float, circ, q_idx: int) -> None:
+    """Symbole disjoncteur divisionnaire (Q) + repère, calibre/courbe, L1,N."""
     w, h = 7.0, 6.0
     c.setLineWidth(1.0)
     c.rect((x - w / 2) * mm, (Q_SYM_Y - h / 2) * mm, w * mm, h * mm)
@@ -237,7 +239,7 @@ def _draw_earth_drop(c: Canvas, x: float, y: float) -> None:
     c.setStrokeColor(colors.black)
 
 
-def _draw_picto_slot(c: Canvas, circ, x: float) -> None:
+def _draw_picto_slot(c: Canvas, x: float, circ) -> None:
     svg_id = resolve_svg_id_for_circuit(circ)
     try:
         d = load_icon_as_drawing(svg_id)
@@ -251,7 +253,7 @@ def _draw_picto_slot(c: Canvas, circ, x: float) -> None:
     renderPDF.draw(d, c, (x - PICTO_SIZE_MM / 2) * mm, (PICTO_TOP_Y - PICTO_SIZE_MM) * mm)
 
 
-def _draw_localisation(c: Canvas, circ, x: float) -> None:
+def _draw_localisation(c: Canvas, x: float, circ) -> None:
     c.saveState()
     c.translate(x * mm, (CARTOUCHE_TOP_Y + 2) * mm)
     c.rotate(90)
@@ -330,8 +332,8 @@ def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
             _draw_q_symbol(c, qx, circ, q_idx)
             c.line(qx * mm, (Q_SYM_Y - 4) * mm, qx * mm, PE_Y * mm)
             _draw_earth_drop(c, qx, PE_Y)
-            _draw_picto_slot(c, circ, qx)
-            _draw_localisation(c, circ, qx)
+            _draw_picto_slot(c, qx, circ)
+            _draw_localisation(c, qx, circ)
             local += 1
 
 
