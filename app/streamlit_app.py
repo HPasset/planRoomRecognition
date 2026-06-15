@@ -3250,6 +3250,7 @@ def main():
     if st.session_state.get(_devis_triggered_key):
         from src.planrec import nfc_tableau as _nfc_tab
         from src.planrec import tableau_renderer as _tab_render
+        from src.planrec import etiquettes_renderer as _etiq_render
 
         st.markdown("---")
         st.subheader("⚡ Tableau électrique")
@@ -3302,13 +3303,38 @@ def main():
 
             # PDF download
             pdf_bytes = _tab_render.export_pdf(tableau)
-            st.download_button(
-                "📄 Télécharger le tableau (PDF A4)",
-                data=pdf_bytes,
-                file_name=f"tableau_electrique_{tableau.typology}_{img_hash[:8]}.pdf",
-                mime="application/pdf",
-                key="dl_tableau_pdf",
-            )
+            try:
+                pdf_etiquettes = _etiq_render.render_etiquettes_pdf(tableau)
+                etiquettes_err = None
+            except Exception as e:
+                pdf_etiquettes = None
+                etiquettes_err = str(e)
+
+            _col_dl_1, _col_dl_2 = st.columns(2)
+            with _col_dl_1:
+                st.download_button(
+                    "📄 Télécharger le tableau (PDF A4)",
+                    data=pdf_bytes,
+                    file_name=f"tableau_electrique_{tableau.typology}_{img_hash[:8]}.pdf",
+                    mime="application/pdf",
+                    key="dl_tableau_pdf",
+                )
+            with _col_dl_2:
+                if pdf_etiquettes is not None:
+                    st.download_button(
+                        "📎 Télécharger les étiquettes (PDF)",
+                        data=pdf_etiquettes,
+                        file_name=f"etiquettes_{tableau.typology}_{img_hash[:8]}.pdf",
+                        mime="application/pdf",
+                        key="dl_etiquettes_pdf",
+                        help="A4 paysage 1:1. Imprimer à 100 % pour qu'elles "
+                             "rentrent dans le porte-étiquettes physique.",
+                    )
+                else:
+                    st.error(
+                        f"⚠ Étiquettes indisponibles : {etiquettes_err}",
+                        icon="⚠️",
+                    )
 
     # --- Debug: ALL raw OCR hits (before any filtering) ---
     if ocr_hits_raw:
