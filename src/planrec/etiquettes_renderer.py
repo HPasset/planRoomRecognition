@@ -413,7 +413,7 @@ def _draw_footer(canvas, tableau, page_idx: int, total_pages: int):
         f"-  Page {page_idx + 1}/{total_pages}"
     )
     canvas.drawString(PAGE_MARGIN_MM * mm, y_mm * mm, left)
-    right = "Imprimer a l'echelle 1:1 (option Taille reelle ou 100 %)"
+    right = "Imprimer à l'échelle 1:1 (option « Taille réelle » ou « 100 % »)"
     canvas.drawRightString(
         (A4_LANDSCAPE_W_MM - PAGE_MARGIN_MM) * mm, y_mm * mm, right
     )
