@@ -7,44 +7,17 @@ Voir docs/superpowers/specs/2026-06-03-etiquettes-tableau-design.md
 from __future__ import annotations
 
 from io import BytesIO
-from pathlib import Path
 
-from reportlab.graphics.shapes import Drawing
 from svglib.svglib import svg2rlg
 
 from src.planrec.nfc_tableau import Circuit, RCD
-
-ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
-
-
-def load_icon_as_drawing(svg_id: str) -> Drawing:
-    """Charge un fichier .svg depuis assets/icons/ et le convertit en
-    reportlab Drawing prêt à être placé sur un Canvas.
-
-    Substitue 'currentColor' par '#000000' avant le parsing : svglib ne
-    sait pas évaluer currentColor (qui nécessite un contexte CSS parent
-    inexistant côté reportlab), donc on injecte la couleur cible (noir
-    pour impression monochrome) à la main.
-
-    Args:
-        svg_id: nom du fichier sans extension (ex. 'socket', 'light')
-
-    Returns:
-        reportlab.graphics.shapes.Drawing prêt à être placé.
-
-    Raises:
-        FileNotFoundError: si le fichier .svg n'existe pas dans le dossier.
-    """
-    svg_path = ICONS_DIR / f"{svg_id}.svg"
-    if not svg_path.is_file():
-        raise FileNotFoundError(
-            f"Icône introuvable : {svg_path}. "
-            f"Liste autorisée = {sorted(p.stem for p in ICONS_DIR.glob('*.svg'))}"
-        )
-    raw = svg_path.read_text(encoding="utf-8")
-    raw = raw.replace("currentColor", "#000000")
-    drawing = svg2rlg(BytesIO(raw.encode("utf-8")))
-    return drawing
+from src.planrec.icon_assets import (
+    ICONS_DIR,
+    load_icon_as_drawing,
+    resolve_svg_id_for_circuit as _resolve_svg_id_for_circuit,
+    CIRCUIT_TYPE_TO_SVG_ID,
+    LABEL_PREFIX_TO_SVG_ID,
+)
 
 
 # Constantes de layout (en millimètres, A4 paysage)
@@ -125,8 +98,6 @@ from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.graphics import renderPDF
 
-from src.planrec.nfc_tableau import CircuitType
-
 # Conventions de dimensions (mm)
 HEADER_STRIP_H_MM = 8.0        # hauteur du strip header (IDx, Qn, ...)
 BODY_STRIP_H_MM = 22.0         # hauteur du strip body (picto + label)
@@ -135,48 +106,6 @@ STRIP_INNER_GAP_MM = 2.0       # gap entre header strip et body strip d'une mêm
 PICTO_SIZE_MM = 12.0           # taille du pictogramme dans la cellule body
 PICTO_TOP_OFFSET_MM = 2.0      # marge haute entre le picto et le bord du strip
 TEXT_BELOW_PICTO_GAP_MM = 1.0  # gap vertical entre picto et label texte
-
-
-# Mapping CircuitType -> svg_id pour les pictos étiquettes.
-# La cellule "Interrupteur différentiel" utilise un picto dédié (l'ID lui-même).
-CIRCUIT_TYPE_TO_SVG_ID: dict[CircuitType, str] = {
-    CircuitType.LIGHTING: "light",
-    CircuitType.SOCKET: "socket",
-    CircuitType.KITCHEN_SPECIAL: "cooktop",   # fallback générique cuisine
-    CircuitType.LAUNDRY: "washing_machine",   # fallback générique buanderie
-    CircuitType.BOILER: "boiler",
-    CircuitType.HEATING: "convector",
-    CircuitType.TOWEL_WARMER: "towel_warmer",
-}
-
-# Mapping spécifique sur le libellé exact du circuit pour les sous-types
-# (le type CircuitType est trop large pour Four vs Plaque vs LV).
-LABEL_PREFIX_TO_SVG_ID: dict[str, str] = {
-    "Plaque cuisson": "cooktop",
-    "Four": "oven",
-    "Lave-vaisselle": "dishwasher",
-    "Lave-linge": "washing_machine",
-    "Sèche-linge": "dryer",
-    "Chaudière": "boiler",
-    "Cumulus": "boiler",
-    "Sèche-serviettes": "towel_warmer",
-    "Chauffage": "convector",
-    "Éclairage": "light",
-    "Prises": "socket",
-}
-
-
-def _resolve_svg_id_for_circuit(circuit) -> str:
-    """Sélectionne le picto le plus adapté pour un circuit donné.
-
-    Priorité au préfixe du label (Plaque vs Four vs LV ont tous CircuitType
-    KITCHEN_SPECIAL mais des pictos distincts). Fallback sur CircuitType.
-    """
-    label = circuit.label or ""
-    for prefix, svg_id in LABEL_PREFIX_TO_SVG_ID.items():
-        if label.startswith(prefix):
-            return svg_id
-    return CIRCUIT_TYPE_TO_SVG_ID.get(circuit.type, "special_feed")
 
 
 def _draw_cell_text(canvas, x_mm, y_mm, w_mm, h_mm, text, font_size=10, bold=False):
