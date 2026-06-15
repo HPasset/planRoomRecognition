@@ -44,3 +44,34 @@ Licence : CC0
 Référence normative : NF EN 60617 §07-21
 Notes : Design géométrique original inspiré de la convention normative
 publique NF EN 60617 §07-21.
+
+## oven.svg
+Source : Custom batIA 2026-06-03
+Auteur : Hadrien Passet
+Licence : CC0
+Notes : Silhouette générique de four encastrable ; aucune copie d'un produit
+commercial spécifique.
+
+## cooktop.svg
+Source : Custom batIA 2026-06-03
+Auteur : Hadrien Passet
+Licence : CC0
+Notes : Silhouette générique de plaque de cuisson 4 feux.
+
+## dishwasher.svg
+Source : Custom batIA 2026-06-03
+Auteur : Hadrien Passet
+Licence : CC0
+Notes : Silhouette générique de lave-vaisselle avec indication d'eau (vagues).
+
+## washing_machine.svg
+Source : Custom batIA 2026-06-03
+Auteur : Hadrien Passet
+Licence : CC0
+Notes : Silhouette générique de lave-linge avec hublot frontal.
+
+## dryer.svg
+Source : Custom batIA 2026-06-03
+Auteur : Hadrien Passet
+Licence : CC0
+Notes : Silhouette générique de sèche-linge avec hublot frontal + vapeur.
