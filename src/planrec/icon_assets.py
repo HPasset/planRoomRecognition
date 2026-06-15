@@ -15,10 +15,12 @@ from src.planrec.nfc_tableau import Circuit, CircuitType
 ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 
 
-def load_icon_as_drawing(svg_id: str) -> Drawing:
+def load_icon_as_drawing(svg_id: str, color_hex: str = "#000000") -> Drawing:
     """Charge assets/icons/<svg_id>.svg en reportlab Drawing.
 
-    Substitue 'currentColor' par '#000000' (svglib ne sait pas l'évaluer).
+    Substitue 'currentColor' par `color_hex` (svglib ne sait pas l'évaluer).
+    Par défaut noir ; passer une autre couleur pour un rendu coloré (ex. violet
+    batIA pour la bande pictogrammes du schéma unifilaire).
 
     Raises:
         FileNotFoundError: si le fichier n'existe pas.
@@ -30,7 +32,7 @@ def load_icon_as_drawing(svg_id: str) -> Drawing:
             f"Liste autorisée = {sorted(p.stem for p in ICONS_DIR.glob('*.svg'))}"
         )
     raw = svg_path.read_text(encoding="utf-8")
-    raw = raw.replace("currentColor", "#000000")
+    raw = raw.replace("currentColor", color_hex)
     return svg2rlg(BytesIO(raw.encode("utf-8")))
 
 

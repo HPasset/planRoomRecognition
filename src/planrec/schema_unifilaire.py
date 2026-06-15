@@ -1,8 +1,9 @@
 """Renderer du schéma unifilaire — format Hager (A4 paysage, bus horizontal).
 
 Cadre normalisé à double bordure (repères A-G / 1-14 dans la marge), arrivée
-AGCP → jeu de barres → ID 30 mA → disjoncteurs divisionnaires → barre de terre,
-bande pictogrammes (bibliothèque batIA) et cartouche en cellules.
+AGCP → jeu de barres JB1 → ID 30 mA → disjoncteurs divisionnaires → barre de
+terre PE, bandes Pictogramme + Localisation encadrées (pictos violet batIA) et
+cartouche en cellules.
 
 Module pur : reportlab uniquement, aucun import Streamlit/React/DB. Voir
 docs/superpowers/specs/2026-06-15-schema-unifilaire-hager-design.md
@@ -22,9 +23,10 @@ from src.planrec.nfc_tableau import Tableau, RCD
 from src.planrec.icon_assets import load_icon_as_drawing, resolve_svg_id_for_circuit
 from src.planrec.etiquettes_renderer import _draw_batia_logo_cartouche
 
-# --- AGCP / courbe ---
+# --- AGCP / courbe / couleur ---
 AGCP_SENSITIVITY_MA = 500
 DEFAULT_CURVE = "C"
+PICTO_PURPLE = "#8217fd"           # violet batIA (charte logo)
 
 # --- Dérivations ---
 _PUISSANCE_BY_TYPO = {"T1": 6, "T2": 6, "T3": 9, "T4": 12, "T5": 12}
@@ -81,18 +83,20 @@ GRID_ROWS = "ABCDEFG"
 SLOTS_PER_FOLIO = 12
 
 # Zones verticales (y depuis le bas, mm)
-MAIN_BUS_Y = 185.0
-ID_SYM_Y = 173.0
-SEC_BUS_Y = 164.0
-Q_SYM_Y = 148.0
-PE_Y = 92.0
-PICTO_TOP_Y = 84.0
+MAIN_BUS_Y = 180.0
+ID_SYM_Y = 169.0
+SEC_BUS_Y = 160.0
+Q_SYM_Y = 145.0
+PE_Y = 95.0
+# Bandes basses encadrées
+PICTO_BAND_TOP = 88.0
+PICTO_BAND_BOT = 74.0
 PICTO_SIZE_MM = 9.0
 LOCAL_LABEL_BASE_Y = 50.0          # base des libellés verticaux de localisation
-CARTOUCHE_TOP_Y = 48.0
+CARTOUCHE_TOP_Y = 48.0             # = bas de la bande Localisation
 
 # Zones horizontales (x, mm)
-LEGEND_RIGHT = 42.0
+LEGEND_RIGHT = 42.0                # séparateur colonne légende / contenu
 SLOTS_LEFT = 42.0
 
 
@@ -126,7 +130,6 @@ def _draw_grid_frame(c: Canvas) -> None:
     c.rect(CONTENT_LEFT * mm, CONTENT_BOT * mm,
            (CONTENT_RIGHT - CONTENT_LEFT) * mm, (CONTENT_TOP - CONTENT_BOT) * mm)
 
-    # Repères colonnes 1..14 (haut et bas, dans la bande)
     col_w = (CONTENT_RIGHT - CONTENT_LEFT) / N_GRID_COLS
     y_top = (FRAME_TOP + CONTENT_TOP) / 2
     y_bot = (FRAME_BOT + CONTENT_BOT) / 2
@@ -141,7 +144,6 @@ def _draw_grid_frame(c: Canvas) -> None:
             c.line(gx, FRAME_TOP * mm, gx, CONTENT_TOP * mm)
             c.line(gx, FRAME_BOT * mm, gx, CONTENT_BOT * mm)
 
-    # Repères lignes A..G (gauche et droite, dans la bande)
     row_h = (CONTENT_TOP - CONTENT_BOT) / len(GRID_ROWS)
     x_left = (FRAME_LEFT + CONTENT_LEFT) / 2
     x_right = (FRAME_RIGHT + CONTENT_RIGHT) / 2
@@ -168,12 +170,10 @@ def _draw_cartouche(c: Canvas, tableau: Tableau, cartouche: CartoucheInfo,
     c.setLineWidth(0.8)
     c.rect(x0 * mm, y0 * mm, w * mm, h * mm)
 
-    # Cellule logo (gauche)
     logo_w = 34.0
     c.line((x0 + logo_w) * mm, y0 * mm, (x0 + logo_w) * mm, (y0 + h) * mm)
     _draw_batia_logo_cartouche(c, x0 + 1, y0 + 1, logo_w - 2, h - 2)
 
-    # Bandeau de réserve (pleine largeur, en bas de la zone champs)
     res_h = 5.0
     tbl_x = x0 + logo_w
     tbl_w = w - logo_w
@@ -184,7 +184,6 @@ def _draw_cartouche(c: Canvas, tableau: Tableau, cartouche: CartoucheInfo,
                  "Calculé selon NFC 15-100 §10 + règles cabinet. Sections "
                  "indicatives. L'artisan valide la conformité finale.")
 
-    # Tableau de champs (cellules bordées), 4 colonnes × 2 lignes
     tbl_y = y0 + res_h
     tbl_h = h - res_h
     ncol, nrow = 4, 2
@@ -205,8 +204,8 @@ def _draw_cartouche(c: Canvas, tableau: Tableau, cartouche: CartoucheInfo,
         col = k % ncol
         row = k // ncol
         cx = tbl_x + col * cw
-        cyt = tbl_y + tbl_h - row * ch     # haut de la cellule
-        cyb = cyt - ch                      # bas de la cellule
+        cyt = tbl_y + tbl_h - row * ch
+        cyb = cyt - ch
         c.setLineWidth(0.3)
         c.rect(cx * mm, cyb * mm, cw * mm, ch * mm)
         if label:
@@ -224,14 +223,12 @@ def _slot_x(local_slot_idx: int) -> float:
 
 def _draw_breaker_glyph(c: Canvas, x: float, yc: float, with_cross: bool = True) -> None:
     """Symbole disjoncteur unipolaire EN 60617 (contact-levier ouvert + croix),
-    dessiné sur un conducteur vertical, centré en (x, yc), hauteur ~6 mm.
-    L'appelant raccorde le fil jusqu'à yc+3 (haut) et depuis yc-3 (bas)."""
+    sur un conducteur vertical centré en (x, yc), hauteur ~6 mm. L'appelant
+    raccorde le fil jusqu'à yc+3 (haut) et depuis yc-3 (bas)."""
     c.setStrokeColor(colors.black)
     c.setLineWidth(1.0)
-    # Contact fixe (stub haut) + pivot (bas)
     c.line(x * mm, (yc + 3) * mm, x * mm, (yc + 2.2) * mm)
     c.circle(x * mm, (yc - 3) * mm, 0.5 * mm, stroke=1, fill=1)
-    # Levier mobile (contact ouvert), du pivot vers le haut-droite
     c.line(x * mm, (yc - 3) * mm, (x + 2.8) * mm, (yc + 2.4) * mm)
     if with_cross:
         c.line((x - 1) * mm, (yc + 3.2) * mm, (x + 1) * mm, (yc + 5.2) * mm)
@@ -252,26 +249,22 @@ def _draw_diff_glyph(c: Canvas, x: float, yc: float) -> None:
 
 
 def _draw_source(c: Canvas, db_calibre: int) -> None:
-    """Alim. BT (flèche) + disjoncteur de branchement DB1, relié à la barre."""
+    """Alim. BT (flèche) + disjoncteur de branchement DB1, relié à la barre JB1."""
     x = CONTENT_LEFT + 14
-    db_yc = MAIN_BUS_Y + 7
-    # Flèche Alim. BT au-dessus du DB
+    db_yc = MAIN_BUS_Y + 6
     c.setStrokeColor(colors.black)
     c.setLineWidth(1.0)
-    top = db_yc + 8
+    top = db_yc + 6
     c.line(x * mm, top * mm, x * mm, (db_yc + 3.2) * mm)
     c.line((x - 1.5) * mm, (db_yc + 5) * mm, x * mm, (db_yc + 3.2) * mm)
     c.line((x + 1.5) * mm, (db_yc + 5) * mm, x * mm, (db_yc + 3.2) * mm)
     c.setFont("Helvetica", 6)
     c.drawCentredString(x * mm, (top + 1) * mm, "Alim. BT")
-    # Symbole disjoncteur de branchement
     _draw_breaker_glyph(c, x, db_yc, with_cross=True)
-    # Fil DB → barre principale
     c.setLineWidth(1.2)
     c.line(x * mm, (db_yc - 3) * mm, x * mm, MAIN_BUS_Y * mm)
     c.setLineWidth(1.4)
     c.line(x * mm, MAIN_BUS_Y * mm, SLOTS_LEFT * mm, MAIN_BUS_Y * mm)
-    # Annotations à droite du symbole (jamais sur le fil)
     tx = x + 4
     c.setFont("Helvetica-Bold", 6.5)
     c.drawString(tx * mm, (db_yc + 2) * mm, "DB1")
@@ -299,26 +292,27 @@ def _draw_q(c: Canvas, x: float, circ, q_idx: int) -> None:
     c.drawString(tx * mm, (Q_SYM_Y + 1.5) * mm, circuit_repere(q_idx))
     c.setFont("Helvetica", 5)
     c.drawString(tx * mm, (Q_SYM_Y - 2) * mm, f"{DEFAULT_CURVE} {circ.breaker_amps}A")
-    # Repère de phase près du haut de la descente
     c.setFont("Helvetica", 4.5)
     c.drawString((x + 1.5) * mm, (SEC_BUS_Y - 3) * mm, "L1,N")
 
 
 def _draw_earth_drop(c: Canvas, x: float, y: float) -> None:
-    """Symbole de mise à la terre (3 traits décroissants) sous un départ."""
+    """Symbole de mise à la terre normalisé (stub + 3 traits décroissants),
+    suspendu sous la barre PE."""
     c.setStrokeColor(colors.green)
-    c.setLineWidth(0.8)
-    c.line((x - 2) * mm, y * mm, (x + 2) * mm, y * mm)
-    c.line((x - 1.3) * mm, (y - 0.9) * mm, (x + 1.3) * mm, (y - 0.9) * mm)
-    c.line((x - 0.6) * mm, (y - 1.8) * mm, (x + 0.6) * mm, (y - 1.8) * mm)
+    c.setLineWidth(1.0)
+    c.line(x * mm, y * mm, x * mm, (y - 2) * mm)
+    c.line((x - 2.2) * mm, (y - 2) * mm, (x + 2.2) * mm, (y - 2) * mm)
+    c.line((x - 1.4) * mm, (y - 2.9) * mm, (x + 1.4) * mm, (y - 2.9) * mm)
+    c.line((x - 0.6) * mm, (y - 3.8) * mm, (x + 0.6) * mm, (y - 3.8) * mm)
     c.setStrokeColor(colors.black)
 
 
 def _draw_picto_slot(c: Canvas, x: float, circ) -> None:
-    """Picto d'usage (bibliothèque batIA) dans la bande Pictogramme."""
+    """Picto d'usage (bibliothèque batIA, violet) dans la bande Pictogramme."""
     svg_id = resolve_svg_id_for_circuit(circ)
     try:
-        d = load_icon_as_drawing(svg_id)
+        d = load_icon_as_drawing(svg_id, PICTO_PURPLE)
     except FileNotFoundError:
         return
     ref = max(d.width, d.height) or 40.0
@@ -326,7 +320,8 @@ def _draw_picto_slot(c: Canvas, x: float, circ) -> None:
     d.width *= s
     d.height *= s
     d.scale(s, s)
-    renderPDF.draw(d, c, (x - PICTO_SIZE_MM / 2) * mm, (PICTO_TOP_Y - PICTO_SIZE_MM) * mm)
+    y_bottom = PICTO_BAND_BOT + (PICTO_BAND_TOP - PICTO_BAND_BOT - PICTO_SIZE_MM) / 2
+    renderPDF.draw(d, c, (x - PICTO_SIZE_MM / 2) * mm, y_bottom * mm)
 
 
 def _draw_localisation(c: Canvas, x: float, circ) -> None:
@@ -339,12 +334,22 @@ def _draw_localisation(c: Canvas, x: float, circ) -> None:
     c.restoreState()
 
 
-def _draw_band_legends(c: Canvas) -> None:
-    """Libellés de la colonne gauche : Pictogramme + Application/Localisation."""
+def _draw_bands_table(c: Canvas) -> None:
+    """Encadre les deux bandes basses (Pictogramme + Localisation) avec colonne
+    de libellés à gauche, façon Hager."""
     c.setStrokeColor(colors.black)
-    c.setFont("Helvetica", 5.5)
-    c.drawString((CONTENT_LEFT + 1.5) * mm, (PICTO_TOP_Y - PICTO_SIZE_MM / 2) * mm,
-                 "Pictogramme")
+    c.setLineWidth(0.6)
+    c.rect(CONTENT_LEFT * mm, CARTOUCHE_TOP_Y * mm,
+           (CONTENT_RIGHT - CONTENT_LEFT) * mm,
+           (PICTO_BAND_TOP - CARTOUCHE_TOP_Y) * mm)
+    c.setLineWidth(0.4)
+    c.line(CONTENT_LEFT * mm, PICTO_BAND_BOT * mm,
+           CONTENT_RIGHT * mm, PICTO_BAND_BOT * mm)
+    c.line(LEGEND_RIGHT * mm, CARTOUCHE_TOP_Y * mm,
+           LEGEND_RIGHT * mm, PICTO_BAND_TOP * mm)
+    c.setFont("Helvetica", 6)
+    c.drawString((CONTENT_LEFT + 1.5) * mm,
+                 ((PICTO_BAND_TOP + PICTO_BAND_BOT) / 2 - 1) * mm, "Pictogramme")
     for i, line in enumerate(("Application", "Localisation", "des départs")):
         c.drawString((CONTENT_LEFT + 1.5) * mm, (66 - i * 3.4) * mm, line)
 
@@ -352,12 +357,14 @@ def _draw_band_legends(c: Canvas) -> None:
 def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
                         folio_idx: int, total: int, id_offset: int,
                         q_offset: int, db_calibre: int) -> None:
-    """Contenu électrique d'un folio : bus principal, source/continuation, ID +
-    bus secondaires, départs Q, barre de terre, pictos, localisation."""
-    # Barre principale
+    """Contenu électrique d'un folio : barre JB1, source/continuation, ID + bus
+    secondaires JBn, départs Q, barre de terre, pictos, localisation."""
+    # Barre principale JB1
     c.setStrokeColor(colors.black)
     c.setLineWidth(1.4)
     c.line(SLOTS_LEFT * mm, MAIN_BUS_Y * mm, CONTENT_RIGHT * mm, MAIN_BUS_Y * mm)
+    c.setFont("Helvetica-Bold", 5.5)
+    c.drawString((SLOTS_LEFT + 1.5) * mm, (MAIN_BUS_Y + 1.5) * mm, "JB1")
 
     # Barre de terre PE (verte, trait mixte tiret-point)
     c.setStrokeColor(colors.green)
@@ -376,14 +383,14 @@ def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
         _draw_source(c, db_calibre)
     else:
         c.setFont("Helvetica-Oblique", 6)
-        c.drawString(SLOTS_LEFT * mm, (MAIN_BUS_Y + 2) * mm,
+        c.drawString(SLOTS_LEFT * mm, (MAIN_BUS_Y + 4) * mm,
                      f"suite du folio {folio_idx}")
     if folio_idx < total - 1:
         c.setFont("Helvetica-Oblique", 6)
-        c.drawRightString((CONTENT_RIGHT - 1) * mm, (MAIN_BUS_Y + 2) * mm,
+        c.drawRightString((CONTENT_RIGHT - 1) * mm, (MAIN_BUS_Y + 4) * mm,
                           f"suite folio {folio_idx + 2}")
 
-    _draw_band_legends(c)
+    _draw_bands_table(c)
 
     # Slots : ID puis ses départs
     local = 0
@@ -392,7 +399,6 @@ def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
     for rcd in folio_rcds:
         id_idx += 1
         id_x = _slot_x(local)
-        # Descente barre principale → ID (gap pour le symbole)
         c.setStrokeColor(colors.black)
         c.setLineWidth(1.0)
         c.line(id_x * mm, MAIN_BUS_Y * mm, id_x * mm, (ID_SYM_Y + 3.5) * mm)
@@ -405,10 +411,11 @@ def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
             last_q_x = _slot_x(local + n_q - 1)
             c.setLineWidth(1.2)
             c.line(id_x * mm, SEC_BUS_Y * mm, last_q_x * mm, SEC_BUS_Y * mm)
+            c.setFont("Helvetica-Bold", 4.5)
+            c.drawString((id_x + 1.5) * mm, (SEC_BUS_Y + 1.5) * mm, f"JB{id_idx + 1}")
         for circ in rcd.circuits:
             q_idx += 1
             qx = _slot_x(local)
-            # Descente bus secondaire → Q (gap) → terre
             c.setStrokeColor(colors.black)
             c.setLineWidth(1.0)
             c.line(qx * mm, SEC_BUS_Y * mm, qx * mm, (Q_SYM_Y + 3) * mm)
