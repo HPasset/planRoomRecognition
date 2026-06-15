@@ -439,6 +439,14 @@ interface SvgEquipIconProps {
 
 function SvgEquipIcon({ svgId, color, size = 22 }: SvgEquipIconProps) {
   const raw = ICONS[svgId] ?? FALLBACK_SVG;
+  // Injecte width/height sur le <svg> root pour qu'il rende à la taille
+  // demandée. Sans ça, le viewBox-only SVG render à 40x40 ou à 0x0 selon
+  // le navigateur (régression Task 15 : passage de SVG inline à ?raw
+  // imports — les fichiers disk n'ont que viewBox, pas width/height).
+  const sized = raw.replace(
+    /<svg\b/,
+    `<svg width="${size}" height="${size}"`,
+  );
   return (
     <span
       style={{
@@ -449,7 +457,7 @@ function SvgEquipIcon({ svgId, color, size = 22 }: SvgEquipIconProps) {
         width: size,
         height: size,
       }}
-      dangerouslySetInnerHTML={{ __html: raw }}
+      dangerouslySetInnerHTML={{ __html: sized }}
     />
   );
 }

@@ -1436,7 +1436,14 @@ def main():
         """
         if editor_key not in st.session_state:
             return
+        # Garde défensive : si pastilles_state est vide (race condition
+        # initiale : auto-gen pas encore tourné, ou drag-out simultané de
+        # toutes les pastilles), ne pas écraser editor_key avec un set
+        # vide — sinon le prochain auto-gen lit un editor_key vide et le
+        # devis devient vide.
         pastilles = st.session_state.get(f"pastilles_state_{img_hash}", [])
+        if not pastilles:
+            return
         df_prev = st.session_state[editor_key]
         prev_by_pid: dict[str, dict] = {}
         if "_pastille_id" in df_prev.columns:
