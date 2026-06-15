@@ -43,3 +43,38 @@ def load_icon_as_drawing(svg_id: str) -> Drawing:
     raw = raw.replace("currentColor", "#000000")
     drawing = svg2rlg(BytesIO(raw.encode("utf-8")))
     return drawing
+
+
+# Constantes de layout (en millimètres, A4 paysage)
+INDEX_COL_W_MM = 6.0           # colonne index rangée (1, 2, 3, ...)
+ID_CELL_W_MM = 35.0            # cellule "Interrupteur différentiel" (2 modules DIN)
+DISJONCTEUR_CELL_W_MM = 17.5   # cellule disjoncteur standard (1 module DIN)
+CARTOUCHE_MIN_W_MM = 30.0      # largeur minimale du cartouche batIA en fin de ligne
+
+
+def compute_strip_widths(
+    n_disjoncteurs: int,
+    page_usable_width_mm: float,
+) -> dict:
+    """Calcule la largeur de chaque cellule d'une rangée RCD en mm.
+
+    La rangée = index + cellule ID + n_disjoncteurs cellules Qn + cartouche batIA
+    en fin de ligne. Le cartouche occupe l'espace restant (>= 30 mm minimum).
+
+    Args:
+        n_disjoncteurs: nombre de disjoncteurs effectivement présents sur le RCD
+                        (typiquement 1 à 7, max 8 avec overflow géré ailleurs)
+        page_usable_width_mm: largeur imprimable de la page (zone hors marges)
+
+    Returns:
+        dict avec clés "index", "id", "disjoncteurs" (list[float]), "cartouche".
+    """
+    disjoncteurs_widths = [DISJONCTEUR_CELL_W_MM] * n_disjoncteurs
+    consumed = INDEX_COL_W_MM + ID_CELL_W_MM + sum(disjoncteurs_widths)
+    cartouche_w = page_usable_width_mm - consumed
+    return {
+        "index": INDEX_COL_W_MM,
+        "id": ID_CELL_W_MM,
+        "disjoncteurs": disjoncteurs_widths,
+        "cartouche": cartouche_w,
+    }
