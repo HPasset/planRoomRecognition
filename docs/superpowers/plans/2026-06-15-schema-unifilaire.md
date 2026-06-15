@@ -1,3 +1,5 @@
+> ⚠️ **REMPLACÉ** par [2026-06-15-schema-unifilaire-hager.md](2026-06-15-schema-unifilaire-hager.md) (format Hager paysage). Ce plan a livré la version portrait, ensuite abandonnée. Conservé pour l'historique.
+
 # Schéma unifilaire — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
