@@ -12,6 +12,8 @@ from pathlib import Path
 from reportlab.graphics.shapes import Drawing
 from svglib.svglib import svg2rlg
 
+from src.planrec.nfc_tableau import Circuit, RCD
+
 ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 
 
@@ -78,3 +80,39 @@ def compute_strip_widths(
         "disjoncteurs": disjoncteurs_widths,
         "cartouche": cartouche_w,
     }
+
+
+MAX_DISJONCTEURS_PER_ROW = 7   # cellules Qn par rangée d'étiquette (cf. spec)
+RCDS_PER_PAGE = 5               # nombre de rangées RCD par page A4 paysage
+
+
+def split_rcd_into_rows(
+    rcd: RCD,
+    max_per_row: int = MAX_DISJONCTEURS_PER_ROW,
+) -> list[list[Circuit]]:
+    """Découpe les circuits d'un RCD en rangées de max max_per_row circuits.
+
+    Si le RCD a ≤ max_per_row circuits → 1 seule rangée.
+    Sinon, rangée principale puis rangée(s) de débordement ("1 bis"…).
+    """
+    rows: list[list[Circuit]] = []
+    i = 0
+    while i < len(rcd.circuits):
+        rows.append(rcd.circuits[i : i + max_per_row])
+        i += max_per_row
+    if not rows:
+        # RCD sans disjoncteur (cas dégénéré) : on garde une rangée vide pour
+        # afficher quand même l'ID
+        rows.append([])
+    return rows
+
+
+def paginate_rcds(
+    rcds: list[RCD],
+    per_page: int = RCDS_PER_PAGE,
+) -> list[list[RCD]]:
+    """Découpe la liste de RCDs en pages contenant per_page RCDs maximum."""
+    pages: list[list[RCD]] = []
+    for i in range(0, len(rcds), per_page):
+        pages.append(rcds[i : i + per_page])
+    return pages

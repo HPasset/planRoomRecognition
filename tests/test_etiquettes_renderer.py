@@ -54,3 +54,51 @@ def test_compute_strip_widths_cartouche_min_30mm():
     # 7 disjoncteurs max raisonnables (cf. spec) — au-delà, overflow géré ailleurs
     widths = compute_strip_widths(n_disjoncteurs=7, page_usable_width_mm=277.0)
     assert widths["cartouche"] >= 30.0
+
+
+def test_split_rcd_into_rows_no_overflow():
+    """Un RCD à 5 disjoncteurs tient sur 1 seule rangée."""
+    from src.planrec.etiquettes_renderer import split_rcd_into_rows
+    from src.planrec.nfc_tableau import Circuit, RCD, CircuitType
+    circuits = [
+        Circuit(id=f"c{i}", type=CircuitType.SOCKET, label=f"Q{i}",
+                breaker_amps=20, cable_section_mm2=2.5)
+        for i in range(5)
+    ]
+    rcd = RCD(id="rcd1", rcd_type="A", amps=40, sensitivity_ma=30, circuits=circuits)
+    rows = split_rcd_into_rows(rcd, max_per_row=7)
+    assert len(rows) == 1
+    assert len(rows[0]) == 5
+
+
+def test_split_rcd_into_rows_overflow_on_8_disjoncteurs():
+    """Un RCD à 8 disjoncteurs (max NFC) déborde sur 2 rangées : 7 + 1."""
+    from src.planrec.etiquettes_renderer import split_rcd_into_rows
+    from src.planrec.nfc_tableau import Circuit, RCD, CircuitType
+    circuits = [
+        Circuit(id=f"c{i}", type=CircuitType.SOCKET, label=f"Q{i}",
+                breaker_amps=20, cable_section_mm2=2.5)
+        for i in range(8)
+    ]
+    rcd = RCD(id="rcd1", rcd_type="A", amps=40, sensitivity_ma=30, circuits=circuits)
+    rows = split_rcd_into_rows(rcd, max_per_row=7)
+    assert len(rows) == 2
+    assert len(rows[0]) == 7
+    assert len(rows[1]) == 1
+
+
+def test_paginate_rcds_5_per_page_default():
+    """5 RCDs tiennent sur 1 page, 6 RCDs occupent 2 pages."""
+    from src.planrec.etiquettes_renderer import paginate_rcds
+    from src.planrec.nfc_tableau import RCD
+    rcds_5 = [RCD(id=f"r{i}", rcd_type="AC", amps=40, sensitivity_ma=30, circuits=[])
+              for i in range(5)]
+    pages_5 = paginate_rcds(rcds_5, per_page=5)
+    assert len(pages_5) == 1
+    assert len(pages_5[0]) == 5
+
+    rcds_6 = rcds_5 + [RCD(id="r5", rcd_type="AC", amps=40, sensitivity_ma=30, circuits=[])]
+    pages_6 = paginate_rcds(rcds_6, per_page=5)
+    assert len(pages_6) == 2
+    assert len(pages_6[0]) == 5
+    assert len(pages_6[1]) == 1
