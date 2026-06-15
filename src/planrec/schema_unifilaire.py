@@ -3,7 +3,7 @@
 Cadre normalisé à double bordure (repères A-G / 1-14 dans la marge), arrivée
 AGCP → jeu de barres JB1 → ID 30 mA → disjoncteurs divisionnaires → barre de
 terre PE, bandes Pictogramme + Localisation encadrées (pictos violet batIA) et
-cartouche en cellules.
+cartouche en cellules. Symboles d'appareillage EN 60617.
 
 Module pur : reportlab uniquement, aucun import Streamlit/React/DB. Voir
 docs/superpowers/specs/2026-06-15-schema-unifilaire-hager-design.md
@@ -67,12 +67,10 @@ def circuit_repere(q_idx: int) -> str:
 # --- Géométrie page (mm, A4 paysage) ---
 PAGE_W_MM = 297.0
 PAGE_H_MM = 210.0
-# Bordure extérieure
 FRAME_LEFT = 6.0
 FRAME_RIGHT = PAGE_W_MM - 6.0      # 291
 FRAME_BOT = 6.0
 FRAME_TOP = PAGE_H_MM - 6.0        # 204
-# Bordure intérieure (les repères de grille vivent dans la bande entre les deux)
 CONTENT_MARGIN = 6.0
 CONTENT_LEFT = FRAME_LEFT + CONTENT_MARGIN      # 12
 CONTENT_RIGHT = FRAME_RIGHT - CONTENT_MARGIN    # 285
@@ -85,18 +83,17 @@ SLOTS_PER_FOLIO = 12
 # Zones verticales (y depuis le bas, mm)
 MAIN_BUS_Y = 180.0
 ID_SYM_Y = 169.0
-SEC_BUS_Y = 160.0
-Q_SYM_Y = 145.0
+SEC_BUS_Y = 158.0
+Q_SYM_Y = 144.0
 PE_Y = 95.0
-# Bandes basses encadrées
 PICTO_BAND_TOP = 88.0
 PICTO_BAND_BOT = 74.0
 PICTO_SIZE_MM = 9.0
-LOCAL_LABEL_BASE_Y = 50.0          # base des libellés verticaux de localisation
-CARTOUCHE_TOP_Y = 48.0             # = bas de la bande Localisation
+LOCAL_LABEL_BASE_Y = 50.0
+CARTOUCHE_TOP_Y = 48.0
 
 # Zones horizontales (x, mm)
-LEGEND_RIGHT = 42.0                # séparateur colonne légende / contenu
+LEGEND_RIGHT = 42.0
 SLOTS_LEFT = 42.0
 
 
@@ -221,72 +218,95 @@ def _slot_x(local_slot_idx: int) -> float:
     return SLOTS_LEFT + (local_slot_idx + 0.5) * slot_w
 
 
-def _draw_breaker_glyph(c: Canvas, x: float, yc: float, with_cross: bool = True) -> None:
-    """Symbole disjoncteur unipolaire EN 60617 (contact-levier ouvert + croix),
-    sur un conducteur vertical centré en (x, yc), hauteur ~6 mm. L'appelant
-    raccorde le fil jusqu'à yc+3 (haut) et depuis yc-3 (bas)."""
+# --- Symboles d'appareillage EN 60617 (primitives reportlab) ---
+
+def _draw_contact(c: Canvas, x: float, y_bot: float, y_top: float,
+                  cross: bool = False, asterisk: bool = False,
+                  bipolar: bool = False) -> None:
+    """Contact d'appareillage : pivot + levier incliné (contact ouvert), sur un
+    conducteur vertical en x. Options : croix (disjoncteur), astérisque (diff.
+    sélectif), double pôle (interrupteur différentiel)."""
     c.setStrokeColor(colors.black)
     c.setLineWidth(1.0)
-    c.line(x * mm, (yc + 3) * mm, x * mm, (yc + 2.2) * mm)
-    c.circle(x * mm, (yc - 3) * mm, 0.5 * mm, stroke=1, fill=1)
-    c.line(x * mm, (yc - 3) * mm, (x + 2.8) * mm, (yc + 2.4) * mm)
-    if with_cross:
-        c.line((x - 1) * mm, (yc + 3.2) * mm, (x + 1) * mm, (yc + 5.2) * mm)
-        c.line((x - 1) * mm, (yc + 5.2) * mm, (x + 1) * mm, (yc + 3.2) * mm)
+    c.circle(x * mm, y_bot * mm, 0.5 * mm, stroke=1, fill=1)
+    c.line(x * mm, y_bot * mm, (x + 2.6) * mm, (y_top - 0.4) * mm)
+    if bipolar:
+        c.line((x - 1.3) * mm, (y_bot + 0.5) * mm, (x + 1.2) * mm, (y_top - 0.9) * mm)
+    if cross or asterisk:
+        c.line((x - 1.2) * mm, (y_top - 1.2) * mm, (x + 1.2) * mm, (y_top + 1.2) * mm)
+        c.line((x - 1.2) * mm, (y_top + 1.2) * mm, (x + 1.2) * mm, (y_top - 1.2) * mm)
+    if asterisk:
+        c.line(x * mm, (y_top - 1.6) * mm, x * mm, (y_top + 1.6) * mm)
 
 
-def _draw_diff_glyph(c: Canvas, x: float, yc: float) -> None:
-    """Symbole interrupteur différentiel (DDR) EN 60617 : boîtier + tore (cercle)
-    et contact diagonal, centré en (x, yc), hauteur ~7 mm. L'appelant raccorde le
-    fil jusqu'à yc+3.5 (haut) et depuis yc-3.5 (bas)."""
-    w, h = 9.0, 7.0
+def _draw_relay(c: Canvas, x: float, yc: float) -> None:
+    """Bloc relais différentiel : rectangle + ellipse (tore / actionneur)."""
+    w, h = 5.0, 3.2
     c.setStrokeColor(colors.black)
     c.setLineWidth(1.0)
     c.rect((x - w / 2) * mm, (yc - h / 2) * mm, w * mm, h * mm)
-    c.circle(x * mm, yc * mm, 1.7 * mm, stroke=1, fill=0)
-    c.line((x - w / 2 + 1.4) * mm, (yc - h / 2 + 1.4) * mm,
-           (x + w / 2 - 1.4) * mm, (yc + h / 2 - 1.4) * mm)
+    c.ellipse((x - 1.7) * mm, (yc - 1.0) * mm, (x + 1.7) * mm, (yc + 1.0) * mm)
+
+
+def _draw_q_glyph(c: Canvas, x: float, yc: float) -> None:
+    """Disjoncteur unipolaire EN 60617 (contact + croix). Gap appelant : yc±3."""
+    _draw_contact(c, x, yc - 3, yc + 3, cross=True)
+
+
+def _draw_diff_glyph(c: Canvas, x: float, yc: float, asterisk: bool) -> None:
+    """Appareil différentiel (contact + relais à tore). `asterisk` = disjoncteur
+    de branchement diff. sélectif (DB) ; sinon interrupteur différentiel (ID,
+    contact bipolaire). Gap appelant : yc+5.5 (haut) / yc-5.2 (bas)."""
+    _draw_contact(c, x, yc + 1, yc + 5.5, asterisk=asterisk, bipolar=not asterisk)
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(1.0)
+    c.line(x * mm, (yc + 1) * mm, x * mm, (yc - 2.0) * mm)
+    _draw_relay(c, x, yc - 3.6)
+    c.setDash([1, 1], 0)
+    c.line((x + 2.2) * mm, (yc + 3) * mm, (x + 2.2) * mm, (yc - 3) * mm)
+    c.setDash([], 0)
 
 
 def _draw_source(c: Canvas, db_calibre: int) -> None:
-    """Alim. BT (flèche) + disjoncteur de branchement DB1, relié à la barre JB1."""
+    """Alim. BT (flèche) + disjoncteur de branchement DB1 (diff. sélectif),
+    relié à la barre JB1."""
     x = CONTENT_LEFT + 14
     db_yc = MAIN_BUS_Y + 6
     c.setStrokeColor(colors.black)
     c.setLineWidth(1.0)
-    top = db_yc + 6
-    c.line(x * mm, top * mm, x * mm, (db_yc + 3.2) * mm)
-    c.line((x - 1.5) * mm, (db_yc + 5) * mm, x * mm, (db_yc + 3.2) * mm)
-    c.line((x + 1.5) * mm, (db_yc + 5) * mm, x * mm, (db_yc + 3.2) * mm)
+    top = db_yc + 9
+    c.line(x * mm, top * mm, x * mm, (db_yc + 5.7) * mm)
+    c.line((x - 1.5) * mm, (db_yc + 7.5) * mm, x * mm, (db_yc + 5.7) * mm)
+    c.line((x + 1.5) * mm, (db_yc + 7.5) * mm, x * mm, (db_yc + 5.7) * mm)
     c.setFont("Helvetica", 6)
     c.drawCentredString(x * mm, (top + 1) * mm, "Alim. BT")
-    _draw_breaker_glyph(c, x, db_yc, with_cross=True)
+    _draw_diff_glyph(c, x, db_yc, asterisk=True)
     c.setLineWidth(1.2)
-    c.line(x * mm, (db_yc - 3) * mm, x * mm, MAIN_BUS_Y * mm)
+    c.line(x * mm, (db_yc - 5.2) * mm, x * mm, MAIN_BUS_Y * mm)
     c.setLineWidth(1.4)
     c.line(x * mm, MAIN_BUS_Y * mm, SLOTS_LEFT * mm, MAIN_BUS_Y * mm)
-    tx = x + 4
+    tx = x + 5
     c.setFont("Helvetica-Bold", 6.5)
-    c.drawString(tx * mm, (db_yc + 2) * mm, "DB1")
+    c.drawString(tx * mm, (db_yc + 4) * mm, "DB1")
     c.setFont("Helvetica", 5.5)
-    c.drawString(tx * mm, (db_yc - 1.5) * mm, f"{db_calibre} A")
-    c.drawString(tx * mm, (db_yc - 4.5) * mm, f"{AGCP_SENSITIVITY_MA} mA · S")
+    c.drawString(tx * mm, (db_yc + 0.5) * mm, f"{db_calibre} A")
+    c.drawString(tx * mm, (db_yc - 3) * mm, f"{AGCP_SENSITIVITY_MA} mA · S")
 
 
 def _draw_id(c: Canvas, x: float, rcd: RCD, id_idx: int) -> None:
-    """Départ ID : symbole DDR + annotations en colonne à droite."""
-    _draw_diff_glyph(c, x, ID_SYM_Y)
+    """Départ ID : symbole interrupteur différentiel + annotations à droite."""
+    _draw_diff_glyph(c, x, ID_SYM_Y, asterisk=False)
     tx = x + 6
     c.setFont("Helvetica-Bold", 6)
-    c.drawString(tx * mm, (ID_SYM_Y + 2) * mm, f"ID{id_idx}")
+    c.drawString(tx * mm, (ID_SYM_Y + 3) * mm, f"ID{id_idx}")
     c.setFont("Helvetica", 5)
-    c.drawString(tx * mm, (ID_SYM_Y - 1.5) * mm, f"{rcd.amps}A {rcd.sensitivity_ma}mA")
-    c.drawString(tx * mm, (ID_SYM_Y - 4.5) * mm, f"Type {rcd.rcd_type}")
+    c.drawString(tx * mm, (ID_SYM_Y - 0.5) * mm, f"{rcd.amps}A {rcd.sensitivity_ma}mA")
+    c.drawString(tx * mm, (ID_SYM_Y - 3.5) * mm, f"Type {rcd.rcd_type}")
 
 
 def _draw_q(c: Canvas, x: float, circ, q_idx: int) -> None:
-    """Départ Q : symbole disjoncteur + annotations en colonne à droite + L1,N."""
-    _draw_breaker_glyph(c, x, Q_SYM_Y, with_cross=True)
+    """Départ Q : symbole disjoncteur + annotations à droite + L1,N."""
+    _draw_q_glyph(c, x, Q_SYM_Y)
     tx = x + 4
     c.setFont("Helvetica-Bold", 6)
     c.drawString(tx * mm, (Q_SYM_Y + 1.5) * mm, circuit_repere(q_idx))
@@ -401,10 +421,10 @@ def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
         id_x = _slot_x(local)
         c.setStrokeColor(colors.black)
         c.setLineWidth(1.0)
-        c.line(id_x * mm, MAIN_BUS_Y * mm, id_x * mm, (ID_SYM_Y + 3.5) * mm)
+        c.line(id_x * mm, MAIN_BUS_Y * mm, id_x * mm, (ID_SYM_Y + 5.5) * mm)
         _draw_id(c, id_x, rcd, id_idx)
         c.setLineWidth(1.0)
-        c.line(id_x * mm, (ID_SYM_Y - 3.5) * mm, id_x * mm, SEC_BUS_Y * mm)
+        c.line(id_x * mm, (ID_SYM_Y - 5.2) * mm, id_x * mm, SEC_BUS_Y * mm)
         local += 1
         n_q = len(rcd.circuits)
         if n_q:
