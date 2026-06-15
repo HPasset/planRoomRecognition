@@ -316,16 +316,24 @@ def _draw_q(c: Canvas, x: float, circ, q_idx: int) -> None:
     c.drawString((x + 1.5) * mm, (SEC_BUS_Y - 3) * mm, "L1,N")
 
 
-def _draw_earth_drop(c: Canvas, x: float, y: float) -> None:
-    """Symbole de mise à la terre normalisé (stub + 3 traits décroissants),
-    suspendu sous la barre PE."""
+def _draw_down_arrow(c: Canvas, x: float, y_tip: float, color) -> None:
+    """Flèche pleine-pointe (triangle creux) vers le bas, pointe en (x, y_tip)."""
+    c.setStrokeColor(color)
+    c.setLineWidth(1.0)
+    c.line((x - 1.5) * mm, (y_tip + 3) * mm, x * mm, y_tip * mm)
+    c.line((x + 1.5) * mm, (y_tip + 3) * mm, x * mm, y_tip * mm)
+    c.line((x - 1.5) * mm, (y_tip + 3) * mm, (x + 1.5) * mm, (y_tip + 3) * mm)
+    c.setStrokeColor(colors.black)
+
+
+def _draw_pe_earth_tap(c: Canvas, x: float) -> None:
+    """Prise de terre d'un départ : dérivation verte depuis la barre PE (point de
+    jonction) descendant vers l'équipement, terminée par une flèche verte."""
     c.setStrokeColor(colors.green)
     c.setLineWidth(1.0)
-    c.line(x * mm, y * mm, x * mm, (y - 2) * mm)
-    c.line((x - 2.2) * mm, (y - 2) * mm, (x + 2.2) * mm, (y - 2) * mm)
-    c.line((x - 1.4) * mm, (y - 2.9) * mm, (x + 1.4) * mm, (y - 2.9) * mm)
-    c.line((x - 0.6) * mm, (y - 3.8) * mm, (x + 0.6) * mm, (y - 3.8) * mm)
-    c.setStrokeColor(colors.black)
+    c.circle(x * mm, PE_Y * mm, 0.5 * mm, stroke=1, fill=1)
+    c.line(x * mm, PE_Y * mm, x * mm, (PE_Y - 3) * mm)
+    _draw_down_arrow(c, x, PE_Y - 6, colors.green)
 
 
 def _draw_picto_slot(c: Canvas, x: float, circ) -> None:
@@ -440,9 +448,14 @@ def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
             c.setLineWidth(1.0)
             c.line(qx * mm, SEC_BUS_Y * mm, qx * mm, (Q_SYM_Y + 3) * mm)
             _draw_q(c, qx, circ, q_idx)
+            # Conducteur du départ (phase/neutre) : traverse la barre PE en
+            # restant noir (croisement sans jonction) puis flèche vers le bas.
+            c.setStrokeColor(colors.black)
             c.setLineWidth(1.0)
-            c.line(qx * mm, (Q_SYM_Y - 3) * mm, qx * mm, PE_Y * mm)
-            _draw_earth_drop(c, qx, PE_Y)
+            c.line(qx * mm, (Q_SYM_Y - 3) * mm, qx * mm, (PE_Y - 3) * mm)
+            _draw_down_arrow(c, qx, PE_Y - 6, colors.black)
+            # Prise de terre du départ : flèche verte partant de la barre PE.
+            _draw_pe_earth_tap(c, qx - 3)
             _draw_picto_slot(c, qx, circ)
             _draw_localisation(c, qx, circ)
             local += 1
