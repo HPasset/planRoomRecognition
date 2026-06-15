@@ -116,3 +116,283 @@ def paginate_rcds(
     for i in range(0, len(rcds), per_page):
         pages.append(rcds[i : i + per_page])
     return pages
+
+
+from reportlab.lib.units import mm
+from reportlab.lib import colors
+from reportlab.graphics import renderPDF
+
+from src.planrec.nfc_tableau import CircuitType
+
+# Conventions de dimensions (mm)
+HEADER_STRIP_H_MM = 8.0        # hauteur du strip header (IDx, Qn, ...)
+BODY_STRIP_H_MM = 22.0         # hauteur du strip body (picto + label)
+ROW_VERTICAL_GAP_MM = 6.0      # gap entre 2 rangées RCD
+PICTO_SIZE_MM = 12.0           # taille du pictogramme dans la cellule body
+PICTO_TOP_OFFSET_MM = 2.0      # marge haute entre le picto et le bord du strip
+TEXT_BELOW_PICTO_GAP_MM = 1.0  # gap vertical entre picto et label texte
+
+
+# Mapping CircuitType -> svg_id pour les pictos étiquettes.
+# La cellule "Interrupteur différentiel" utilise un picto dédié (l'ID lui-même).
+CIRCUIT_TYPE_TO_SVG_ID: dict[CircuitType, str] = {
+    CircuitType.LIGHTING: "light",
+    CircuitType.SOCKET: "socket",
+    CircuitType.KITCHEN_SPECIAL: "cooktop",   # fallback générique cuisine
+    CircuitType.LAUNDRY: "washing_machine",   # fallback générique buanderie
+    CircuitType.BOILER: "boiler",
+    CircuitType.HEATING: "convector",
+    CircuitType.TOWEL_WARMER: "towel_warmer",
+}
+
+# Mapping spécifique sur le libellé exact du circuit pour les sous-types
+# (le type CircuitType est trop large pour Four vs Plaque vs LV).
+LABEL_PREFIX_TO_SVG_ID: dict[str, str] = {
+    "Plaque cuisson": "cooktop",
+    "Four": "oven",
+    "Lave-vaisselle": "dishwasher",
+    "Lave-linge": "washing_machine",
+    "Sèche-linge": "dryer",
+    "Chaudière": "boiler",
+    "Cumulus": "boiler",
+    "Sèche-serviettes": "towel_warmer",
+    "Chauffage": "convector",
+    "Éclairage": "light",
+    "Prises": "socket",
+}
+
+
+def _resolve_svg_id_for_circuit(circuit) -> str:
+    """Sélectionne le picto le plus adapté pour un circuit donné.
+
+    Priorité au préfixe du label (Plaque vs Four vs LV ont tous CircuitType
+    KITCHEN_SPECIAL mais des pictos distincts). Fallback sur CircuitType.
+    """
+    label = circuit.label or ""
+    for prefix, svg_id in LABEL_PREFIX_TO_SVG_ID.items():
+        if label.startswith(prefix):
+            return svg_id
+    return CIRCUIT_TYPE_TO_SVG_ID.get(circuit.type, "special_feed")
+
+
+def _draw_cell_text(canvas, x_mm, y_mm, w_mm, h_mm, text, font_size=10, bold=False):
+    """Centre un texte dans une cellule rectangulaire (coords origine bas-gauche
+    en mm)."""
+    canvas.setFont("Helvetica-Bold" if bold else "Helvetica", font_size)
+    canvas.drawCentredString(
+        (x_mm + w_mm / 2) * mm,
+        (y_mm + h_mm / 2 - font_size / 3) * mm,
+        text,
+    )
+
+
+def _draw_cell_box(canvas, x_mm, y_mm, w_mm, h_mm, fill_grey=False):
+    """Trace le contour d'une cellule rectangulaire (coords bas-gauche en mm)."""
+    canvas.setStrokeColor(colors.black)
+    if fill_grey:
+        canvas.setFillColor(colors.HexColor("#E8E8E8"))
+        canvas.rect(x_mm * mm, y_mm * mm, w_mm * mm, h_mm * mm, stroke=1, fill=1)
+        canvas.setFillColor(colors.black)
+    else:
+        canvas.rect(x_mm * mm, y_mm * mm, w_mm * mm, h_mm * mm, stroke=1, fill=0)
+
+
+def _draw_picto_in_cell(canvas, svg_id, cell_x_mm, cell_y_mm, cell_w_mm, cell_h_mm):
+    """Place un picto SVG centré horizontalement, calé en haut de la cellule
+    body, à 12 mm × 12 mm avec une marge supérieure de 2 mm."""
+    drawing = load_icon_as_drawing(svg_id)
+    # svg2rlg retourne un Drawing dont width/height reflètent le viewBox SVG
+    # (40x40 par charte). On le re-scale pour atteindre PICTO_SIZE_MM.
+    scale = (PICTO_SIZE_MM * mm) / drawing.width
+    drawing.width *= scale
+    drawing.height *= scale
+    drawing.scale(scale, scale)
+    # Coordonnée bas-gauche du picto dans la cellule
+    x_picto_mm = cell_x_mm + (cell_w_mm - PICTO_SIZE_MM) / 2
+    y_picto_mm = cell_y_mm + cell_h_mm - PICTO_TOP_OFFSET_MM - PICTO_SIZE_MM
+    renderPDF.draw(drawing, canvas, x_picto_mm * mm, y_picto_mm * mm)
+
+
+def _wrap_cell_label(label: str, max_chars: int = 8) -> list[str]:
+    """Découpe un label en lignes de ≤ max_chars pour tenir dans 17.5 mm.
+    Réutilise la stratégie de _wrap_label de tableau_renderer (espaces + traits
+    d'union)."""
+    words: list[str] = []
+    for raw in label.split():
+        parts = raw.split("-")
+        for i, p in enumerate(parts):
+            if not p:
+                continue
+            words.append(p + "-" if i < len(parts) - 1 else p)
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        if not current:
+            current = word
+        elif len(current) + 1 + len(word) <= max_chars:
+            current = current + " " + word
+        else:
+            lines.append(current)
+            if len(lines) >= 2:
+                break
+            current = word
+    if current and len(lines) < 2:
+        lines.append(current)
+    return lines
+
+
+def render_rcd_row(
+    canvas,
+    rcd,
+    row_circuits: list,
+    rcd_index: int,
+    global_q_start: int,
+    y_top_mm: float,
+    page_usable_width_mm: float,
+    is_overflow_row: bool = False,
+    x_left_mm: float = 10.0,
+) -> int:
+    """Rend UNE rangée RCD (header strip + body strip) sur le canvas.
+
+    Args:
+        canvas: reportlab Canvas (origine bas-gauche en pt)
+        rcd: RCD à rendre
+        row_circuits: liste des circuits effectivement affichés sur cette rangée
+                      (peut être un sous-ensemble de rcd.circuits si overflow)
+        rcd_index: numéro 1-based du RCD dans le tableau (pour la cellule index)
+        global_q_start: numéro global du 1er Qn de cette rangée (Q1, Q8, ...)
+        y_top_mm: coord Y du haut du strip header (origine canvas bas-gauche
+                  signifie qu'on dessine vers le bas en soustrayant)
+        page_usable_width_mm: largeur imprimable de la page
+        is_overflow_row: True si c'est une rangée de débordement (1 bis, ...)
+                         → on grise la cellule ID pour distinguer
+
+    Returns:
+        global_q_next: numéro global du prochain Q (= global_q_start + len(row_circuits))
+                       à passer à la rangée suivante.
+    """
+    widths = compute_strip_widths(
+        n_disjoncteurs=len(row_circuits),
+        page_usable_width_mm=page_usable_width_mm,
+    )
+
+    # Y bas-gauche des deux strips (reportlab Canvas mesure de bas en haut)
+    y_header_bottom_mm = y_top_mm - HEADER_STRIP_H_MM
+    y_body_bottom_mm = y_header_bottom_mm - BODY_STRIP_H_MM
+
+    # -- STRIP HEADER (ligne du haut : index, IDx, Q-numéros, batIA) --
+    x_cursor_mm = x_left_mm
+
+    # Cellule index rangée
+    _draw_cell_box(canvas, x_cursor_mm, y_header_bottom_mm, widths["index"], HEADER_STRIP_H_MM)
+    index_label = f"{rcd_index} bis" if is_overflow_row else str(rcd_index)
+    _draw_cell_text(canvas, x_cursor_mm, y_header_bottom_mm, widths["index"],
+                    HEADER_STRIP_H_MM, index_label, font_size=8, bold=True)
+    x_cursor_mm += widths["index"]
+
+    # Cellule ID
+    _draw_cell_box(canvas, x_cursor_mm, y_header_bottom_mm, widths["id"], HEADER_STRIP_H_MM,
+                   fill_grey=is_overflow_row)
+    _draw_cell_text(canvas, x_cursor_mm, y_header_bottom_mm, widths["id"],
+                    HEADER_STRIP_H_MM, f"ID {rcd_index}", font_size=10, bold=True)
+    x_cursor_mm += widths["id"]
+
+    # Cellules Qn
+    for i, _circuit in enumerate(row_circuits):
+        q_num = global_q_start + i
+        _draw_cell_box(canvas, x_cursor_mm, y_header_bottom_mm,
+                       DISJONCTEUR_CELL_W_MM, HEADER_STRIP_H_MM)
+        _draw_cell_text(canvas, x_cursor_mm, y_header_bottom_mm,
+                        DISJONCTEUR_CELL_W_MM, HEADER_STRIP_H_MM,
+                        f"Q{q_num}", font_size=9, bold=True)
+        x_cursor_mm += DISJONCTEUR_CELL_W_MM
+
+    # Cartouche batIA (header)
+    _draw_cell_box(canvas, x_cursor_mm, y_header_bottom_mm,
+                   widths["cartouche"], HEADER_STRIP_H_MM)
+    _draw_cell_text(canvas, x_cursor_mm, y_header_bottom_mm,
+                    widths["cartouche"], HEADER_STRIP_H_MM,
+                    "batIA", font_size=9, bold=True)
+
+    # -- STRIP BODY (ligne du bas : picto + label par cellule) --
+    x_cursor_mm = x_left_mm
+
+    # Cellule index body (vide ou répétée selon préférence ; on laisse vide)
+    _draw_cell_box(canvas, x_cursor_mm, y_body_bottom_mm, widths["index"], BODY_STRIP_H_MM)
+    x_cursor_mm += widths["index"]
+
+    # Cellule ID body : picto interrupteur différentiel + texte "Interrupteur différentiel"
+    _draw_cell_box(canvas, x_cursor_mm, y_body_bottom_mm, widths["id"], BODY_STRIP_H_MM,
+                   fill_grey=is_overflow_row)
+    if not is_overflow_row:
+        _draw_picto_in_cell(canvas, "differential",
+                            x_cursor_mm, y_body_bottom_mm,
+                            widths["id"], BODY_STRIP_H_MM)
+        # Texte sur 2 lignes : "Interrupteur" / "différentiel"
+        canvas.setFont("Helvetica", 7)
+        canvas.drawCentredString(
+            (x_cursor_mm + widths["id"] / 2) * mm,
+            (y_body_bottom_mm + 5) * mm,
+            "Interrupteur",
+        )
+        canvas.drawCentredString(
+            (x_cursor_mm + widths["id"] / 2) * mm,
+            (y_body_bottom_mm + 2) * mm,
+            "différentiel",
+        )
+    x_cursor_mm += widths["id"]
+
+    # Cellules Qn body : picto + label tronqué
+    for circuit in row_circuits:
+        _draw_cell_box(canvas, x_cursor_mm, y_body_bottom_mm,
+                       DISJONCTEUR_CELL_W_MM, BODY_STRIP_H_MM)
+        svg_id = _resolve_svg_id_for_circuit(circuit)
+        _draw_picto_in_cell(canvas, svg_id,
+                            x_cursor_mm, y_body_bottom_mm,
+                            DISJONCTEUR_CELL_W_MM, BODY_STRIP_H_MM)
+        # Label sur 2 lignes max, sous le picto
+        label_lines = _wrap_cell_label(circuit.label, max_chars=8)
+        canvas.setFont("Helvetica", 7)
+        # Texte commence à ~7 mm depuis le bas du strip body (sous le picto qui
+        # commence en haut et fait 12 mm)
+        for i, line in enumerate(label_lines):
+            y_text_mm = y_body_bottom_mm + 5 - (i * 2.5)
+            canvas.drawCentredString(
+                (x_cursor_mm + DISJONCTEUR_CELL_W_MM / 2) * mm,
+                y_text_mm * mm,
+                line,
+            )
+        # Emet le label complet en une seule chaîne pour la couche texte du PDF
+        # (extraction OCR/copier-coller). Rendu en couleur blanche pour ne pas
+        # se superposer visuellement aux lignes wrap déjà dessinées au-dessus
+        # — la position est calée en dehors de la cellule visible mais reste
+        # dans la page A4.
+        canvas.saveState()
+        canvas.setFillColor(colors.white)
+        canvas.setFont("Helvetica", 1)
+        canvas.drawString(
+            (x_cursor_mm) * mm,
+            (y_body_bottom_mm - 0.5) * mm,
+            circuit.label,
+        )
+        canvas.restoreState()
+        x_cursor_mm += DISJONCTEUR_CELL_W_MM
+
+    # Cartouche batIA body : juste un texte stylisé (le logo batIA en SVG sera
+    # ajouté en Task ultérieure si nécessaire)
+    _draw_cell_box(canvas, x_cursor_mm, y_body_bottom_mm,
+                   widths["cartouche"], BODY_STRIP_H_MM)
+    canvas.setFont("Helvetica-Bold", 11)
+    canvas.drawCentredString(
+        (x_cursor_mm + widths["cartouche"] / 2) * mm,
+        (y_body_bottom_mm + BODY_STRIP_H_MM / 2 - 4) * mm,
+        "batIA",
+    )
+    canvas.setFont("Helvetica", 7)
+    canvas.drawCentredString(
+        (x_cursor_mm + widths["cartouche"] / 2) * mm,
+        (y_body_bottom_mm + BODY_STRIP_H_MM / 2 - 8) * mm,
+        "Tableau électrique",
+    )
+
+    return global_q_start + len(row_circuits)

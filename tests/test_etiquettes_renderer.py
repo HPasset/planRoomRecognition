@@ -102,3 +102,44 @@ def test_paginate_rcds_5_per_page_default():
     assert len(pages_6) == 2
     assert len(pages_6[0]) == 5
     assert len(pages_6[1]) == 1
+
+
+def test_render_rcd_row_draws_expected_text_and_rects():
+    """Le rendu d'une rangée RCD doit dessiner :
+    - Texte 'ID 1' dans la cellule ID (strip header)
+    - Texte 'Q1' dans la première cellule Qn (strip header)
+    - Texte du label de circuit dans le body (ex. 'Plaque cuisson')
+    - 'Interrupteur différentiel' dans la cellule ID body
+    Vérifié via parsing du PDF généré (texte extrait)."""
+    import io
+    from pypdf import PdfReader
+    from reportlab.pdfgen.canvas import Canvas
+    from reportlab.lib.pagesizes import landscape, A4
+    from src.planrec.etiquettes_renderer import render_rcd_row
+    from src.planrec.nfc_tableau import Circuit, RCD, CircuitType
+
+    circuits = [
+        Circuit(id="c1", type=CircuitType.KITCHEN_SPECIAL, label="Plaque cuisson",
+                breaker_amps=32, cable_section_mm2=6.0, requires_type_a=True),
+    ]
+    rcd = RCD(id="rcd1", rcd_type="A", amps=63, sensitivity_ma=30, circuits=circuits)
+
+    buf = io.BytesIO()
+    canvas = Canvas(buf, pagesize=landscape(A4))
+    render_rcd_row(
+        canvas=canvas,
+        rcd=rcd,
+        row_circuits=circuits,
+        rcd_index=1,
+        global_q_start=1,
+        y_top_mm=180,
+        page_usable_width_mm=277,
+    )
+    canvas.save()
+
+    reader = PdfReader(io.BytesIO(buf.getvalue()))
+    text = reader.pages[0].extract_text()
+    assert "ID 1" in text
+    assert "Q1" in text
+    assert "Interrupteur" in text and "différentiel" in text
+    assert "Plaque cuisson" in text
