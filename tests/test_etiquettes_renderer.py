@@ -142,4 +142,7 @@ def test_render_rcd_row_draws_expected_text_and_rects():
     assert "ID 1" in text
     assert "Q1" in text
     assert "Interrupteur" in text and "différentiel" in text
-    assert "Plaque cuisson" in text
+    # Le label est wrap sur 2 lignes ("Plaque" + "cuisson") par _wrap_cell_label
+    # (max_chars=8). On vérifie les 2 fragments séparément dans le texte extrait.
+    assert "Plaque" in text
+    assert "cuisson" in text

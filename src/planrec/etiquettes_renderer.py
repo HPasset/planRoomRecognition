@@ -362,20 +362,6 @@ def render_rcd_row(
                 y_text_mm * mm,
                 line,
             )
-        # Emet le label complet en une seule chaîne pour la couche texte du PDF
-        # (extraction OCR/copier-coller). Rendu en couleur blanche pour ne pas
-        # se superposer visuellement aux lignes wrap déjà dessinées au-dessus
-        # — la position est calée en dehors de la cellule visible mais reste
-        # dans la page A4.
-        canvas.saveState()
-        canvas.setFillColor(colors.white)
-        canvas.setFont("Helvetica", 1)
-        canvas.drawString(
-            (x_cursor_mm) * mm,
-            (y_body_bottom_mm - 0.5) * mm,
-            circuit.label,
-        )
-        canvas.restoreState()
         x_cursor_mm += DISJONCTEUR_CELL_W_MM
 
     # Cartouche batIA body : juste un texte stylisé (le logo batIA en SVG sera
