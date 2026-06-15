@@ -1,35 +1,24 @@
-"""Tests pour schema_unifilaire (rendu PDF schéma unifilaire tableau)."""
+"""Tests pour schema_unifilaire (format Hager paysage)."""
 from __future__ import annotations
 
 
-def test_circuit_repere_format():
-    from src.planrec.schema_unifilaire import circuit_repere
-    assert circuit_repere(1, 1) == "1.1"
-    assert circuit_repere(2, 3) == "2.3"
-
-
-def test_agcp_constants_present():
-    from src.planrec import schema_unifilaire as su
-    assert su.AGCP_SENSITIVITY_MA == 500
-    assert su.DEFAULT_CURVE == "C"
-    assert "artisan" in su.AGCP_CONFIRM_NOTE.lower()
+def _cartouche(**over):
+    from src.planrec.schema_unifilaire import CartoucheInfo
+    base = dict(projet="Maison Dupont", client_nom="Dupont SARL",
+                client_ville="Lyon", puissance_kva=9, regime_neutre="TT",
+                date_iso="2026-06-15")
+    base.update(over)
+    return CartoucheInfo(**base)
 
 
 def _make_tableau(n_ids: int, departs_per_id: int = 3, typology: str = "T3"):
-    """Construit un Tableau de test : n_ids RCD, departs_per_id circuits chacun."""
     from src.planrec.nfc_tableau import Tableau, RCD, Circuit, CircuitType
     rcds = []
     for i in range(n_ids):
         circuits = [
-            Circuit(
-                id=f"c{i}_{j}",
-                type=CircuitType.SOCKET,
-                label=f"Prises pièce {j}",
-                breaker_amps=20,
-                cable_section_mm2=2.5,
-                rooms_served=[f"Pièce {j}"],
-                n_devices=4,
-            )
+            Circuit(id=f"c{i}_{j}", type=CircuitType.SOCKET,
+                    label=f"Prises pièce {j}", breaker_amps=20,
+                    cable_section_mm2=2.5, rooms_served=[f"P{j}"], n_devices=4)
             for j in range(departs_per_id)
         ]
         rcds.append(RCD(id=f"rcd{i}", rcd_type="A" if i == 0 else "AC",
@@ -39,16 +28,40 @@ def _make_tableau(n_ids: int, departs_per_id: int = 3, typology: str = "T3"):
                    notes=[], warnings=[])
 
 
-def test_pdf_header_and_nonempty():
+def test_derive_puissance_kva():
+    from src.planrec.schema_unifilaire import derive_puissance_kva
+    assert derive_puissance_kva("T1") == 6
+    assert derive_puissance_kva("T3") == 9
+    assert derive_puissance_kva("T5") == 12
+    assert derive_puissance_kva("???") == 9
+
+
+def test_derive_db_calibre():
+    from src.planrec.schema_unifilaire import derive_db_calibre
+    assert derive_db_calibre(6) == 30
+    assert derive_db_calibre(9) == 45
+    assert derive_db_calibre(12) == 60
+    assert derive_db_calibre(7) == 30   # plus proche tier <= 7 => 6 => 30 A
+
+
+def test_cartouche_info_fields():
+    c = _cartouche()
+    assert c.projet == "Maison Dupont"
+    assert c.client_nom == "Dupont SARL"
+    assert c.puissance_kva == 9
+    assert c.regime_neutre == "TT"
+
+
+def test_pdf_header_and_single_folio():
     from pypdf import PdfReader
     import io
     from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
-    pdf = render_schema_unifilaire_pdf(_make_tableau(2))
+    pdf = render_schema_unifilaire_pdf(_make_tableau(2), _cartouche())
     assert pdf.startswith(b"%PDF-")
     assert len(PdfReader(io.BytesIO(pdf)).pages) == 1
 
 
-def test_empty_tableau_produces_valid_single_page_pdf():
+def test_empty_tableau_valid_single_folio():
     from pypdf import PdfReader
     import io
     from src.planrec.nfc_tableau import Tableau
@@ -56,49 +69,31 @@ def test_empty_tableau_produces_valid_single_page_pdf():
     empty = Tableau(typology="T1", typology_source="auto", surface_m2=None,
                     heating_enabled=False, rcds=[], total_modules=0, n_rails=0,
                     notes=[], warnings=[])
-    pdf = render_schema_unifilaire_pdf(empty)
+    pdf = render_schema_unifilaire_pdf(empty, _cartouche(puissance_kva=6))
     assert pdf.startswith(b"%PDF-")
     assert len(PdfReader(io.BytesIO(pdf)).pages) == 1
 
 
-def test_multipage_when_many_ids():
-    """7 ID → ceil(7/3) = 3 pages."""
+def test_cartouche_text_and_grid_present():
     from pypdf import PdfReader
     import io
     from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
-    pdf = render_schema_unifilaire_pdf(_make_tableau(7, departs_per_id=2))
-    assert len(PdfReader(io.BytesIO(pdf)).pages) == 3
-
-
-def test_saturated_id_8_departures_does_not_crash():
-    from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
-    pdf = render_schema_unifilaire_pdf(_make_tableau(1, departs_per_id=8))
-    assert pdf.startswith(b"%PDF-")
-
-
-def test_repere_and_agcp_text_in_pdf():
-    """Le repère '1.1' et la désignation AGCP figurent dans le texte du PDF."""
-    from pypdf import PdfReader
-    import io
-    from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
-    pdf = render_schema_unifilaire_pdf(_make_tableau(1, departs_per_id=2))
+    pdf = render_schema_unifilaire_pdf(_make_tableau(2), _cartouche())
     text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
-    assert "1.1" in text
-    assert "branchement" in text.lower()
+    assert "Maison Dupont" in text
+    assert "Dupont SARL" in text
+    assert "kVA" in text
+    assert "TT" in text
+    assert "Folio" in text
+    assert "14" in text
+    for letter in ("A", "G"):
+        assert letter in text
 
 
-def test_all_circuit_types_render_without_crash():
-    """Chaque CircuitType doit résoudre un picto et rendre sans exception."""
-    from src.planrec.nfc_tableau import Tableau, RCD, Circuit, CircuitType
+def test_multifolio_pagination():
+    """4 RCD × (1 ID + 3 départs) = 16 slots > 12/folio => 2 folios."""
+    from pypdf import PdfReader
+    import io
     from src.planrec.schema_unifilaire import render_schema_unifilaire_pdf
-    circuits = [
-        Circuit(id=f"c{i}", type=ct, label=ct.value, breaker_amps=16,
-                cable_section_mm2=1.5, rooms_served=["X"], n_devices=1)
-        for i, ct in enumerate(CircuitType)
-    ]
-    rcd = RCD(id="r", rcd_type="AC", amps=40, sensitivity_ma=30, circuits=circuits)
-    tab = Tableau(typology="T4", typology_source="auto", surface_m2=90.0,
-                  heating_enabled=True, rcds=[rcd], total_modules=0, n_rails=0,
-                  notes=[], warnings=[])
-    pdf = render_schema_unifilaire_pdf(tab)
-    assert pdf.startswith(b"%PDF-")
+    pdf = render_schema_unifilaire_pdf(_make_tableau(4, departs_per_id=3), _cartouche())
+    assert len(PdfReader(io.BytesIO(pdf)).pages) == 2

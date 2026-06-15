@@ -3318,8 +3318,18 @@ def main():
                 pdf_etiquettes = None
                 etiquettes_err = str(e)
 
+            from datetime import date as _date_su
+            from src.planrec.schema_unifilaire import CartoucheInfo as _CartoucheInfo
+            _cartouche = _CartoucheInfo(
+                projet="",
+                client_nom="",
+                client_ville="",
+                puissance_kva=_schema_uni.derive_puissance_kva(tableau.typology),
+                regime_neutre="TT",
+                date_iso=_date_su.today().isoformat(),
+            )
             try:
-                pdf_schema = _schema_uni.render_schema_unifilaire_pdf(tableau)
+                pdf_schema = _schema_uni.render_schema_unifilaire_pdf(tableau, _cartouche)
                 schema_err = None
             except Exception as e:
                 pdf_schema = None
@@ -3358,8 +3368,8 @@ def main():
                         file_name=f"schema_unifilaire_{tableau.typology}_{img_hash[:8]}.pdf",
                         mime="application/pdf",
                         key="dl_schema_unifilaire_pdf",
-                        help="A4 portrait. Pièce destinée au dossier Consuel "
-                             "(AGCP générique à confirmer par l'artisan).",
+                        help="A4 paysage — format Hager. Cartouche à compléter "
+                             "dans le formulaire ci-dessus.",
                     )
                 else:
                     st.error(

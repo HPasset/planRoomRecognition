@@ -1,218 +1,196 @@
-"""Renderer du schéma unifilaire du tableau électrique (cible dossier Consuel).
+"""Renderer du schéma unifilaire — format Hager (A4 paysage, bus horizontal).
 
-Symboles d'appareillage EN 60617 dessinés en primitives reportlab (AGCP, DDR,
-disjoncteur, terre) + pictos d'usage maison (icon_assets) en bout de départ.
-Mise en page A4 portrait, une colonne par ID, pagination par ID, cartouche.
+Cadre normalisé (repères A-G / 1-14), arrivée AGCP → jeu de barres → ID 30 mA →
+disjoncteurs divisionnaires → barre de terre, bande pictogrammes (bibliothèque
+batIA) et cartouche (projet / client / puissance / régime / folio).
 
-Logique pure : aucun import Streamlit/React. Voir
-docs/superpowers/specs/2026-06-15-schema-unifilaire-design.md
+Module pur : reportlab uniquement, aucun import Streamlit/React/DB. Voir
+docs/superpowers/specs/2026-06-15-schema-unifilaire-hager-design.md
 """
 from __future__ import annotations
 
 import io
-from datetime import date
+from dataclasses import dataclass
 
-from reportlab.lib.pagesizes import A4, portrait
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
+from reportlab.lib import colors
 from reportlab.graphics import renderPDF
 from reportlab.pdfgen.canvas import Canvas
 
-from src.planrec.nfc_tableau import Tableau
+from src.planrec.nfc_tableau import Tableau, RCD
 from src.planrec.icon_assets import load_icon_as_drawing, resolve_svg_id_for_circuit
-from src.planrec.etiquettes_renderer import paginate_rcds, _draw_batia_logo_cartouche
+from src.planrec.etiquettes_renderer import _draw_batia_logo_cartouche
 
-# --- AGCP générique (tête d'installation, valeurs à confirmer par l'artisan) ---
-AGCP_DESIGNATION = "Disjoncteur de branchement"
-AGCP_CALIBRE = "15/45 A"
-AGCP_SENSITIVITY_MA = 500          # sélectif (S)
-DEFAULT_CURVE = "C"                 # courbe disjoncteurs divisionnaires (résidentiel)
-AGCP_CONFIRM_NOTE = "Valeurs amont (AGCP, terre) à confirmer par l'artisan"
+# --- AGCP / courbe ---
+AGCP_SENSITIVITY_MA = 500
+DEFAULT_CURVE = "C"
 
-# --- Géométrie page (mm, A4 portrait) ---
-A4_PORTRAIT_W_MM = 210.0
-A4_PORTRAIT_H_MM = 297.0
-PAGE_MARGIN_MM = 15.0
-USABLE_W_MM = A4_PORTRAIT_W_MM - 2 * PAGE_MARGIN_MM   # 180
-IDS_PER_PAGE = 3
-HEAD_ZONE_H_MM = 38.0              # zone AGCP + terre + barre
-ID_HEADER_H_MM = 22.0
-DEPARTURE_H_MM = 22.0
-CARTOUCHE_H_MM = 18.0
+# --- Dérivations ---
+_PUISSANCE_BY_TYPO = {"T1": 6, "T2": 6, "T3": 9, "T4": 12, "T5": 12}
+_DB_CALIBRE_BY_KVA = {3: 15, 6: 30, 9: 45, 12: 60, 15: 60, 18: 90}
 
 
-def circuit_repere(id_idx: int, depart_idx: int) -> str:
-    """Repère lisible d'un départ : 'N°ID.N°départ' (ex. '1.3')."""
-    return f"{id_idx}.{depart_idx}"
+def derive_puissance_kva(typology: str) -> int:
+    """Puissance prévisionnelle par défaut selon la typologie (kVA, monophasé)."""
+    return _PUISSANCE_BY_TYPO.get(typology, 9)
 
 
-def _yp(y_top_mm: float) -> float:
-    """Coord 'depuis le haut de page' (mm) → points reportlab (origine bas-gauche)."""
-    return (A4_PORTRAIT_H_MM - y_top_mm) * mm
+def derive_db_calibre(puissance_kva: int) -> int:
+    """Calibre du disjoncteur de branchement (A) dérivé de la puissance (kVA)."""
+    if puissance_kva in _DB_CALIBRE_BY_KVA:
+        return _DB_CALIBRE_BY_KVA[puissance_kva]
+    best = min(_DB_CALIBRE_BY_KVA)
+    for k in sorted(_DB_CALIBRE_BY_KVA):
+        if k <= puissance_kva:
+            best = k
+    return _DB_CALIBRE_BY_KVA[best]
 
 
-def _draw_picto(canvas, svg_id: str, x_mm: float, y_top_mm: float, size_mm: float) -> None:
-    """Place un picto d'usage (viewBox 40×40) scalé dans size_mm, coin haut-gauche
-    en (x_mm, y_top_mm depuis le haut)."""
-    try:
-        drawing = load_icon_as_drawing(svg_id)
-    except FileNotFoundError:
-        return
-    ref = max(drawing.width, drawing.height) or 40.0
-    scale = (size_mm * mm) / ref
-    drawing.width *= scale
-    drawing.height *= scale
-    drawing.scale(scale, scale)
-    renderPDF.draw(drawing, canvas, x_mm * mm, _yp(y_top_mm + size_mm))
+@dataclass
+class CartoucheInfo:
+    projet: str
+    client_nom: str
+    client_ville: str
+    puissance_kva: int
+    regime_neutre: str
+    date_iso: str
 
 
-def _draw_head(canvas, busbar_y_top_mm: float) -> None:
-    """AGCP (disjoncteur de branchement) + prise de terre + barre de répartition."""
-    x_left = PAGE_MARGIN_MM
-    box_w, box_h = 14.0, 16.0
-    box_top = busbar_y_top_mm - box_h - 8.0
-
-    # Boîtier AGCP + contact diagonal
-    canvas.setLineWidth(1.2)
-    canvas.rect(x_left * mm, _yp(box_top + box_h), box_w * mm, box_h * mm)
-    canvas.line((x_left + 3) * mm, _yp(box_top + box_h - 3),
-                (x_left + box_w - 3) * mm, _yp(box_top + 3))
-    # Amont (vers le haut) + aval (vers la barre)
-    canvas.line((x_left + box_w / 2) * mm, _yp(box_top),
-                (x_left + box_w / 2) * mm, _yp(box_top - 6))
-    canvas.line((x_left + box_w / 2) * mm, _yp(box_top + box_h),
-                (x_left + box_w / 2) * mm, _yp(busbar_y_top_mm))
-    # Annotations
-    canvas.setFont("Helvetica-Bold", 8)
-    canvas.drawString((x_left + box_w + 3) * mm, _yp(box_top + 5), AGCP_DESIGNATION)
-    canvas.setFont("Helvetica", 7)
-    canvas.drawString((x_left + box_w + 3) * mm, _yp(box_top + 9.5),
-                      f"{AGCP_CALIBRE} · {AGCP_SENSITIVITY_MA} mA · sélectif")
-    canvas.setFont("Helvetica-Oblique", 6)
-    canvas.drawString((x_left + box_w + 3) * mm, _yp(box_top + 13.5), AGCP_CONFIRM_NOTE)
-
-    # Prise de terre (droite) : descente + 3 traits décroissants
-    tx = A4_PORTRAIT_W_MM - PAGE_MARGIN_MM - 10.0
-    canvas.setLineWidth(1.0)
-    canvas.line(tx * mm, _yp(box_top), tx * mm, _yp(box_top + 8))
-    canvas.line((tx - 5) * mm, _yp(box_top + 8), (tx + 5) * mm, _yp(box_top + 8))
-    canvas.line((tx - 3.3) * mm, _yp(box_top + 9.6), (tx + 3.3) * mm, _yp(box_top + 9.6))
-    canvas.line((tx - 1.6) * mm, _yp(box_top + 11.2), (tx + 1.6) * mm, _yp(box_top + 11.2))
-    canvas.setFont("Helvetica", 6)
-    canvas.drawCentredString(tx * mm, _yp(box_top + 14.5), "Terre")
-
-    # Barre de répartition
-    canvas.setLineWidth(2.0)
-    canvas.line(PAGE_MARGIN_MM * mm, _yp(busbar_y_top_mm),
-                (A4_PORTRAIT_W_MM - PAGE_MARGIN_MM) * mm, _yp(busbar_y_top_mm))
-    canvas.setLineWidth(1.0)
+def circuit_repere(q_idx: int) -> str:
+    """Repère global d'un disjoncteur divisionnaire : 'Q{n}'."""
+    return f"Q{q_idx}"
 
 
-def _draw_departure(canvas, circuit, repere: str, spine_x_mm: float,
-                    col_x_mm: float, y_top_mm: float) -> None:
-    """Un départ : branche + disjoncteur + repère/calibre/section + picto + label."""
-    branch_y = y_top_mm + 3
-    dj_x = spine_x_mm + 3
-    dj_w, dj_h = 6.0, 5.0
-    # Branche depuis l'épine vers le disjoncteur
-    canvas.setLineWidth(1.0)
-    canvas.line(spine_x_mm * mm, _yp(branch_y), dj_x * mm, _yp(branch_y))
-    # Symbole disjoncteur divisionnaire (boîtier + contact)
-    canvas.rect(dj_x * mm, _yp(branch_y + dj_h / 2), dj_w * mm, dj_h * mm)
-    canvas.line((dj_x + 1) * mm, _yp(branch_y + dj_h / 2 - 1),
-                (dj_x + dj_w - 1) * mm, _yp(branch_y - dj_h / 2 + 1))
-    # Texte : repère + calibre/courbe + section
-    tx = dj_x + dj_w + 2
-    canvas.setFont("Helvetica-Bold", 7)
-    canvas.drawString(tx * mm, _yp(branch_y - 0.5), repere)
-    canvas.setFont("Helvetica", 6.5)
-    canvas.drawString(tx * mm, _yp(branch_y + 3), f"{circuit.breaker_amps}A {DEFAULT_CURVE}")
-    canvas.drawString(tx * mm, _yp(branch_y + 6), f"{circuit.cable_section_mm2} mm²")
-    # Picto d'usage + label court
-    svg_id = resolve_svg_id_for_circuit(circuit)
-    _draw_picto(canvas, svg_id, col_x_mm + 3, y_top_mm + 11, 7.0)
-    canvas.setFont("Helvetica", 6)
-    label = (circuit.label or "")[:22]
-    canvas.drawString((col_x_mm + 12) * mm, _yp(y_top_mm + 15), label)
+# --- Géométrie page (mm, A4 paysage) ---
+PAGE_W_MM = 297.0
+PAGE_H_MM = 210.0
+FRAME_MARGIN_MM = 8.0
+FRAME_LEFT = FRAME_MARGIN_MM
+FRAME_RIGHT = PAGE_W_MM - FRAME_MARGIN_MM
+FRAME_BOT = FRAME_MARGIN_MM
+FRAME_TOP = PAGE_H_MM - FRAME_MARGIN_MM
+N_GRID_COLS = 14
+GRID_ROWS = "ABCDEFG"
+SLOTS_PER_FOLIO = 12
+
+# Zones verticales (y depuis le bas, mm)
+MAIN_BUS_Y = 188.0
+ID_SYM_Y = 176.0
+SEC_BUS_Y = 166.0
+Q_SYM_Y = 150.0
+PE_Y = 86.0
+PICTO_TOP_Y = 78.0
+PICTO_SIZE_MM = 9.0
+CARTOUCHE_TOP_Y = 44.0
+LEGEND_RIGHT = 36.0
+SLOTS_LEFT = 38.0
 
 
-def _draw_id_column(canvas, rcd, id_idx: int, col_x_mm: float, col_w_mm: float,
-                    busbar_y_top_mm: float) -> None:
-    """Une colonne = symbole ID en tête + peigne de disjoncteurs en dessous."""
-    cx = col_x_mm + col_w_mm / 2
-    # Descente barre → ID
-    canvas.line(cx * mm, _yp(busbar_y_top_mm), cx * mm, _yp(busbar_y_top_mm + 6))
-    id_top = busbar_y_top_mm + 6
-    id_w, id_h = 26.0, ID_HEADER_H_MM - 6
-    id_x = cx - id_w / 2
-    # Symbole DDR (boîtier + contact diagonal + tore)
-    canvas.setLineWidth(1.2)
-    canvas.rect(id_x * mm, _yp(id_top + id_h), id_w * mm, id_h * mm)
-    canvas.line((id_x + 4) * mm, _yp(id_top + id_h - 3),
-                (id_x + id_w - 4) * mm, _yp(id_top + 3))
-    canvas.circle(cx * mm, _yp(id_top + id_h / 2), 1.6 * mm, stroke=1, fill=0)
-    canvas.setFont("Helvetica-Bold", 8)
-    canvas.drawCentredString(cx * mm, _yp(id_top + 4.5), f"ID {id_idx}")
-    canvas.setFont("Helvetica", 7)
-    canvas.drawCentredString(cx * mm, _yp(id_top + id_h + 4),
-                             f"{rcd.amps}A · Type {rcd.rcd_type} · {rcd.sensitivity_ma} mA")
-    # Peigne vertical (épine)
-    dep_top = id_top + id_h + 8
-    canvas.setLineWidth(1.0)
-    if rcd.circuits:
-        spine_bottom = dep_top + (len(rcd.circuits) - 1) * DEPARTURE_H_MM + 3
-        canvas.line(cx * mm, _yp(id_top + id_h), cx * mm, _yp(spine_bottom))
-    for j, circuit in enumerate(rcd.circuits):
-        y0 = dep_top + j * DEPARTURE_H_MM
-        _draw_departure(canvas, circuit, circuit_repere(id_idx, j + 1),
-                        cx, col_x_mm, y0)
+def _paginate_rcds_by_slots(rcds: list[RCD], cap: int = SLOTS_PER_FOLIO) -> list[list[RCD]]:
+    """Empaquète des RCD entiers (ID + ses départs) par folio sans dépasser `cap`
+    slots, pour qu'un RCD ne soit jamais coupé entre deux folios."""
+    folios: list[list[RCD]] = []
+    cur: list[RCD] = []
+    used = 0
+    for rcd in rcds:
+        need = 1 + len(rcd.circuits)
+        if cur and used + need > cap:
+            folios.append(cur)
+            cur = []
+            used = 0
+        cur.append(rcd)
+        used += need
+    if cur:
+        folios.append(cur)
+    return folios or [[]]
 
 
-def _draw_cartouche(canvas, tableau: Tableau, page_idx: int, total_pages: int) -> None:
-    """Bandeau bas : logo batIA + titre + date + page + mention de réserve."""
-    margin = PAGE_MARGIN_MM
-    band_h = CARTOUCHE_H_MM
-    y0 = margin  # bas de bande, mesuré depuis le bas
-    canvas.setLineWidth(0.8)
-    canvas.rect(margin * mm, y0 * mm, USABLE_W_MM * mm, band_h * mm)
-    _draw_batia_logo_cartouche(canvas, margin, y0, 28.0, band_h)
-    canvas.line((margin + 28) * mm, y0 * mm, (margin + 28) * mm, (y0 + band_h) * mm)
-    tx = margin + 31
-    canvas.setFont("Helvetica-Bold", 9)
-    canvas.drawString(tx * mm, (y0 + band_h - 5) * mm,
-                      f"Schéma unifilaire — Logement {tableau.typology}")
-    canvas.setFont("Helvetica", 7)
-    canvas.drawString(tx * mm, (y0 + band_h - 9.5) * mm,
-                      f"Date : {date.today().isoformat()}   ·   "
-                      f"Page {page_idx + 1}/{total_pages}")
-    canvas.setFont("Helvetica-Oblique", 6)
-    canvas.drawString(tx * mm, (y0 + 2.5) * mm,
-                      "Calculé selon NFC 15-100 §10 + règles cabinet. Sections câbles "
-                      "indicatives. L'artisan valide la conformité finale.")
+def _draw_grid_frame(c: Canvas) -> None:
+    """Cadre extérieur + repères de grille (colonnes 1-14, lignes A-G)."""
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(1.0)
+    c.rect(FRAME_LEFT * mm, FRAME_BOT * mm,
+           (FRAME_RIGHT - FRAME_LEFT) * mm, (FRAME_TOP - FRAME_BOT) * mm)
+    col_w = (FRAME_RIGHT - FRAME_LEFT) / N_GRID_COLS
+    c.setFont("Helvetica", 6)
+    for i in range(N_GRID_COLS):
+        x = FRAME_LEFT + (i + 0.5) * col_w
+        c.drawCentredString(x * mm, (FRAME_TOP - 4) * mm, str(i + 1))
+        c.drawCentredString(x * mm, (FRAME_BOT + 1.5) * mm, str(i + 1))
+        if i > 0:
+            gx = (FRAME_LEFT + i * col_w) * mm
+            c.setLineWidth(0.2)
+            c.line(gx, FRAME_TOP * mm, gx, (FRAME_TOP - 2.5) * mm)
+            c.line(gx, FRAME_BOT * mm, gx, (FRAME_BOT + 2.5) * mm)
+            c.setLineWidth(1.0)
+    row_h = (FRAME_TOP - FRAME_BOT) / len(GRID_ROWS)
+    for j, letter in enumerate(GRID_ROWS):
+        y = FRAME_TOP - (j + 0.5) * row_h
+        c.drawCentredString((FRAME_LEFT + 2) * mm, y * mm, letter)
+        c.drawCentredString((FRAME_RIGHT - 2) * mm, y * mm, letter)
 
 
-def render_schema_unifilaire_pdf(tableau: Tableau) -> bytes:
-    """Rend le PDF complet du schéma unifilaire (A4 portrait, multi-pages).
+def _draw_cartouche(c: Canvas, tableau: Tableau, cartouche: CartoucheInfo,
+                    folio_idx: int, total: int) -> None:
+    """Bandeau cartouche bas (style Hager) : logo + cases d'info."""
+    x0, y0 = FRAME_LEFT, FRAME_BOT
+    w = FRAME_RIGHT - FRAME_LEFT
+    h = CARTOUCHE_TOP_Y - FRAME_BOT
+    c.setLineWidth(0.8)
+    c.rect(x0 * mm, y0 * mm, w * mm, h * mm)
+    _draw_batia_logo_cartouche(c, x0 + 1, y0 + 1, 34.0, h - 2)
+    lx = x0 + 36
+    c.line(lx * mm, y0 * mm, lx * mm, (y0 + h) * mm)
+    fields = [
+        ("Projet", cartouche.projet or "—"),
+        ("Client", (cartouche.client_nom or "—") +
+                   (f" · {cartouche.client_ville}" if cartouche.client_ville else "")),
+        ("Tableau", f"Tableau électrique — {tableau.typology}"),
+        ("Date", cartouche.date_iso),
+        ("Puissance prévisionnelle", f"{cartouche.puissance_kva} kVA"),
+        ("Régime de neutre", cartouche.regime_neutre),
+        ("Folio", f"{folio_idx + 1} / {total}"),
+    ]
+    col_x = [lx + 2, lx + 95, lx + 180]
+    for k, (label, value) in enumerate(fields):
+        cx = col_x[k % 3]
+        row = k // 3
+        cy = y0 + h - 7 - row * (h / 3)
+        c.setFont("Helvetica", 5.5)
+        c.drawString(cx * mm, (cy + 2.5) * mm, label)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(cx * mm, (cy - 1.5) * mm, str(value)[:38])
+    c.setFont("Helvetica-Oblique", 5)
+    c.drawString((lx + 2) * mm, (y0 + 1.5) * mm,
+                 "Calculé selon NFC 15-100 §10 + règles cabinet. Sections "
+                 "indicatives. L'artisan valide la conformité finale.")
 
-    Une colonne par ID (RCD), IDS_PER_PAGE colonnes par page. AGCP générique +
-    terre + barre de répartition rappelés en tête de chaque page ; cartouche en
-    pied. Tableau vide → une page minimale valide.
-    """
+
+def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
+                        folio_idx: int, total: int, id_offset: int,
+                        q_offset: int, db_calibre: int) -> None:
+    """Contenu électrique d'un folio (bus + ID + départs + terre + pictos +
+    localisation). Implémenté en Task 2."""
+    pass  # Task 2
+
+
+def render_schema_unifilaire_pdf(tableau: Tableau, cartouche: CartoucheInfo) -> bytes:
+    """Rend le PDF du schéma unifilaire (format Hager paysage, multi-folios)."""
     buf = io.BytesIO()
-    c = Canvas(buf, pagesize=portrait(A4))
-    pages = paginate_rcds(tableau.rcds, per_page=IDS_PER_PAGE) or [[]]
-    total_pages = max(len(pages), 1)
-    busbar_y = PAGE_MARGIN_MM + HEAD_ZONE_H_MM
-    col_w = USABLE_W_MM / IDS_PER_PAGE
-
-    for page_idx, rcds_in_page in enumerate(pages):
-        _draw_head(c, busbar_y)
-        base_id_idx = page_idx * IDS_PER_PAGE
-        for local_idx, rcd in enumerate(rcds_in_page):
-            id_idx = base_id_idx + local_idx + 1
-            col_x = PAGE_MARGIN_MM + local_idx * col_w
-            _draw_id_column(c, rcd, id_idx, col_x, col_w, busbar_y)
-        _draw_cartouche(c, tableau, page_idx, total_pages)
+    c = Canvas(buf, pagesize=landscape(A4))
+    folios = _paginate_rcds_by_slots(tableau.rcds)
+    total = len(folios)
+    db_calibre = derive_db_calibre(cartouche.puissance_kva)
+    id_offset = 0
+    q_offset = 0
+    for folio_idx, folio_rcds in enumerate(folios):
+        _draw_grid_frame(c)
+        _draw_folio_content(c, folio_rcds, folio_idx == 0, folio_idx, total,
+                            id_offset, q_offset, db_calibre)
+        _draw_cartouche(c, tableau, cartouche, folio_idx, total)
         c.showPage()
-
+        id_offset += len(folio_rcds)
+        q_offset += sum(len(r.circuits) for r in folio_rcds)
     c.save()
     return buf.getvalue()
