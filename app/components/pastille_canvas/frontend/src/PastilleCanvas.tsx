@@ -5,6 +5,47 @@ import {
   ComponentProps,
 } from "streamlit-component-lib";
 
+// Imports SVG via Vite ?raw : source unique partagée avec
+// src/planrec/etiquettes_renderer.py (PDF étiquettes tableau électrique).
+import socketSvg from '@icons/socket.svg?raw';
+import switchSvg from '@icons/switch.svg?raw';
+import lightSvg from '@icons/light.svg?raw';
+import rj45Svg from '@icons/rj45.svg?raw';
+import differentialSvg from '@icons/differential.svg?raw';
+import ovenSvg from '@icons/oven.svg?raw';
+import cooktopSvg from '@icons/cooktop.svg?raw';
+import dishwasherSvg from '@icons/dishwasher.svg?raw';
+import washingMachineSvg from '@icons/washing_machine.svg?raw';
+import dryerSvg from '@icons/dryer.svg?raw';
+import boilerSvg from '@icons/boiler.svg?raw';
+import convectorSvg from '@icons/convector.svg?raw';
+import towelWarmerSvg from '@icons/towel_warmer.svg?raw';
+import specialFeedSvg from '@icons/special_feed.svg?raw';
+
+// Lookup table : svg_id (côté Python EQUIP_TYPES) -> SVG raw string.
+// Les clés doivent matcher EXACTEMENT les svg_id de nfc_equipments.py.
+const ICONS: Record<string, string> = {
+  socket: socketSvg,
+  switch: switchSvg,
+  light: lightSvg,
+  rj45: rj45Svg,
+  differential: differentialSvg,
+  oven: ovenSvg,
+  cooktop: cooktopSvg,
+  dishwasher: dishwasherSvg,
+  washingmachine: washingMachineSvg,  // svg_id sans underscore côté Python
+  dryer: dryerSvg,
+  boiler: boilerSvg,
+  convector: convectorSvg,
+  towelwarmer: towelWarmerSvg,        // idem
+  specfeed: specialFeedSvg,           // idem (svg_id "specfeed")
+};
+
+const FALLBACK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <circle cx="20" cy="20" r="14" fill="white" stroke="currentColor" stroke-width="2"/>
+  <text x="20" y="25" text-anchor="middle" font-size="14" fill="currentColor">?</text>
+</svg>`;
+
 export interface Pastille {
   id: string;
   type: string;
@@ -397,121 +438,20 @@ interface SvgEquipIconProps {
 }
 
 function SvgEquipIcon({ svgId, color, size = 22 }: SvgEquipIconProps) {
-  const sw = 2.5;
-  switch (svgId) {
-    case "socket":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <circle cx="20" cy="20" r="13" fill="white" stroke={color} strokeWidth={sw}/>
-          <line x1="20" y1="7" x2="20" y2="20" stroke={color} strokeWidth={sw}/>
-        </svg>
-      );
-    case "switch":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <circle cx="10" cy="20" r="3" fill={color}/>
-          <circle cx="30" cy="20" r="3" fill={color}/>
-          <line x1="10" y1="20" x2="28" y2="10" stroke={color} strokeWidth={sw}/>
-        </svg>
-      );
-    case "light":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <circle cx="20" cy="20" r="12" fill="#fff9c4" stroke={color} strokeWidth={sw}/>
-          <line x1="13" y1="13" x2="27" y2="27" stroke={color} strokeWidth={2}/>
-          <line x1="27" y1="13" x2="13" y2="27" stroke={color} strokeWidth={2}/>
-        </svg>
-      );
-    case "specfeed":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <circle cx="20" cy="20" r="14" fill="white" stroke={color} strokeWidth={sw}/>
-          <line x1="20" y1="4" x2="20" y2="20" stroke={color} strokeWidth={sw}/>
-          <line x1="14" y1="2" x2="20" y2="6" stroke={color} strokeWidth={2}/>
-          <line x1="26" y1="2" x2="20" y2="6" stroke={color} strokeWidth={2}/>
-        </svg>
-      );
-    case "rj45":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <rect x="10" y="14" width="20" height="12" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
-          <line x1="14" y1="14" x2="14" y2="9" stroke={color} strokeWidth={2}/>
-          <line x1="20" y1="14" x2="20" y2="9" stroke={color} strokeWidth={2}/>
-          <line x1="26" y1="14" x2="26" y2="9" stroke={color} strokeWidth={2}/>
-        </svg>
-      );
-    case "oven":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
-          <rect x="10" y="12" width="20" height="12" rx="1" fill="none" stroke={color} strokeWidth={2}/>
-          <text x="20" y="25" textAnchor="middle" fontSize="10" fontWeight="bold" fill={color}>F</text>
-        </svg>
-      );
-    case "cooktop":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
-          <circle cx="15" cy="17" r="4" fill="none" stroke={color} strokeWidth={2}/>
-          <circle cx="25" cy="17" r="4" fill="none" stroke={color} strokeWidth={2}/>
-          <circle cx="15" cy="27" r="4" fill="none" stroke={color} strokeWidth={2}/>
-          <circle cx="25" cy="27" r="4" fill="none" stroke={color} strokeWidth={2}/>
-        </svg>
-      );
-    case "dishwasher":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
-          <text x="20" y="25" textAnchor="middle" fontSize="10" fontWeight="bold" fill={color}>LV</text>
-        </svg>
-      );
-    case "washingmachine":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
-          <circle cx="20" cy="22" r="8" fill="none" stroke={color} strokeWidth={2}/>
-          <text x="20" y="26" textAnchor="middle" fontSize="8" fontWeight="bold" fill={color}>LL</text>
-        </svg>
-      );
-    case "dryer":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
-          <circle cx="20" cy="22" r="8" fill="none" stroke={color} strokeWidth={2}/>
-          <text x="20" y="26" textAnchor="middle" fontSize="8" fontWeight="bold" fill={color}>SL</text>
-        </svg>
-      );
-    case "boiler":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <circle cx="20" cy="20" r="14" fill="white" stroke={color} strokeWidth={sw}/>
-          <text x="20" y="25" textAnchor="middle" fontSize="14" fontWeight="bold" fill={color}>C</text>
-        </svg>
-      );
-    case "convector":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <rect x="6" y="12" width="28" height="16" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
-          <path d="M11 24 Q14 19 17 24 Q20 29 23 24 Q26 19 29 24" fill="none" stroke={color} strokeWidth={2}/>
-        </svg>
-      );
-    case "towelwarmer":
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <rect x="6" y="8" width="28" height="24" rx="2" fill="white" stroke={color} strokeWidth={sw}/>
-          <line x1="12" y1="14" x2="28" y2="14" stroke={color} strokeWidth={2}/>
-          <line x1="12" y1="20" x2="28" y2="20" stroke={color} strokeWidth={2}/>
-          <line x1="12" y1="26" x2="28" y2="26" stroke={color} strokeWidth={2}/>
-        </svg>
-      );
-    default:
-      return (
-        <svg width={size} height={size} viewBox="0 0 40 40">
-          <circle cx="20" cy="20" r="14" fill="white" stroke={color} strokeWidth={sw}/>
-          <text x="20" y="25" textAnchor="middle" fontSize="14" fill={color}>?</text>
-        </svg>
-      );
-  }
+  const raw = ICONS[svgId] ?? FALLBACK_SVG;
+  return (
+    <span
+      style={{
+        color,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: size,
+        height: size,
+      }}
+      dangerouslySetInnerHTML={{ __html: raw }}
+    />
+  );
 }
 
 /**
