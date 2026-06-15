@@ -51,7 +51,7 @@ def load_icon_as_drawing(svg_id: str) -> Drawing:
 INDEX_COL_W_MM = 6.0           # colonne index rangée (1, 2, 3, ...)
 ID_CELL_W_MM = 35.0            # cellule "Interrupteur différentiel" (2 modules DIN)
 DISJONCTEUR_CELL_W_MM = 17.5   # cellule disjoncteur standard (1 module DIN)
-CARTOUCHE_MIN_W_MM = 30.0      # largeur minimale du cartouche batIA en fin de ligne
+LOGO_CELL_W_MM = 25.0          # cellule dédiée logo batIA en fin de ligne (Hager-like)
 
 
 def compute_strip_widths(
@@ -60,8 +60,9 @@ def compute_strip_widths(
 ) -> dict:
     """Calcule la largeur de chaque cellule d'une rangée RCD en mm.
 
-    La rangée = index + cellule ID + n_disjoncteurs cellules Qn + cartouche batIA
-    en fin de ligne. Le cartouche occupe l'espace restant (>= 30 mm minimum).
+    La rangée = index + ID + n_disjoncteurs Qn + zone blanche (écriture
+    libre) + cellule logo batIA. Comme Hager, le logo a sa propre cellule
+    à largeur fixe, séparée par une bordure de la zone blanche.
 
     Args:
         n_disjoncteurs: nombre de disjoncteurs effectivement présents sur le RCD
@@ -69,16 +70,18 @@ def compute_strip_widths(
         page_usable_width_mm: largeur imprimable de la page (zone hors marges)
 
     Returns:
-        dict avec clés "index", "id", "disjoncteurs" (list[float]), "cartouche".
+        dict avec clés "index", "id", "disjoncteurs" (list[float]),
+        "blank" (zone libre), "logo" (cellule logo batIA).
     """
     disjoncteurs_widths = [DISJONCTEUR_CELL_W_MM] * n_disjoncteurs
-    consumed = INDEX_COL_W_MM + ID_CELL_W_MM + sum(disjoncteurs_widths)
-    cartouche_w = page_usable_width_mm - consumed
+    consumed = INDEX_COL_W_MM + ID_CELL_W_MM + sum(disjoncteurs_widths) + LOGO_CELL_W_MM
+    blank_w = page_usable_width_mm - consumed
     return {
         "index": INDEX_COL_W_MM,
         "id": ID_CELL_W_MM,
         "disjoncteurs": disjoncteurs_widths,
-        "cartouche": cartouche_w,
+        "blank": blank_w,
+        "logo": LOGO_CELL_W_MM,
     }
 
 
@@ -364,9 +367,12 @@ def render_rcd_row(
                         f"Q{q_num}", font_size=9, bold=True)
         x_cursor_mm += DISJONCTEUR_CELL_W_MM
 
-    # Cartouche header : box vide (le logo batIA n'est rendu que dans le body)
+    # Header : zone blanche (écriture libre) puis cellule logo (vide ici)
     _draw_cell_box(canvas, x_cursor_mm, y_header_bottom_mm,
-                   widths["cartouche"], HEADER_STRIP_H_MM)
+                   widths["blank"], HEADER_STRIP_H_MM)
+    x_cursor_mm += widths["blank"]
+    _draw_cell_box(canvas, x_cursor_mm, y_header_bottom_mm,
+                   widths["logo"], HEADER_STRIP_H_MM)
 
     # -- STRIP BODY (ligne du bas : picto + label par cellule) --
     x_cursor_mm = x_left_mm
@@ -418,11 +424,14 @@ def render_rcd_row(
             )
         x_cursor_mm += DISJONCTEUR_CELL_W_MM
 
-    # Cartouche body : box + logo batIA inline (2 triangles + texte "Bat ia")
+    # Body : zone blanche (écriture libre, sans logo) puis cellule logo dédiée
     _draw_cell_box(canvas, x_cursor_mm, y_body_bottom_mm,
-                   widths["cartouche"], BODY_STRIP_H_MM)
+                   widths["blank"], BODY_STRIP_H_MM)
+    x_cursor_mm += widths["blank"]
+    _draw_cell_box(canvas, x_cursor_mm, y_body_bottom_mm,
+                   widths["logo"], BODY_STRIP_H_MM)
     _draw_batia_logo_cartouche(canvas, x_cursor_mm, y_body_bottom_mm,
-                                widths["cartouche"], BODY_STRIP_H_MM)
+                                widths["logo"], BODY_STRIP_H_MM)
 
     return global_q_start + len(row_circuits)
 
