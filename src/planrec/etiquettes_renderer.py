@@ -382,3 +382,100 @@ def render_rcd_row(
     )
 
     return global_q_start + len(row_circuits)
+
+
+# --- Task 10 : orchestrateur PDF complet ---------------------------------
+import io
+from datetime import date
+
+from reportlab.lib.pagesizes import landscape, A4
+from reportlab.pdfgen.canvas import Canvas
+
+from src.planrec.nfc_tableau import Tableau
+
+# Marges et zone imprimable (mm)
+PAGE_MARGIN_MM = 10.0
+A4_LANDSCAPE_W_MM = 297.0
+A4_LANDSCAPE_H_MM = 210.0
+USABLE_W_MM = A4_LANDSCAPE_W_MM - 2 * PAGE_MARGIN_MM  # 277 mm
+USABLE_H_MM = A4_LANDSCAPE_H_MM - 2 * PAGE_MARGIN_MM  # 190 mm
+FOOTER_H_MM = 5.0
+
+
+def _draw_footer(canvas, tableau, page_idx: int, total_pages: int):
+    """Pied de page identique sur chaque page : date + projet + page n/N à
+    gauche, instruction d'échelle à droite."""
+    y_mm = PAGE_MARGIN_MM / 2
+    canvas.setFont("Helvetica-Oblique", 7)
+    today = date.today().isoformat()
+    left = (
+        f"{today}  -  Tableau electrique  -  Logement {tableau.typology}  "
+        f"-  Page {page_idx + 1}/{total_pages}"
+    )
+    canvas.drawString(PAGE_MARGIN_MM * mm, y_mm * mm, left)
+    right = "Imprimer a l'echelle 1:1 (option Taille reelle ou 100 %)"
+    canvas.drawRightString(
+        (A4_LANDSCAPE_W_MM - PAGE_MARGIN_MM) * mm, y_mm * mm, right
+    )
+
+
+def render_etiquettes_pdf(tableau: Tableau) -> bytes:
+    """Rend le PDF complet des etiquettes (multi-pages si necessaire).
+
+    Format A4 paysage, 5 RCDs max par page (rangee header + body =
+    30 mm chacun + gap 6 mm = 36 mm total ; 190 mm utiles / 36 ~ 5 RCDs).
+    Si un RCD a > 7 disjoncteurs (max NFC = 8), il est eclate en 2 rangees
+    consecutives (1 et 1 bis).
+
+    Args:
+        tableau: instance Tableau produite par generate_tableau()
+
+    Returns:
+        bytes du PDF pret a telechargement.
+    """
+    buf = io.BytesIO()
+    canvas = Canvas(buf, pagesize=landscape(A4))
+    pages = paginate_rcds(tableau.rcds, per_page=RCDS_PER_PAGE)
+    total_pages = max(len(pages), 1)
+
+    global_q_counter = 1
+
+    for page_idx, rcds_in_page in enumerate(pages):
+        # Coord y "top" du strip header du 1er RCD : zone utile descendante
+        y_top_mm = A4_LANDSCAPE_H_MM - PAGE_MARGIN_MM
+        rcd_index_in_tableau = page_idx * RCDS_PER_PAGE  # 0-based offset
+
+        for local_idx, rcd in enumerate(rcds_in_page):
+            rcd_index_in_tableau += 1
+            rows = split_rcd_into_rows(rcd, max_per_row=MAX_DISJONCTEURS_PER_ROW)
+            for row_idx, row_circuits in enumerate(rows):
+                is_overflow = row_idx > 0
+                global_q_counter = render_rcd_row(
+                    canvas=canvas,
+                    rcd=rcd,
+                    row_circuits=row_circuits,
+                    rcd_index=rcd_index_in_tableau,
+                    global_q_start=global_q_counter,
+                    y_top_mm=y_top_mm,
+                    page_usable_width_mm=USABLE_W_MM,
+                    is_overflow_row=is_overflow,
+                    x_left_mm=PAGE_MARGIN_MM,
+                )
+                y_top_mm -= (HEADER_STRIP_H_MM + BODY_STRIP_H_MM + ROW_VERTICAL_GAP_MM)
+
+        _draw_footer(canvas, tableau, page_idx, total_pages)
+        canvas.showPage()
+
+    # Cas tableau vide : on emet quand meme une page d'avertissement
+    if not pages:
+        canvas.setFont("Helvetica", 12)
+        canvas.drawCentredString(
+            (A4_LANDSCAPE_W_MM / 2) * mm,
+            (A4_LANDSCAPE_H_MM / 2) * mm,
+            "Aucun RCD a etiqueter (tableau vide)",
+        )
+        _draw_footer(canvas, tableau, 0, 1)
+        canvas.showPage()
+
+    canvas.save()
+    return buf.getvalue()

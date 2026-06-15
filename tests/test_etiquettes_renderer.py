@@ -146,3 +146,101 @@ def test_render_rcd_row_draws_expected_text_and_rects():
     # (max_chars=8). On vérifie les 2 fragments séparément dans le texte extrait.
     assert "Plaque" in text
     assert "cuisson" in text
+
+
+def test_render_etiquettes_pdf_returns_valid_pdf_bytes():
+    """Le PDF généré commence par '%PDF-' et est parsable par pypdf."""
+    import io
+    from pypdf import PdfReader
+    from src.planrec.etiquettes_renderer import render_etiquettes_pdf
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "K1", "c2_class": "Kitchen"},
+        {"id": "B1", "c2_class": "BedRoom"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    tableau = generate_tableau(devis_global=devis, heating_enabled=True)
+    pdf_bytes = render_etiquettes_pdf(tableau)
+    assert isinstance(pdf_bytes, bytes)
+    assert pdf_bytes.startswith(b"%PDF-")
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    assert len(reader.pages) >= 1
+
+
+def test_render_etiquettes_pdf_contains_print_scale_instruction():
+    """L'instruction 'Imprimer à 100 %' (ou variantes) doit apparaître dans
+    le pied de page pour éviter qu'un user ne réduise l'échelle d'impression."""
+    import io
+    from pypdf import PdfReader
+    from src.planrec.etiquettes_renderer import render_etiquettes_pdf
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [{"id": "K1", "c2_class": "Kitchen"}]
+    devis = compute_devis_global(rooms, heating_enabled=False)
+    tableau = generate_tableau(devis_global=devis, heating_enabled=False)
+    pdf_bytes = render_etiquettes_pdf(tableau)
+    text = PdfReader(io.BytesIO(pdf_bytes)).pages[0].extract_text()
+    # On accepte plusieurs variantes textuelles
+    assert ("100 %" in text or "100%" in text or
+            "Taille réelle" in text or "1:1" in text)
+
+
+def test_render_etiquettes_pdf_page_count_matches_rcds():
+    """Pour 5 RCDs : 1 page. Pour 6 RCDs : 2 pages."""
+    import io
+    from pypdf import PdfReader
+    from src.planrec.etiquettes_renderer import render_etiquettes_pdf
+    from src.planrec.nfc_tableau import Tableau, RCD, Circuit, CircuitType
+
+    def _make_rcd(i: int) -> RCD:
+        circuits = [Circuit(id=f"c{i}_{j}", type=CircuitType.SOCKET,
+                            label="Prises", breaker_amps=20,
+                            cable_section_mm2=2.5) for j in range(3)]
+        return RCD(id=f"rcd{i}", rcd_type="AC", amps=40, sensitivity_ma=30,
+                   circuits=circuits)
+
+    # 5 RCDs -> 1 page
+    tab_5 = Tableau(typology="T3", typology_source="auto", surface_m2=None,
+                    heating_enabled=False,
+                    rcds=[_make_rcd(i) for i in range(5)],
+                    total_modules=15, n_rails=1, notes=[], warnings=[])
+    assert len(PdfReader(io.BytesIO(render_etiquettes_pdf(tab_5))).pages) == 1
+
+    # 6 RCDs -> 2 pages
+    tab_6 = Tableau(typology="T5", typology_source="auto", surface_m2=None,
+                    heating_enabled=False,
+                    rcds=[_make_rcd(i) for i in range(6)],
+                    total_modules=18, n_rails=1, notes=[], warnings=[])
+    assert len(PdfReader(io.BytesIO(render_etiquettes_pdf(tab_6))).pages) == 2
+
+
+def test_render_etiquettes_pdf_q_numbering_continuous_across_rcds():
+    """Le Q-numbering est global continu : Q1..Q3 sur RCD 1, Q4 commence sur RCD 2."""
+    import io
+    from pypdf import PdfReader
+    from src.planrec.etiquettes_renderer import render_etiquettes_pdf
+    from src.planrec.nfc_tableau import Tableau, RCD, Circuit, CircuitType
+
+    rcd_1 = RCD(id="rcd1", rcd_type="A", amps=40, sensitivity_ma=30,
+                circuits=[Circuit(id=f"c1_{j}", type=CircuitType.SOCKET,
+                                  label="Prises", breaker_amps=20,
+                                  cable_section_mm2=2.5) for j in range(3)])
+    rcd_2 = RCD(id="rcd2", rcd_type="AC", amps=40, sensitivity_ma=30,
+                circuits=[Circuit(id=f"c2_{j}", type=CircuitType.LIGHTING,
+                                  label="Éclairage", breaker_amps=10,
+                                  cable_section_mm2=1.5) for j in range(2)])
+    tab = Tableau(typology="T3", typology_source="auto", surface_m2=None,
+                  heating_enabled=False, rcds=[rcd_1, rcd_2],
+                  total_modules=5, n_rails=1, notes=[], warnings=[])
+    pdf_bytes = render_etiquettes_pdf(tab)
+    text = PdfReader(io.BytesIO(pdf_bytes)).pages[0].extract_text()
+    # Sur RCD 1 : Q1, Q2, Q3
+    for q in ("Q1", "Q2", "Q3"):
+        assert q in text
+    # Sur RCD 2 (global continu) : Q4, Q5
+    for q in ("Q4", "Q5"):
+        assert q in text
