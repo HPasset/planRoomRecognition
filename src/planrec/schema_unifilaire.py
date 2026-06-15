@@ -218,71 +218,55 @@ def _slot_x(local_slot_idx: int) -> float:
     return SLOTS_LEFT + (local_slot_idx + 0.5) * slot_w
 
 
-# --- Symboles d'appareillage EN 60617 (primitives reportlab) ---
-
-def _draw_contact(c: Canvas, x: float, y_bot: float, y_top: float,
-                  cross: bool = False, asterisk: bool = False,
-                  bipolar: bool = False) -> None:
-    """Contact d'appareillage : pivot + levier incliné (contact ouvert), sur un
-    conducteur vertical en x. Options : croix (disjoncteur), astérisque (diff.
-    sélectif), double pôle (interrupteur différentiel)."""
-    c.setStrokeColor(colors.black)
-    c.setLineWidth(1.0)
-    c.circle(x * mm, y_bot * mm, 0.5 * mm, stroke=1, fill=1)
-    c.line(x * mm, y_bot * mm, (x + 2.6) * mm, (y_top - 0.4) * mm)
-    if bipolar:
-        c.line((x - 1.3) * mm, (y_bot + 0.5) * mm, (x + 1.2) * mm, (y_top - 0.9) * mm)
-    if cross or asterisk:
-        c.line((x - 1.2) * mm, (y_top - 1.2) * mm, (x + 1.2) * mm, (y_top + 1.2) * mm)
-        c.line((x - 1.2) * mm, (y_top + 1.2) * mm, (x + 1.2) * mm, (y_top - 1.2) * mm)
-    if asterisk:
-        c.line(x * mm, (y_top - 1.6) * mm, x * mm, (y_top + 1.6) * mm)
+# --- Symboles d'appareillage EN 60617 (SVG normalisés, assets/icons/) ---
+Q_SYM_H = 9.0                      # hauteur de rendu du symbole disjoncteur (mm)
+DIFF_SYM_H = 14.0                  # hauteur de rendu des symboles différentiels (mm)
 
 
-def _draw_relay(c: Canvas, x: float, yc: float) -> None:
-    """Bloc relais différentiel : rectangle + ellipse (tore / actionneur)."""
-    w, h = 5.0, 3.2
-    c.setStrokeColor(colors.black)
-    c.setLineWidth(1.0)
-    c.rect((x - w / 2) * mm, (yc - h / 2) * mm, w * mm, h * mm)
-    c.ellipse((x - 1.7) * mm, (yc - 1.0) * mm, (x + 1.7) * mm, (yc + 1.0) * mm)
+def _draw_symbol_svg(c: Canvas, svg_id: str, x: float, yc: float, height_mm: float) -> None:
+    """Rend un symbole d'appareillage EN 60617 (SVG carré 40×40) centré en
+    (x, yc), à `height_mm` de haut. Le SVG porte son propre conducteur vertical
+    bord à bord : l'appelant raccorde les fils à yc ± height_mm/2."""
+    d = load_icon_as_drawing(svg_id)
+    ref = max(d.width, d.height) or 40.0
+    s = (height_mm * mm) / ref
+    d.width *= s
+    d.height *= s
+    d.scale(s, s)
+    renderPDF.draw(d, c, (x - height_mm / 2) * mm, (yc - height_mm / 2) * mm)
 
 
 def _draw_q_glyph(c: Canvas, x: float, yc: float) -> None:
-    """Disjoncteur unipolaire EN 60617 (contact + croix). Gap appelant : yc±3."""
-    _draw_contact(c, x, yc - 3, yc + 3, cross=True)
+    """Disjoncteur unipolaire EN 60617. Gap appelant : yc ± Q_SYM_H/2."""
+    _draw_symbol_svg(c, "sym_disjoncteur", x, yc, Q_SYM_H)
 
 
-def _draw_diff_glyph(c: Canvas, x: float, yc: float, asterisk: bool) -> None:
-    """Appareil différentiel (contact + relais à tore). `asterisk` = disjoncteur
-    de branchement diff. sélectif (DB) ; sinon interrupteur différentiel (ID,
-    contact bipolaire). Gap appelant : yc+5.5 (haut) / yc-5.2 (bas)."""
-    _draw_contact(c, x, yc + 1, yc + 5.5, asterisk=asterisk, bipolar=not asterisk)
-    c.setStrokeColor(colors.black)
-    c.setLineWidth(1.0)
-    c.line(x * mm, (yc + 1) * mm, x * mm, (yc - 2.0) * mm)
-    _draw_relay(c, x, yc - 3.6)
-    c.setDash([1, 1], 0)
-    c.line((x + 2.2) * mm, (yc + 3) * mm, (x + 2.2) * mm, (yc - 3) * mm)
-    c.setDash([], 0)
+def _draw_diff_glyph(c: Canvas, x: float, yc: float, asterisk: bool,
+                     height_mm: float = DIFF_SYM_H) -> None:
+    """Appareil différentiel EN 60617. `asterisk` = disjoncteur de branchement
+    diff. sélectif (DB) ; sinon interrupteur différentiel (ID). Gap appelant :
+    yc ± height_mm/2."""
+    svg_id = "sym_disjoncteur_branchement" if asterisk else "sym_interrupteur_differentiel"
+    _draw_symbol_svg(c, svg_id, x, yc, height_mm)
 
 
 def _draw_source(c: Canvas, db_calibre: int) -> None:
     """Alim. BT (flèche) + disjoncteur de branchement DB1 (diff. sélectif),
     relié à la barre JB1."""
     x = CONTENT_LEFT + 14
-    db_yc = MAIN_BUS_Y + 6
+    db_h = 11.0
+    db_yc = MAIN_BUS_Y + db_h / 2     # bas du symbole posé sur la barre JB1
     c.setStrokeColor(colors.black)
     c.setLineWidth(1.0)
-    top = db_yc + 9
-    c.line(x * mm, top * mm, x * mm, (db_yc + 5.7) * mm)
-    c.line((x - 1.5) * mm, (db_yc + 7.5) * mm, x * mm, (db_yc + 5.7) * mm)
-    c.line((x + 1.5) * mm, (db_yc + 7.5) * mm, x * mm, (db_yc + 5.7) * mm)
+    top = db_yc + db_h / 2 + 3
+    c.line(x * mm, top * mm, x * mm, (db_yc + db_h / 2 + 0.2) * mm)
+    c.line((x - 1.5) * mm, (db_yc + db_h / 2 + 2) * mm, x * mm, (db_yc + db_h / 2 + 0.2) * mm)
+    c.line((x + 1.5) * mm, (db_yc + db_h / 2 + 2) * mm, x * mm, (db_yc + db_h / 2 + 0.2) * mm)
     c.setFont("Helvetica", 6)
     c.drawCentredString(x * mm, (top + 1) * mm, "Alim. BT")
-    _draw_diff_glyph(c, x, db_yc, asterisk=True)
+    _draw_diff_glyph(c, x, db_yc, asterisk=True, height_mm=db_h)
     c.setLineWidth(1.2)
-    c.line(x * mm, (db_yc - 5.2) * mm, x * mm, MAIN_BUS_Y * mm)
+    c.line(x * mm, (db_yc - db_h / 2) * mm, x * mm, MAIN_BUS_Y * mm)
     c.setLineWidth(1.4)
     c.line(x * mm, MAIN_BUS_Y * mm, SLOTS_LEFT * mm, MAIN_BUS_Y * mm)
     tx = x + 5
@@ -429,10 +413,10 @@ def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
         id_x = _slot_x(local)
         c.setStrokeColor(colors.black)
         c.setLineWidth(1.0)
-        c.line(id_x * mm, MAIN_BUS_Y * mm, id_x * mm, (ID_SYM_Y + 5.5) * mm)
+        c.line(id_x * mm, MAIN_BUS_Y * mm, id_x * mm, (ID_SYM_Y + DIFF_SYM_H / 2) * mm)
         _draw_id(c, id_x, rcd, id_idx)
         c.setLineWidth(1.0)
-        c.line(id_x * mm, (ID_SYM_Y - 5.2) * mm, id_x * mm, SEC_BUS_Y * mm)
+        c.line(id_x * mm, (ID_SYM_Y - DIFF_SYM_H / 2) * mm, id_x * mm, SEC_BUS_Y * mm)
         local += 1
         n_q = len(rcd.circuits)
         if n_q:
@@ -446,13 +430,13 @@ def _draw_folio_content(c: Canvas, folio_rcds: list[RCD], is_first: bool,
             qx = _slot_x(local)
             c.setStrokeColor(colors.black)
             c.setLineWidth(1.0)
-            c.line(qx * mm, SEC_BUS_Y * mm, qx * mm, (Q_SYM_Y + 3) * mm)
+            c.line(qx * mm, SEC_BUS_Y * mm, qx * mm, (Q_SYM_Y + Q_SYM_H / 2) * mm)
             _draw_q(c, qx, circ, q_idx)
             # Conducteur du départ (phase/neutre) : traverse la barre PE en
             # restant noir (croisement sans jonction) puis flèche vers le bas.
             c.setStrokeColor(colors.black)
             c.setLineWidth(1.0)
-            c.line(qx * mm, (Q_SYM_Y - 3) * mm, qx * mm, (PE_Y - 3) * mm)
+            c.line(qx * mm, (Q_SYM_Y - Q_SYM_H / 2) * mm, qx * mm, (PE_Y - 3) * mm)
             _draw_down_arrow(c, qx, PE_Y - 6, colors.black)
             # Prise de terre du départ : flèche verte partant de la barre PE.
             _draw_pe_earth_tap(c, qx - 3)
