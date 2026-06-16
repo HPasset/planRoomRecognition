@@ -803,19 +803,18 @@ def test_D4_devis_cuisine_seule_equipements_nfc(patch_pipeline):
 
     df_devis = get_devis_df(at)
     assert set(df_devis["Pièce"].unique()) == {"Cuisine"}
-    # Cuisine NFC = prises, point lumineux, interrupteur + circuits typés V1.2
+    # Cuisine NFC = 6 prises normales + point lumineux + interrupteur + 1 ligne
+    # « Alimentation spécialisée » agrégée (Four/Plaque/LV — plus le lave-linge
+    # garanti, rattaché à la cuisine faute de SDB/cellier). Les libellés typés
+    # (Four/Plaque/LV) n'apparaissent jamais : ils sont agrégés en Alim spé.
     equipements = set(df_devis["Équipement"].tolist())
     assert "Prise de courant" in equipements
     assert "Point lumineux" in equipements
     assert "Interrupteur" in equipements
-    # Lave-vaisselle reste facturé (l'artisan le pose)
-    assert "Lave-vaisselle" in equipements
-    # Four et Plaque de cuisson sont "circuit-only" : présents dans le
-    # tableau électrique mais HORS devis facturable (achat occupant).
+    assert "Alimentation spécialisée" in equipements
     assert "Four" not in equipements
     assert "Plaque de cuisson" not in equipements
-    # Pas d'Alimentation spécialisée générique en cuisine
-    assert "Alimentation spécialisée" not in equipements
+    assert "Lave-vaisselle" not in equipements
 
 
 # --- E. Édition devis (suite) ---
