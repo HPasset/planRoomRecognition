@@ -477,13 +477,13 @@ def test_circuit_only_excludes_billable_artisan_equipment():
         assert hidden in CIRCUIT_ONLY_EQUIPMENT_TYPES
 
 
-def test_build_devis_lines_initial_filters_circuit_only_types():
-    """build_devis_lines_initial() doit exclure tous les équipements fournis
-    par l'occupant (Four/Plaque/LV/LL/SL/Chaudière/Convecteur/Sèche-serv) mais
-    conserver les équipements posés par l'artisan."""
+def test_build_devis_lines_appliances_aggregated_heating_billed():
+    """Les 6 appareils → 1 ligne « Alimentation spécialisée » agrégée par pièce
+    au prix SPECIAL_FEED ; le chauffage est facturé sur sa propre ligne ;
+    plus aucun équipement n'est exclu (pas de trou)."""
     from app.streamlit_app import build_devis_lines_initial
     from src.planrec.nfc_pricing import DEFAULT_PRICES_HT
-    from src.planrec.nfc_rules import compute_devis_global
+    from src.planrec.nfc_rules import compute_devis_global, EquipmentType
 
     rooms = [
         {"id": "K1", "c2_class": "Kitchen"},
@@ -493,21 +493,27 @@ def test_build_devis_lines_initial_filters_circuit_only_types():
     ]
     devis = compute_devis_global(rooms, heating_enabled=True)
     lines, _ = build_devis_lines_initial(devis, DEFAULT_PRICES_HT)
-    labels = {line["Équipement"] for line in lines}
 
-    # Hors devis facturable (fournis par l'occupant)
+    # Cuisine : 1 ligne Alim spé agrégée Qté 3 au prix SPECIAL_FEED
+    # (la garantie lave-linge est satisfaite par le cellier C1, donc la cuisine
+    # garde exactement ses 3 alim spé Four/Plaque/LV).
+    kitchen_sf = [l for l in lines
+                  if l["Pièce"] == "Cuisine"
+                  and l["Équipement"] == "Alimentation spécialisée"]
+    assert len(kitchen_sf) == 1
+    assert kitchen_sf[0]["Qté"] == 3
+    assert kitchen_sf[0]["Prix HT (€)"] == DEFAULT_PRICES_HT[EquipmentType.SPECIAL_FEED]
+
+    labels = {l["Équipement"] for l in lines}
+    # Plus de lignes typées appareil
     assert "Four" not in labels
-    assert "Plaque de cuisson" not in labels
-    assert "Lave-vaisselle" not in labels
     assert "Lave-linge" not in labels
-    assert "Sèche-linge" not in labels
-    assert "Chaudière/cumulus" not in labels
-    assert "Convecteur" not in labels
-    assert "Sèche-serviettes" not in labels
-    # Conservés (artisan pose)
+    # Chauffage désormais facturé sur sa propre ligne
+    assert "Convecteur" in labels
+    assert "Sèche-serviettes" in labels
+    # Artisan conservés
     assert "Prise de courant" in labels
     assert "Point lumineux" in labels
-    assert "Interrupteur" in labels
 
 
 def test_canvas_hidden_equip_keys_are_the_six_appliances():

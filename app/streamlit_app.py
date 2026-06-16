@@ -40,7 +40,11 @@ from src.planrec.nfc_equipments import (
     EQUIP_TYPES,
     NFC_TO_EQUIP_TYPE,
 )
-from src.planrec.nfc_rules import CIRCUIT_ONLY_EQUIPMENT_TYPES, compute_devis_global
+from src.planrec.nfc_rules import (
+    SPECIAL_FEED_EQUIPMENT_TYPES,
+    EquipmentType,
+    compute_devis_global,
+)
 from src.planrec.ocr.engine_paddle import PaddleOCREngine
 from src.planrec.ocr.postprocess import postprocess_ocr_items
 from src.planrec.polygon_postprocess import (
@@ -289,13 +293,13 @@ def build_devis_lines_initial(
         else:
             room_label = cat
 
+        special_feed_qty = 0
         for eq, qty in d.items.items():
             if qty <= 0:
                 continue
-            # Électroménager / chauffage (Four, Plaque, LV, LL, SL, Chaudière,
-            # Convecteur, Sèche-serviettes) : circuit-only — présents dans le
-            # tableau électrique mais hors devis facturable (fournis par l'occupant).
-            if eq in CIRCUIT_ONLY_EQUIPMENT_TYPES:
+            # Les 6 appareils → agrégés en une seule ligne « Alim spé » par pièce.
+            if eq in SPECIAL_FEED_EQUIPMENT_TYPES:
+                special_feed_qty += int(qty)
                 continue
             lines.append({
                 "_id": next_id,
@@ -305,6 +309,17 @@ def build_devis_lines_initial(
                 "Prix HT (€)": float(prices_ht.get(eq, 0.0)),
                 "_manual": False,  # généré par le moteur NFC (vs ajout manuel)
                 "_equip_ids": [],  # IDs équipements drag-droppés (Phase 4+)
+            })
+            next_id += 1
+        if special_feed_qty > 0:
+            lines.append({
+                "_id": next_id,
+                "Pièce": room_label,
+                "Équipement": EQUIPMENT_LABELS_FR[EquipmentType.SPECIAL_FEED],
+                "Qté": special_feed_qty,
+                "Prix HT (€)": float(prices_ht.get(EquipmentType.SPECIAL_FEED, 0.0)),
+                "_manual": False,
+                "_equip_ids": [],
             })
             next_id += 1
     return lines, next_id

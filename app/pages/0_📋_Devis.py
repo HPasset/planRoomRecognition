@@ -24,7 +24,11 @@ from src.facturation.services.devis import (
 )
 from src.facturation.services.numerotation import next_numero
 from src.planrec.nfc_pricing import DEFAULT_PRICES_HT
-from src.planrec.nfc_rules import CIRCUIT_ONLY_EQUIPMENT_TYPES, DevisGlobal
+from src.planrec.nfc_rules import (
+    SPECIAL_FEED_EQUIPMENT_TYPES,
+    EquipmentType,
+    DevisGlobal,
+)
 
 
 st.set_page_config(page_title="batIA — Devis", page_icon="📋", layout="wide")
@@ -40,18 +44,19 @@ def _statut_value(s):
 def _devis_global_montant_ht(devis_global: DevisGlobal) -> Decimal:
     """Somme HT depuis DevisGlobal × DEFAULT_PRICES_HT.
 
-    Exclut les équipements `CIRCUIT_ONLY_EQUIPMENT_TYPES` (Four, Plaque, LV,
-    LL, SL, Chaudière, Convecteur, Sèche-serviettes) qui apparaissent dans
-    le tableau électrique mais sont fournis par l'occupant — l'artisan
-    n'installe que le circuit (disjoncteur + câble), pas l'appareil.
+    Facture tous les équipements ; les 6 appareils (Four/Plaque/LV/LL/SL/Cumulus)
+    au prix « Alim spé » générique.
     Cohérent avec le calcul du devis facturable côté Home.
     """
     total = Decimal("0")
     for room in devis_global.per_room:
         for eq_type, qty in room.items.items():
-            if eq_type in CIRCUIT_ONLY_EQUIPMENT_TYPES:
-                continue
-            price = DEFAULT_PRICES_HT.get(eq_type, 0.0)
+            # Les 6 appareils sont facturés au prix « Alim spé » générique
+            # (cohérent avec build_devis_lines_initial). Plus aucun type exclu.
+            if eq_type in SPECIAL_FEED_EQUIPMENT_TYPES:
+                price = DEFAULT_PRICES_HT[EquipmentType.SPECIAL_FEED]
+            else:
+                price = DEFAULT_PRICES_HT.get(eq_type, 0.0)
             total += Decimal(str(price)) * Decimal(qty)
     return total.quantize(Decimal("0.01"))
 
