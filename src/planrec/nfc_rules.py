@@ -50,21 +50,6 @@ class EquipmentType(str, Enum):
     TOWEL_WARMER = "seche_serviettes"
 
 
-# Equipement type "circuit-only" : apparaît dans le tableau électrique
-# (l'artisan fournit le circuit + disjoncteur + câble) mais PAS dans le devis
-# facturable (appareil fourni par l'occupant). Cf. retour métier 2026-06-02.
-CIRCUIT_ONLY_EQUIPMENT_TYPES: frozenset[EquipmentType] = frozenset({
-    EquipmentType.OVEN,
-    EquipmentType.COOKTOP,
-    EquipmentType.DISHWASHER,
-    EquipmentType.WASHING_MACHINE,
-    EquipmentType.DRYER,
-    EquipmentType.BOILER,
-    EquipmentType.CONVECTOR,
-    EquipmentType.TOWEL_WARMER,
-})
-
-
 # Appareils à alimentation dédiée fournis par l'occupant : l'artisan pose
 # l'alimentation (prise/circuit), facturée et affichée comme « Alim spé »
 # générique. Distinct du chauffage (Convecteur/Sèche-serviettes), qui a ses

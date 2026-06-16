@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from src.planrec.nfc_rules import (
-    CIRCUIT_ONLY_EQUIPMENT_TYPES,
+    SPECIAL_FEED_EQUIPMENT_TYPES,
     EquipmentType,
     NFCCategory,
     compute_devis_global,
@@ -110,15 +110,16 @@ def test_lave_linge_label_20A_sur_repli():
     assert "Lave-linge (20A)" in sdb.special_feeds_detail
 
 
-def test_lave_linge_synthetique_est_circuit_only():
-    """Le Devis synthétique ne porte que de l'équipement circuit-only → aucune
-    ligne facturable fantôme dans le devis (seul le circuit tableau apparaît)."""
+def test_lave_linge_synthetique_est_facture_en_alim_spe():
+    """Le Devis synthétique ne porte que des appareils « Alim spé » → il produit
+    une ligne facturable « Alimentation spécialisée », plus aucun trou."""
+    from src.planrec.nfc_rules import SPECIAL_FEED_EQUIPMENT_TYPES
     dg = compute_devis_global([
         {"id": "B1", "c2_class": "BedRoom"},
     ])
     virtual = next(d for d in dg.per_room if d.room_id == "__laundry_virtual__")
     assert virtual.items  # non vide
-    assert all(eq in CIRCUIT_ONLY_EQUIPMENT_TYPES for eq in virtual.items)
+    assert all(eq in SPECIAL_FEED_EQUIPMENT_TYPES for eq in virtual.items)
 
 
 def test_cellier_lave_linge_label_20A():

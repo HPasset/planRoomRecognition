@@ -435,46 +435,21 @@ def test_equip_types_has_8_new_keys():
     assert NFC_TO_EQUIP_TYPE[EquipmentType.CONVECTOR] == "Convector"
 
 
-def test_circuit_only_equipment_types_contains_oven_cooktop_convector():
-    """Four, Plaque cuisson et Convecteur sont marqués circuit-only :
-    présents dans le tableau électrique mais hors devis facturable."""
-    from src.planrec.nfc_rules import (
-        CIRCUIT_ONLY_EQUIPMENT_TYPES,
-        EquipmentType,
-    )
-    assert EquipmentType.OVEN in CIRCUIT_ONLY_EQUIPMENT_TYPES
-    assert EquipmentType.COOKTOP in CIRCUIT_ONLY_EQUIPMENT_TYPES
-    assert EquipmentType.CONVECTOR in CIRCUIT_ONLY_EQUIPMENT_TYPES
-
-
-def test_circuit_only_excludes_billable_artisan_equipment():
-    """Les types posés par l'artisan (prises, points lumineux, interrupteurs,
-    RJ45) restent facturés. Tous les appareils électroménagers / chauffage
-    fournis par l'occupant sont circuit-only (présents dans le tableau
-    électrique, hors devis facturable)."""
-    from src.planrec.nfc_rules import (
-        CIRCUIT_ONLY_EQUIPMENT_TYPES,
-        EquipmentType,
-    )
-    for keep in (
-        EquipmentType.SOCKET,
-        EquipmentType.LIGHT_POINT,
-        EquipmentType.SWITCH,
-        EquipmentType.RJ45,
+def test_special_feed_set_holds_appliances_not_heating_nor_artisan():
+    """SPECIAL_FEED_EQUIPMENT_TYPES = les 6 appareils. Le chauffage et les
+    équipements posés par l'artisan en sont exclus."""
+    from src.planrec.nfc_rules import SPECIAL_FEED_EQUIPMENT_TYPES, EquipmentType
+    for appliance in (
+        EquipmentType.OVEN, EquipmentType.COOKTOP, EquipmentType.DISHWASHER,
+        EquipmentType.WASHING_MACHINE, EquipmentType.DRYER, EquipmentType.BOILER,
     ):
-        assert keep not in CIRCUIT_ONLY_EQUIPMENT_TYPES
-    # Types circuit-only : appareils fournis par l'occupant
-    for hidden in (
-        EquipmentType.OVEN,
-        EquipmentType.COOKTOP,
-        EquipmentType.DISHWASHER,
-        EquipmentType.WASHING_MACHINE,
-        EquipmentType.DRYER,
-        EquipmentType.BOILER,
-        EquipmentType.CONVECTOR,
-        EquipmentType.TOWEL_WARMER,
+        assert appliance in SPECIAL_FEED_EQUIPMENT_TYPES
+    for excluded in (
+        EquipmentType.CONVECTOR, EquipmentType.TOWEL_WARMER,
+        EquipmentType.SOCKET, EquipmentType.LIGHT_POINT,
+        EquipmentType.SWITCH, EquipmentType.RJ45,
     ):
-        assert hidden in CIRCUIT_ONLY_EQUIPMENT_TYPES
+        assert excluded not in SPECIAL_FEED_EQUIPMENT_TYPES
 
 
 def test_build_devis_lines_appliances_aggregated_heating_billed():
