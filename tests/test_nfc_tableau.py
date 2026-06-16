@@ -377,9 +377,10 @@ def test_edge_case_T1_studio_one_rcd_type_A():
     assert tableau.rcds[0].rcd_type == "A"
 
 
-def test_edge_case_no_kitchen_no_type_a_required():
-    """Logement sans cuisine ni LL → pas de circuit requires_type_a → RCD1
-    reste Type A mais vide de circuits obligatoires."""
+def test_edge_case_minimal_logement_a_lave_linge_garanti_type_a():
+    """Logement minimal (séjour seul) : le lave-linge garanti par logement
+    (retour métier 2026-06-16) crée l'unique circuit Type A, en circuit-only.
+    Avant cette garantie, un tel logement n'avait aucun circuit Type A."""
     from src.planrec.nfc_tableau import generate_tableau
     from src.planrec.nfc_rules import compute_devis_global
 
@@ -388,4 +389,5 @@ def test_edge_case_no_kitchen_no_type_a_required():
     tableau = generate_tableau(devis_global=devis, heating_enabled=False)
     type_a_circuits = [c for r in tableau.rcds for c in r.circuits
                        if c.requires_type_a]
-    assert type_a_circuits == []
+    assert len(type_a_circuits) == 1
+    assert type_a_circuits[0].type == CircuitType.LAUNDRY
