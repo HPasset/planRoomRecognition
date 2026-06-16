@@ -56,6 +56,10 @@ class EquipmentType(str, Enum):
 CIRCUIT_ONLY_EQUIPMENT_TYPES: frozenset[EquipmentType] = frozenset({
     EquipmentType.OVEN,
     EquipmentType.COOKTOP,
+    EquipmentType.DISHWASHER,
+    EquipmentType.WASHING_MACHINE,
+    EquipmentType.DRYER,
+    EquipmentType.BOILER,
     EquipmentType.CONVECTOR,
     EquipmentType.TOWEL_WARMER,
 })
@@ -154,18 +158,26 @@ def compute_devis_for_room(
         devis.notes.append("⚠ Zone 60 cm autour douche/baignoire interdite")
 
     elif nfc_cat == NFCCategory.KITCHEN:
-        # 6 prises (dont 4 au-dessus plan travail) + 1 lumière + 1 interrupteur
-        devis.items[EquipmentType.SOCKET] = 6
+        # 6 prises normales (dont 4 au-dessus plan travail) + 3 alimentations
+        # spécialisées (Plaque/Four/LV) que l'artisan pose = 9 prises au total
+        # côté devis facturable. Cf. NFC C15-100 + retour métier 2026-06-03.
+        # Les types OVEN/COOKTOP/DISHWASHER restent comptés à part pour
+        # alimenter le tableau électrique (1 circuit dédié chacun), mais ne
+        # rajoutent pas de prise dans le devis (déjà comptées dans SOCKET=9).
+        devis.items[EquipmentType.SOCKET] = 9
         devis.items[EquipmentType.LIGHT_POINT] = 1
         devis.items[EquipmentType.SWITCH] = 1
-        # Circuits spécialisés typés (V1.2)
+        # Circuits spécialisés typés (V1.2) — circuit-only, pas dans devis
         devis.items[EquipmentType.OVEN] = 1
         devis.items[EquipmentType.COOKTOP] = 1
         devis.items[EquipmentType.DISHWASHER] = 1
         devis.special_feeds_detail.extend([
             "Plaque de cuisson (32A)", "Four (16A)", "Lave-vaisselle (16A)",
         ])
-        devis.notes.append("4 prises au-dessus du plan de travail")
+        devis.notes.append(
+            "9 prises au total : 6 prises normales (dont 4 au-dessus plan "
+            "de travail) + 3 alimentations spécialisées (Plaque/Four/LV)"
+        )
 
     elif nfc_cat == NFCCategory.STORAGE:
         # Cellier/Buanderie : 1 lumière + 1 prise + 3 circuits spécialisés typés
@@ -180,23 +192,27 @@ def compute_devis_for_room(
         ])
 
     elif nfc_cat == NFCCategory.LIVINGROOM:
-        # Séjour : 1 prise tous les 4 m², min 5, +3 derrière TV, +2 RJ45 TV
+        # Séjour : 1 prise tous les 4 m², minimum 5 au total, DONT max 3
+        # derrière TV (les 3 derrière TV font partie des 5 mini, pas en sus).
+        # Cf. NFC C15-100 §771.314.2.1 + retour métier 2026-06-03.
         if surface_m2 is not None and surface_m2 > 0:
-            n_sockets_repartition = max(5, int(round(surface_m2 / 4.0)))
+            n_sockets_total = max(5, int(round(surface_m2 / 4.0)))
             devis.notes.append(
-                f"{n_sockets_repartition} prises réparties "
+                f"{n_sockets_total} prises au total réparties "
                 f"(1 / 4 m² sur {surface_m2:.1f} m²)"
             )
         else:
-            n_sockets_repartition = 5
+            n_sockets_total = 5
             devis.notes.append(
                 "Surface inconnue → minimum 5 prises (cf. NFC)"
             )
-        devis.items[EquipmentType.SOCKET] = n_sockets_repartition + 3
+        devis.items[EquipmentType.SOCKET] = n_sockets_total
         devis.items[EquipmentType.RJ45] = 2
         devis.items[EquipmentType.LIGHT_POINT] = 1
         devis.items[EquipmentType.SWITCH] = 1
-        devis.notes.append("3 prises supplémentaires derrière TV")
+        devis.notes.append(
+            f"Dont max 3 derrière TV (incluses dans les {n_sockets_total})"
+        )
         devis.notes.append("2 RJ45 derrière TV")
 
     elif nfc_cat == NFCCategory.ENTRY:
