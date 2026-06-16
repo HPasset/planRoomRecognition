@@ -119,6 +119,9 @@ def generate_equipments_from_devis_global(
                 equip_key = "SpecialFeed"
             else:
                 equip_key = NFC_TO_EQUIP_TYPE[nfc_type]
+                # Garde défensif : aujourd'hui les clés masquées (les 6 appareils)
+                # sont déjà captées par la branche SPECIAL_FEED ci-dessus, donc
+                # inatteignable ici — conservé au cas où l'ensemble évoluerait.
                 if equip_key in CANVAS_HIDDEN_EQUIP_KEYS:
                     continue
             color = EQUIP_TYPES[equip_key]["color"]

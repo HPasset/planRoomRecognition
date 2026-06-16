@@ -166,7 +166,8 @@ def compute_devis_for_room(
         devis.items[EquipmentType.SOCKET] = 6
         devis.items[EquipmentType.LIGHT_POINT] = 1
         devis.items[EquipmentType.SWITCH] = 1
-        # Circuits spécialisés typés (V1.2) — circuit-only, pas dans devis
+        # Circuits spécialisés typés (V1.2) — alimentent le tableau (calibres,
+        # DDR) et sont facturés/affichés en « Alim spé » générique (2026-06-16).
         devis.items[EquipmentType.OVEN] = 1
         devis.items[EquipmentType.COOKTOP] = 1
         devis.items[EquipmentType.DISHWASHER] = 1
