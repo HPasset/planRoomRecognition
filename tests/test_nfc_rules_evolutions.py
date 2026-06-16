@@ -107,3 +107,25 @@ def test_lave_linge_label_20A_sur_repli():
     ])
     sdb = next(d for d in dg.per_room if d.room_id == "S1")
     assert "Lave-linge (20A)" in sdb.special_feeds_detail
+
+
+def test_cellier_lave_linge_label_20A():
+    dg = compute_devis_global([
+        {"id": "C1", "c2_class": "Storage"},
+    ])
+    cellier = next(d for d in dg.per_room if d.room_id == "C1")
+    assert "Lave-linge (20A)" in cellier.special_feeds_detail
+    assert "Lave-linge (16A)" not in cellier.special_feeds_detail
+
+
+def test_tableau_force_rcd_type_a_sans_cellier():
+    """Logement sans cellier mais avec SDB → le lave-linge garanti crée un
+    circuit LAUNDRY qui force un DDR Type A dans le tableau."""
+    from src.planrec.nfc_tableau import generate_tableau
+
+    dg = compute_devis_global([
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0},
+        {"id": "S1", "c2_class": "Bath"},
+    ])
+    tableau = generate_tableau(devis_global=dg, heating_enabled=True)
+    assert any(rcd.rcd_type == "A" for rcd in tableau.rcds)
