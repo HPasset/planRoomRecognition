@@ -124,13 +124,13 @@ def test_lighting_bin_packing_overflow_creates_2_circuits():
 
 
 def test_sockets_one_room_one_circuit():
-    """Pièce 5 prises → 1 circuit 20A/2.5mm²."""
+    """Pièce 5 prises → 1 circuit 16A/1.5mm² (NFC : 5 prises max)."""
     from src.planrec.nfc_tableau import _build_socket_circuits
     rooms_with_sockets = [("Sejour", 5)]
     circuits = _build_socket_circuits(rooms_with_sockets)
     assert len(circuits) == 1
-    assert circuits[0].breaker_amps == 20
-    assert circuits[0].cable_section_mm2 == 2.5
+    assert circuits[0].breaker_amps == 16
+    assert circuits[0].cable_section_mm2 == 1.5
     assert circuits[0].n_devices == 5
 
 
@@ -144,12 +144,14 @@ def test_sockets_pack_small_rooms_together():
 
 
 def test_sockets_large_room_dedicated_circuit():
-    """Pièce 12 prises → 1 circuit dédié."""
+    """Pièce 12 prises → découpée en circuits de 5 max (NFC) : 5 + 5 + 2."""
     from src.planrec.nfc_tableau import _build_socket_circuits
     rooms = [("Sejour", 12)]
     circuits = _build_socket_circuits(rooms)
-    assert len(circuits) == 1
-    assert circuits[0].n_devices == 12
+    assert len(circuits) == 3
+    assert sorted(c.n_devices for c in circuits) == [2, 5, 5]
+    assert all(c.breaker_amps == 16 and c.cable_section_mm2 == 1.5
+               for c in circuits)
 
 
 def test_heating_pack_2_convectors_per_circuit():

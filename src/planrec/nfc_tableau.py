@@ -15,7 +15,7 @@ from typing import Optional
 
 class CircuitType(str, Enum):
     LIGHTING        = "lighting"          # 10A — points lumineux
-    SOCKET          = "socket"            # 20A — prises courant
+    SOCKET          = "socket"            # 16A — prises courant (1,5 mm²)
     KITCHEN_SPECIAL = "kitchen_special"   # Four / Plaque / LV (20A ou 32A)
     LAUNDRY         = "laundry"           # LL / SL (20A)
     BOILER          = "boiler"            # Chaudière / cumulus (20A)
@@ -89,7 +89,7 @@ def detect_typology(devis: DevisGlobal) -> str:
 
 
 LIGHTING_MAX_PER_CIRCUIT = 5      # Règle cabinet associé (NFC stricte = 8)
-SOCKET_MAX_PER_CIRCUIT = 12       # Règle cabinet associé (NFC stricte = 8)
+SOCKET_MAX_PER_CIRCUIT = 5        # NFC 15-100 : 16A / 1,5 mm² → 5 prises max
 CONVECTOR_MAX_PER_CIRCUIT = 2     # Règle cabinet associé (2× 2000W max)
 
 
@@ -210,9 +210,9 @@ def _build_heating_circuits(
 def _build_socket_circuits(
     rooms_with_sockets: list[tuple[str, int]],
 ) -> list[Circuit]:
-    """Bin-packing greedy : pièces avec leurs n_sockets → circuits 12/circuit
-    max. Pièces avec n_sockets ≥ 6 prennent un circuit dédié, les plus petites
-    sont packées ensemble."""
+    """Bin-packing greedy : pièces avec leurs n_sockets → circuits de
+    SOCKET_MAX_PER_CIRCUIT (5) prises max. Pièces dépassant la limite prennent
+    un/des circuit(s) dédié(s) découpés, les plus petites sont packées ensemble."""
     sorted_rooms = sorted(rooms_with_sockets, key=lambda x: -x[1])
     circuits: list[Circuit] = []
     current_rooms: list[str] = []
@@ -225,8 +225,8 @@ def _build_socket_circuits(
                 id=generate_circuit_id(),
                 type=CircuitType.SOCKET,
                 label=_compact_rooms_label("Prises", current_rooms),
-                breaker_amps=20,
-                cable_section_mm2=2.5,
+                breaker_amps=16,
+                cable_section_mm2=1.5,
                 rooms_served=list(current_rooms),
                 n_devices=current_n,
             ))
@@ -243,8 +243,8 @@ def _build_socket_circuits(
                     id=generate_circuit_id(),
                     type=CircuitType.SOCKET,
                     label=f"Prises {room_name}",
-                    breaker_amps=20,
-                    cable_section_mm2=2.5,
+                    breaker_amps=16,
+                    cable_section_mm2=1.5,
                     rooms_served=[room_name],
                     n_devices=chunk,
                 ))
