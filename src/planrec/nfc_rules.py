@@ -14,6 +14,7 @@ Architecture :
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
+import math
 
 
 class NFCCategory(str, Enum):
@@ -89,6 +90,17 @@ class Devis:
     @property
     def total_equipment(self) -> int:
         return sum(self.items.values())
+
+
+def _convector_count(nfc_cat: NFCCategory, surface_m2: float | None) -> int:
+    """Nombre de convecteurs pour une pièce chauffée.
+
+    Surface connue → 1 convecteur / 20 m² (≈ 100 W/m², convecteur ~2000 W).
+    Surface inconnue → forfait par type : séjour 2, chambre 1.
+    """
+    if surface_m2 is not None and surface_m2 > 0:
+        return max(1, math.ceil(surface_m2 / 20))
+    return 2 if nfc_cat == NFCCategory.LIVINGROOM else 1
 
 
 def compute_devis_for_room(
@@ -213,7 +225,7 @@ def compute_devis_for_room(
 
     # Auto-génération chauffage électrique pour pièces principales (V1.2)
     if heating_enabled and nfc_cat in (NFCCategory.LIVINGROOM, NFCCategory.BEDROOM):
-        devis.items[EquipmentType.CONVECTOR] = 1
+        devis.items[EquipmentType.CONVECTOR] = _convector_count(nfc_cat, surface_m2)
 
     return devis
 
