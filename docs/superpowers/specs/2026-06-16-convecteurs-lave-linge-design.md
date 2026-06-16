@@ -23,13 +23,18 @@ observation métier :
    proportionnée à la surface, avec un repli réaliste tant que les surfaces ne
    sont pas calculées.
 
+> **Amendement 2026-06-17 :** la pièce synthétique `__laundry_virtual__` a été
+> **supprimée**. Si aucune pièce candidate plausible n'existe (logement réduit à
+> un WC ou à des chambres), la garantie ne s'applique plus — pas de lave-linge
+> fantôme. Voir [2026-06-16-alim-spe-visibles-design.md](2026-06-16-alim-spe-visibles-design.md).
+
 ## Décisions de cadrage (validées)
 
 | Sujet | Décision |
 |---|---|
 | Garantie lave-linge | Niveau logement, **au moins 1**, sans doublon |
 | Rattachement si pas de cellier | Pièce de repli par priorité : BATH → KITCHEN → GARAGE → ENTRY |
-| Si aucune pièce candidate | Circuit-only : Devis synthétique, pas de pastille |
+| Si aucune pièce candidate | ~~Devis synthétique~~ → **rien** (amendement 2026-06-17) |
 | Ampérage lave-linge | **20A** (cohérent avec le circuit réel `nfc_tableau.py:273`) |
 | Base comptage convecteurs | Surface : `max(1, ceil(surface / 20))` |
 | Repli si surface inconnue | Forfait par type : **Séjour = 2, Chambre = 1** |

@@ -105,10 +105,13 @@ Deux familles :
 
 Le `WASHING_MACHINE` posé par la garantie logement (cf.
 `2026-06-16-convecteurs-lave-linge-design.md`) devient automatiquement une
-pastille + une ligne « Alim spé ». Pour la pièce synthétique
-`__laundry_virtual__` : pas de polygone → pas de pastille, mais **ligne
-« Alimentation spécialisée ×1 »** dans le devis (sous CellierBuanderie). Plus de
-trou.
+pastille + une ligne « Alim spé » dès qu'il est rattaché à une pièce réelle
+(SDB/cuisine/garage/entrée ou cellier).
+
+> **Amendement 2026-06-17 :** la pièce synthétique `__laundry_virtual__` a été
+> supprimée. Un logement sans aucune pièce candidate plausible (WC seul,
+> chambres seules) ne reçoit plus de lave-linge ni de ligne « Alim spé »
+> fantôme.
 
 ## Hors scope (YAGNI)
 
