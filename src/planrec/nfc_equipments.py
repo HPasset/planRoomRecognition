@@ -96,22 +96,15 @@ def generate_equipments_from_devis_global(
     Positions initiales : x=0, y=0 (le caller utilise smart_placement pour
     les remplir avant rendu).
     """
-    # Pièce synthétique « lave-linge virtuel » : circuit-only sans polygone
-    # → jamais de pastille sur le plan (le circuit LAUNDRY reste dans le
-    # tableau électrique). Cf. _ensure_washing_machine dans nfc_rules.py.
-    placeable_rooms = [
-        r for r in devis_global.per_room if r.room_id != "__laundry_virtual__"
-    ]
-
     # Compte les pièces par catégorie pour l'auto-indice
     cat_total: dict[str, int] = {}
-    for room_devis in placeable_rooms:
+    for room_devis in devis_global.per_room:
         cat = room_devis.nfc_category.value
         cat_total[cat] = cat_total.get(cat, 0) + 1
     cat_seen: dict[str, int] = {}
 
     instances: list[EquipmentInstance] = []
-    for room_devis in placeable_rooms:
+    for room_devis in devis_global.per_room:
         cat = room_devis.nfc_category.value
         cat_seen[cat] = cat_seen.get(cat, 0) + 1
         room_label = (

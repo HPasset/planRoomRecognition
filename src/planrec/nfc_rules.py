@@ -308,9 +308,9 @@ def _ensure_washing_machine(out: DevisGlobal) -> None:
     - Si une pièce porte déjà un lave-linge (cellier détecté) → ne rien faire.
     - Sinon → rattacher 1 lave-linge à la première pièce de repli trouvée
       selon `_WASHING_FALLBACK_PRIORITY`.
-    - Si aucune pièce candidate → Devis synthétique circuit-only
-      (`__laundry_virtual__`, pas de polygone → pas de pastille sur le plan,
-      mais le circuit LAUNDRY Type A apparaît dans le tableau).
+    - Si aucune pièce candidate plausible (ex. logement réduit à un WC ou à des
+      chambres) → ne rien faire : pas de lave-linge fantôme (retour métier
+      2026-06-17).
     """
     for d in out.per_room:
         if d.items.get(EquipmentType.WASHING_MACHINE, 0) >= 1:
@@ -322,15 +322,6 @@ def _ensure_washing_machine(out: DevisGlobal) -> None:
                 d.items[EquipmentType.WASHING_MACHINE] = 1
                 d.special_feeds_detail.append("Lave-linge (20A)")
                 return
-
-    out.per_room.append(Devis(
-        room_id="__laundry_virtual__",
-        nfc_category=NFCCategory.STORAGE,
-        surface_m2=None,
-        handicap=out.handicap,
-        items={EquipmentType.WASHING_MACHINE: 1},
-        special_feeds_detail=["Lave-linge (20A)"],
-    ))
 
 
 def compute_devis_global(

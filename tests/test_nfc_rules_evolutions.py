@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from src.planrec.nfc_rules import (
-    SPECIAL_FEED_EQUIPMENT_TYPES,
     EquipmentType,
     NFCCategory,
     compute_devis_global,
@@ -91,15 +90,15 @@ def test_lave_linge_priorite_sdb_avant_cuisine():
     assert ll[0][0] == "S1"  # SDB prioritaire sur cuisine
 
 
-def test_lave_linge_circuit_only_si_aucune_piece_candidate():
+def test_lave_linge_aucun_si_aucune_piece_candidate():
+    """Logement sans pièce candidate plausible (que des chambres) → pas de
+    lave-linge fantôme, pas de pièce synthétique (retour métier 2026-06-17)."""
     dg = compute_devis_global([
         {"id": "B1", "c2_class": "BedRoom"},
         {"id": "B2", "c2_class": "BedRoom"},
     ])
-    ll = _ll_rooms(dg)
-    assert len(ll) == 1
-    assert ll[0][0] == "__laundry_virtual__"
-    assert ll[0][1] == NFCCategory.STORAGE
+    assert _ll_rooms(dg) == []
+    assert all(d.room_id != "__laundry_virtual__" for d in dg.per_room)
 
 
 def test_lave_linge_label_20A_sur_repli():
@@ -108,18 +107,6 @@ def test_lave_linge_label_20A_sur_repli():
     ])
     sdb = next(d for d in dg.per_room if d.room_id == "S1")
     assert "Lave-linge (20A)" in sdb.special_feeds_detail
-
-
-def test_lave_linge_synthetique_est_facture_en_alim_spe():
-    """Le Devis synthétique ne porte que des appareils « Alim spé » → il produit
-    une ligne facturable « Alimentation spécialisée », plus aucun trou."""
-    from src.planrec.nfc_rules import SPECIAL_FEED_EQUIPMENT_TYPES
-    dg = compute_devis_global([
-        {"id": "B1", "c2_class": "BedRoom"},
-    ])
-    virtual = next(d for d in dg.per_room if d.room_id == "__laundry_virtual__")
-    assert virtual.items  # non vide
-    assert all(eq in SPECIAL_FEED_EQUIPMENT_TYPES for eq in virtual.items)
 
 
 def test_cellier_lave_linge_label_20A():
