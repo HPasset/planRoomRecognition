@@ -91,17 +91,17 @@ def test_generate_equipments_kitchen_qty_explodes():
     type_counts: dict[str, int] = {}
     for inst in instances:
         type_counts[inst["type"]] = type_counts.get(inst["type"], 0) + 1
-    # Pastilles visibles : 6 prises + 1 lum + 1 interrupteur en cuisine NFC
+    # Pastilles visibles : 6 prises + 1 lum + 1 interrupteur en cuisine NFC.
+    # 4 « Alim spé » : Four + Plaque + Lave-vaisselle (cuisine) + le lave-linge
+    # garanti par logement rattaché à la cuisine faute de cellier
+    # (_ensure_washing_machine, retour métier 2026-06-16).
     assert type_counts.get("Prise", 0) == 6
+    assert type_counts.get("SpecialFeed", 0) == 4
     assert type_counts.get("LightPoint", 0) >= 1
     assert type_counts.get("Switch", 0) >= 1
-    # Sous-types V1.2 masqués du canvas (présents dans devis.items côté NFC
-    # mais pas comme pastilles)
     assert type_counts.get("Oven", 0) == 0
     assert type_counts.get("Cooktop", 0) == 0
     assert type_counts.get("Dishwasher", 0) == 0
-    # Pas de SpecialFeed légacy en cuisine
-    assert type_counts.get("SpecialFeed", 0) == 0
     # Vérif : les sous-types restent bien dans le devis lui-même
     from src.planrec.nfc_rules import EquipmentType
     cuisine_items = devis.per_room[0].items
@@ -510,16 +510,17 @@ def test_build_devis_lines_initial_filters_circuit_only_types():
     assert "Interrupteur" in labels
 
 
-def test_canvas_hidden_equip_keys_contains_all_v12_subtypes():
-    """CANVAS_HIDDEN_EQUIP_KEYS couvre les 8 sous-types V1.2 (et seulement
-    eux). Les 5 types legacy V1.0 (Prise/RJ45/Light/Switch/SpecialFeed)
-    restent visibles."""
+def test_canvas_hidden_equip_keys_are_the_six_appliances():
+    """CANVAS_HIDDEN_EQUIP_KEYS masque de la palette les 6 appareils (rendus en
+    « Alim spé »). Convecteur/Sèche-serviettes en sont sortis (palette + pastille
+    propre). Les 5 types legacy restent visibles."""
     from src.planrec.nfc_equipments import CANVAS_HIDDEN_EQUIP_KEYS
 
-    hidden = {"Oven", "Cooktop", "Dishwasher", "WashingMachine",
-              "Dryer", "Boiler", "Convector", "TowelWarmer"}
-    assert CANVAS_HIDDEN_EQUIP_KEYS == hidden
-
+    assert CANVAS_HIDDEN_EQUIP_KEYS == {
+        "Oven", "Cooktop", "Dishwasher", "WashingMachine", "Dryer", "Boiler",
+    }
+    assert "Convector" not in CANVAS_HIDDEN_EQUIP_KEYS
+    assert "TowelWarmer" not in CANVAS_HIDDEN_EQUIP_KEYS
     visible_legacy = {"Prise", "RJ45", "LightPoint", "Switch", "SpecialFeed"}
     assert visible_legacy.isdisjoint(CANVAS_HIDDEN_EQUIP_KEYS)
 
@@ -542,3 +543,46 @@ def test_kitchen_socket_count_is_six():
     from src.planrec.nfc_rules import compute_devis_for_room, EquipmentType
     devis = compute_devis_for_room("k1", "Kitchen")
     assert devis.items.get(EquipmentType.SOCKET) == 6
+
+
+def test_kitchen_pastilles_six_sockets_four_special_feeds():
+    """Cuisine sur le plan : 6 Prise + 4 SpecialFeed génériques (Four/Plaque/LV +
+    le lave-linge garanti par logement rattaché à la cuisine faute de cellier),
+    aucune pastille typée."""
+    from src.planrec.nfc_rules import compute_devis_global
+    devis = compute_devis_global([{"id": "k1", "c2_class": "Kitchen"}])
+    instances = generate_equipments_from_devis_global(devis)
+    counts: dict[str, int] = {}
+    for inst in instances:
+        counts[inst["type"]] = counts.get(inst["type"], 0) + 1
+    assert counts.get("Prise", 0) == 6
+    assert counts.get("SpecialFeed", 0) == 4
+    assert counts.get("Oven", 0) == 0
+    assert counts.get("Cooktop", 0) == 0
+    assert counts.get("Dishwasher", 0) == 0
+
+
+def test_storage_pastilles_three_special_feeds():
+    """Cellier : LL+SL+Cumulus → 3 pastilles SpecialFeed."""
+    from src.planrec.nfc_rules import compute_devis_global
+    devis = compute_devis_global([{"id": "c1", "c2_class": "Storage"}])
+    instances = generate_equipments_from_devis_global(devis)
+    counts: dict[str, int] = {}
+    for inst in instances:
+        counts[inst["type"]] = counts.get(inst["type"], 0) + 1
+    assert counts.get("SpecialFeed", 0) == 3
+
+
+def test_heating_pastilles_use_own_type_not_special_feed():
+    """Convecteur et sèche-serviettes gardent leur pastille propre."""
+    from src.planrec.nfc_rules import compute_devis_global
+    devis = compute_devis_global([
+        {"id": "L1", "c2_class": "LivingRoom", "surface_m2": 45.0},  # 3 convecteurs
+        {"id": "S1", "c2_class": "Bath"},                            # 1 sèche-serv
+    ], heating_enabled=True)
+    instances = generate_equipments_from_devis_global(devis)
+    counts: dict[str, int] = {}
+    for inst in instances:
+        counts[inst["type"]] = counts.get(inst["type"], 0) + 1
+    assert counts.get("Convector", 0) == 3
+    assert counts.get("TowelWarmer", 0) == 1

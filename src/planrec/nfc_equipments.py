@@ -12,7 +12,11 @@ import random
 import secrets
 from typing import Callable, TypedDict
 
-from src.planrec.nfc_rules import EquipmentType, DevisGlobal
+from src.planrec.nfc_rules import (
+    EquipmentType,
+    DevisGlobal,
+    SPECIAL_FEED_EQUIPMENT_TYPES,
+)
 
 
 class EquipmentInstance(TypedDict):
@@ -66,16 +70,12 @@ NFC_TO_EQUIP_TYPE: dict[EquipmentType, str] = {
 }
 
 
-# Clés EQUIP_TYPES masquées sur le plan : pas affichées dans la palette
-# équipements et pas générées automatiquement par
-# generate_equipments_from_devis_global. Ces équipements existent dans le
-# devis (sauf circuit-only) et dans le tableau électrique, mais ne sont pas
-# représentés comme pastilles sur le plan (retour métier 2026-06-02 :
-# pastilles V1.0/V1.1 suffisent visuellement, les 8 sous-types typés V1.2
-# polluent la palette).
+# Clés masquées de la PALETTE manuelle (drag-drop) : les 6 appareils, qui sont
+# représentés par la pastille générique « Alim spé » (SpecialFeed), pas par des
+# boutons typés. Convecteur/Sèche-serviettes en sont sortis → disponibles en
+# palette et générés avec leur pastille propre. Cf. retour métier 2026-06-16.
 CANVAS_HIDDEN_EQUIP_KEYS: frozenset[str] = frozenset({
-    "Oven", "Cooktop", "Dishwasher", "WashingMachine",
-    "Dryer", "Boiler", "Convector", "TowelWarmer",
+    "Oven", "Cooktop", "Dishwasher", "WashingMachine", "Dryer", "Boiler",
 })
 
 
@@ -96,27 +96,38 @@ def generate_equipments_from_devis_global(
     Positions initiales : x=0, y=0 (le caller utilise smart_placement pour
     les remplir avant rendu).
     """
+    # Pièce synthétique « lave-linge virtuel » : circuit-only sans polygone
+    # → jamais de pastille sur le plan (le circuit LAUNDRY reste dans le
+    # tableau électrique). Cf. _ensure_washing_machine dans nfc_rules.py.
+    placeable_rooms = [
+        r for r in devis_global.per_room if r.room_id != "__laundry_virtual__"
+    ]
+
     # Compte les pièces par catégorie pour l'auto-indice
     cat_total: dict[str, int] = {}
-    for room_devis in devis_global.per_room:
+    for room_devis in placeable_rooms:
         cat = room_devis.nfc_category.value
         cat_total[cat] = cat_total.get(cat, 0) + 1
     cat_seen: dict[str, int] = {}
 
     instances: list[EquipmentInstance] = []
-    for room_devis in devis_global.per_room:
+    for room_devis in placeable_rooms:
         cat = room_devis.nfc_category.value
         cat_seen[cat] = cat_seen.get(cat, 0) + 1
         room_label = (
             f"{cat} {cat_seen[cat]}" if cat_total[cat] > 1 else cat
         )
         for nfc_type, qty in room_devis.items.items():
-            equip_key = NFC_TO_EQUIP_TYPE[nfc_type]
-            # Skip les types masqués (Four/Plaque/LV/LL/SL/Chaudière/Conv/SS) :
-            # ils restent dans devis.items (donc dans le tableau électrique)
-            # mais pas comme pastilles sur le plan.
-            if equip_key in CANVAS_HIDDEN_EQUIP_KEYS:
+            if qty <= 0:
                 continue
+            # Les 6 appareils à alim dédiée → pastille générique « Alim spé ».
+            # Le reste (dont Convecteur/Sèche-serviettes) → sa pastille propre.
+            if nfc_type in SPECIAL_FEED_EQUIPMENT_TYPES:
+                equip_key = "SpecialFeed"
+            else:
+                equip_key = NFC_TO_EQUIP_TYPE[nfc_type]
+                if equip_key in CANVAS_HIDDEN_EQUIP_KEYS:
+                    continue
             color = EQUIP_TYPES[equip_key]["color"]
             for _ in range(qty):
                 instances.append({
