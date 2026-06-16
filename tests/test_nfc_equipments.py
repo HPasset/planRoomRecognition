@@ -69,11 +69,12 @@ def test_generate_equipments_from_devis_simple():
 
 
 def test_generate_equipments_kitchen_qty_explodes():
-    """Cuisine NFC sur le canvas : 9 prises + 1 lum + 1 inter.
+    """Cuisine NFC sur le canvas : 6 prises + 1 lum + 1 inter.
 
-    Détail des 9 prises : 6 prises normales (dont 4 au-dessus plan travail)
-    + 3 alimentations spécialisées (Plaque/Four/LV) que l'artisan pose même
-    si l'occupant fournit l'appareil. Cf. retour métier 2026-06-03.
+    6 prises normales (dont 4 au-dessus plan travail) ; les 3 alimentations
+    spécialisées (Plaque/Four/LV) que l'artisan pose sont désormais affichées
+    séparément (circuits typés), plus fondues dans le compteur de prises.
+    Cf. retour métier 2026-06-03.
 
     Les sous-types V1.2 (Four, Plaque, LV) sont dans devis.items pour
     alimenter le tableau électrique (1 circuit dédié chacun), mais MASQUÉS
@@ -90,8 +91,8 @@ def test_generate_equipments_kitchen_qty_explodes():
     type_counts: dict[str, int] = {}
     for inst in instances:
         type_counts[inst["type"]] = type_counts.get(inst["type"], 0) + 1
-    # Pastilles visibles : 9 prises + 1 lum + 1 interrupteur en cuisine NFC
-    assert type_counts.get("Prise", 0) == 9
+    # Pastilles visibles : 6 prises + 1 lum + 1 interrupteur en cuisine NFC
+    assert type_counts.get("Prise", 0) == 6
     assert type_counts.get("LightPoint", 0) >= 1
     assert type_counts.get("Switch", 0) >= 1
     # Sous-types V1.2 masqués du canvas (présents dans devis.items côté NFC
@@ -533,3 +534,11 @@ def test_special_feed_equipment_types_are_the_six_appliances():
     })
     assert EquipmentType.CONVECTOR not in SPECIAL_FEED_EQUIPMENT_TYPES
     assert EquipmentType.TOWEL_WARMER not in SPECIAL_FEED_EQUIPMENT_TYPES
+
+
+def test_kitchen_socket_count_is_six():
+    """Cuisine : 6 prises normales (les 3 alim spé sont des circuits typés
+    séparés, plus fondues dans le compteur de prises)."""
+    from src.planrec.nfc_rules import compute_devis_for_room, EquipmentType
+    devis = compute_devis_for_room("k1", "Kitchen")
+    assert devis.items.get(EquipmentType.SOCKET) == 6

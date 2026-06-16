@@ -173,12 +173,12 @@ def compute_devis_for_room(
 
     elif nfc_cat == NFCCategory.KITCHEN:
         # 6 prises normales (dont 4 au-dessus plan travail) + 3 alimentations
-        # spécialisées (Plaque/Four/LV) que l'artisan pose = 9 prises au total
-        # côté devis facturable. Cf. NFC C15-100 + retour métier 2026-06-03.
+        # spécialisées (Plaque/Four/LV) affichées séparément. Cf. NFC C15-100
+        # + retour métier 2026-06-03.
         # Les types OVEN/COOKTOP/DISHWASHER restent comptés à part pour
-        # alimenter le tableau électrique (1 circuit dédié chacun), mais ne
-        # rajoutent pas de prise dans le devis (déjà comptées dans SOCKET=9).
-        devis.items[EquipmentType.SOCKET] = 9
+        # alimenter le tableau électrique (1 circuit dédié chacun) et sont
+        # désormais affichés séparément comme alimentations spécialisées.
+        devis.items[EquipmentType.SOCKET] = 6
         devis.items[EquipmentType.LIGHT_POINT] = 1
         devis.items[EquipmentType.SWITCH] = 1
         # Circuits spécialisés typés (V1.2) — circuit-only, pas dans devis
@@ -189,8 +189,8 @@ def compute_devis_for_room(
             "Plaque de cuisson (32A)", "Four (16A)", "Lave-vaisselle (16A)",
         ])
         devis.notes.append(
-            "9 prises au total : 6 prises normales (dont 4 au-dessus plan "
-            "de travail) + 3 alimentations spécialisées (Plaque/Four/LV)"
+            "6 prises normales (dont 4 au-dessus plan de travail) + 3 "
+            "alimentations spécialisées (Plaque/Four/LV) affichées séparément"
         )
 
     elif nfc_cat == NFCCategory.STORAGE:
