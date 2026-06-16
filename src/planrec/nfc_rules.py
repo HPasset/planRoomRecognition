@@ -65,6 +65,20 @@ CIRCUIT_ONLY_EQUIPMENT_TYPES: frozenset[EquipmentType] = frozenset({
 })
 
 
+# Appareils à alimentation dédiée fournis par l'occupant : l'artisan pose
+# l'alimentation (prise/circuit), facturée et affichée comme « Alim spé »
+# générique. Distinct du chauffage (Convecteur/Sèche-serviettes), qui a ses
+# propres pastilles/lignes. Cf. retour métier 2026-06-16.
+SPECIAL_FEED_EQUIPMENT_TYPES: frozenset[EquipmentType] = frozenset({
+    EquipmentType.OVEN,
+    EquipmentType.COOKTOP,
+    EquipmentType.DISHWASHER,
+    EquipmentType.WASHING_MACHINE,
+    EquipmentType.DRYER,
+    EquipmentType.BOILER,
+})
+
+
 # Mapping direct C2 → catégorie NFC (cas simple, sans contexte OCR).
 # Bath est mappé à BATH par défaut ; un override via OCR peut le passer à WC.
 C2_TO_NFC: dict[str, NFCCategory] = {

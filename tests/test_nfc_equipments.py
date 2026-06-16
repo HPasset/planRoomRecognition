@@ -521,3 +521,15 @@ def test_canvas_hidden_equip_keys_contains_all_v12_subtypes():
 
     visible_legacy = {"Prise", "RJ45", "LightPoint", "Switch", "SpecialFeed"}
     assert visible_legacy.isdisjoint(CANVAS_HIDDEN_EQUIP_KEYS)
+
+
+def test_special_feed_equipment_types_are_the_six_appliances():
+    """SPECIAL_FEED_EQUIPMENT_TYPES = les 6 appareils à alim dédiée (affichés/
+    facturés en « Alim spé »). Le chauffage (Convecteur/Sèche-serv) en est exclu."""
+    from src.planrec.nfc_rules import SPECIAL_FEED_EQUIPMENT_TYPES, EquipmentType
+    assert SPECIAL_FEED_EQUIPMENT_TYPES == frozenset({
+        EquipmentType.OVEN, EquipmentType.COOKTOP, EquipmentType.DISHWASHER,
+        EquipmentType.WASHING_MACHINE, EquipmentType.DRYER, EquipmentType.BOILER,
+    })
+    assert EquipmentType.CONVECTOR not in SPECIAL_FEED_EQUIPMENT_TYPES
+    assert EquipmentType.TOWEL_WARMER not in SPECIAL_FEED_EQUIPMENT_TYPES
