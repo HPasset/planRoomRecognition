@@ -292,6 +292,48 @@ class DevisGlobal:
         return out
 
 
+# Ordre de repli pour rattacher le lave-linge garanti quand aucun cellier
+# n'est détecté. STORAGE absent volontairement : s'il existe, il porte déjà
+# un lave-linge → garantie satisfaite avant d'arriver ici.
+_WASHING_FALLBACK_PRIORITY: tuple[NFCCategory, ...] = (
+    NFCCategory.BATH,
+    NFCCategory.KITCHEN,
+    NFCCategory.GARAGE,
+    NFCCategory.ENTRY,
+)
+
+
+def _ensure_washing_machine(out: DevisGlobal) -> None:
+    """Garantit au moins un lave-linge 20A par logement (retour métier 2026-06-16).
+
+    - Si une pièce porte déjà un lave-linge (cellier détecté) → ne rien faire.
+    - Sinon → rattacher 1 lave-linge à la première pièce de repli trouvée
+      selon `_WASHING_FALLBACK_PRIORITY`.
+    - Si aucune pièce candidate → Devis synthétique circuit-only
+      (`__laundry_virtual__`, pas de polygone → pas de pastille sur le plan,
+      mais le circuit LAUNDRY Type A apparaît dans le tableau).
+    """
+    for d in out.per_room:
+        if d.items.get(EquipmentType.WASHING_MACHINE, 0) >= 1:
+            return  # garantie déjà satisfaite, pas de doublon
+
+    for cat in _WASHING_FALLBACK_PRIORITY:
+        for d in out.per_room:
+            if d.nfc_category == cat:
+                d.items[EquipmentType.WASHING_MACHINE] = 1
+                d.special_feeds_detail.append("Lave-linge (20A)")
+                return
+
+    out.per_room.append(Devis(
+        room_id="__laundry_virtual__",
+        nfc_category=NFCCategory.STORAGE,
+        surface_m2=None,
+        handicap=out.handicap,
+        items={EquipmentType.WASHING_MACHINE: 1},
+        special_feeds_detail=["Lave-linge (20A)"],
+    ))
+
+
 def compute_devis_global(
     rooms: list[dict],
     handicap: bool = False,
@@ -323,4 +365,5 @@ def compute_devis_global(
             heating_enabled=heating_enabled,
         )
         out.per_room.append(devis)
+    _ensure_washing_machine(out)
     return out
