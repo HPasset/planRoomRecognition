@@ -193,7 +193,7 @@ def compute_devis_for_room(
         devis.items[EquipmentType.DRYER] = 1
         devis.items[EquipmentType.BOILER] = 1
         devis.special_feeds_detail.extend([
-            "Lave-linge (20A)", "Sèche-linge (16A)", "Cumulus",
+            "Lave-linge (20A)", "Sèche-linge (16A)", "Cumulus (ECS)",
         ])
 
     elif nfc_cat == NFCCategory.LIVINGROOM:

@@ -284,7 +284,7 @@ def _build_kitchen_socket_circuits(
             circuits.append(Circuit(
                 id=generate_circuit_id(),
                 type=CircuitType.KITCHEN_SOCKET,
-                label=f"Prises cuisine {room_name}",
+                label=f"Prises cuisine ×{chunk}",
                 breaker_amps=20,
                 cable_section_mm2=2.5,
                 rooms_served=[room_name],
@@ -301,7 +301,7 @@ _SPECIALIZED_SPECS: dict[EquipmentType, tuple[int, float, str, bool, bool, Circu
     EquipmentType.DISHWASHER:      (20, 2.5, "Lave-vaisselle", False, False, CircuitType.KITCHEN_SPECIAL),
     EquipmentType.WASHING_MACHINE: (20, 2.5, "Lave-linge",     True,  False, CircuitType.LAUNDRY),
     EquipmentType.DRYER:           (20, 2.5, "Sèche-linge",    False, False, CircuitType.LAUNDRY),
-    EquipmentType.BOILER:          (20, 2.5, "Chaudière",      False, False, CircuitType.BOILER),
+    EquipmentType.BOILER:          (20, 2.5, "Cumulus (ECS)", False, False, CircuitType.BOILER),
     EquipmentType.VMC:             (16, 1.5, "VMC",            True,  False, CircuitType.VMC),
     EquipmentType.HEAT_PUMP:       (32, 6.0, "Pompe à chaleur", False, True, CircuitType.HEAT_PUMP),
     EquipmentType.EV_CHARGER:      (32, 6.0, "Borne véhicule", False, True, CircuitType.EV_CHARGER),

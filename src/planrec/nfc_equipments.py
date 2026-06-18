@@ -44,7 +44,7 @@ EQUIP_TYPES: dict[str, dict[str, str]] = {
     "Dishwasher":     {"label": "Lave-vaisselle", "color": "rgb(194, 24, 91)",  "svg_id": "dishwasher"},
     "WashingMachine": {"label": "Lave-linge",     "color": "rgb(255, 112, 67)", "svg_id": "washingmachine"},
     "Dryer":          {"label": "Sèche-linge",    "color": "rgb(255, 167, 38)", "svg_id": "dryer"},
-    "Boiler":         {"label": "Chaudière",      "color": "rgb(198, 40, 40)",  "svg_id": "boiler"},
+    "Boiler":         {"label": "Cumulus (ECS)",  "color": "rgb(198, 40, 40)",  "svg_id": "boiler"},
     # NEW V1.2 — chauffage (rouge clair)
     "Convector":      {"label": "Convecteur",     "color": "rgb(239, 83, 80)",  "svg_id": "convector"},
     "TowelWarmer":    {"label": "Sèche-serv.",    "color": "rgb(239, 154, 154)", "svg_id": "towelwarmer"},

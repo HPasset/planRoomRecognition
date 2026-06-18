@@ -46,7 +46,7 @@ EQUIPMENT_LABELS_FR: dict[EquipmentType, str] = {
     EquipmentType.DISHWASHER: "Lave-vaisselle",
     EquipmentType.WASHING_MACHINE: "Lave-linge",
     EquipmentType.DRYER: "Sèche-linge",
-    EquipmentType.BOILER: "Chaudière/cumulus",
+    EquipmentType.BOILER: "Cumulus (ECS)",
     EquipmentType.CONVECTOR: "Convecteur",
     EquipmentType.TOWEL_WARMER: "Sèche-serviettes",
     EquipmentType.VMC: "VMC",

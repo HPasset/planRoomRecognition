@@ -119,7 +119,7 @@ section de câble et sa limite de points par circuit.
 | **Lave-vaisselle** | 20 A | 2,5 mm² | 1 (dédié) | AC |
 | **Lave-linge** | 20 A | 2,5 mm² | 1 (dédié) | **A** |
 | **Sèche-linge** | 20 A | 2,5 mm² | 1 (dédié) | AC |
-| **Chaudière / Cumulus (ECS)** | 20 A | 2,5 mm² | 1 (dédié) | AC |
+| **Cumulus (ECS)** (eau chaude sanitaire) | 20 A | 2,5 mm² | 1 (dédié) | AC |
 | **Convecteur** | 20 A | 2,5 mm² | 2 convecteurs | AC |
 | **Sèche-serviettes** | 20 A | 2,5 mm² | 1 (dédié) | AC |
 | **VMC** | 16 A | 1,5 mm² | 1 (dédié) | **A** |

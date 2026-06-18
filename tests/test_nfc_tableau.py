@@ -375,7 +375,7 @@ def test_generate_tableau_propagates_rooms_to_specialized_and_towel_circuits():
                 f"{prefix}: rooms_served={c.rooms_served}"
             )
     # Cellier
-    for prefix in ("Lave-linge", "Sèche-linge", "Chaudière"):
+    for prefix in ("Lave-linge", "Sèche-linge", "Cumulus (ECS)"):
         matches = by_label_prefix(prefix)
         assert matches, f"circuit {prefix} manquant"
         for c in matches:
@@ -554,6 +554,9 @@ def test_kitchen_sockets_dedicated_20a():
     assert circuits[0].breaker_amps == 20
     assert circuits[0].cable_section_mm2 == 2.5
     assert circuits[0].n_devices == 6
+    # label sans répétition de "cuisine" + quantité (la pièce est dans rooms_served)
+    assert circuits[0].label == "Prises cuisine ×6"
+    assert circuits[0].rooms_served == ["Cuisine"]
 
 
 def test_generate_tableau_kitchen_sockets_separate(simple_kitchen_devis):

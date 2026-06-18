@@ -176,7 +176,7 @@ def render_html_table(tableau: Tableau) -> str:
         CircuitType.SOCKET: "Prises",
         CircuitType.KITCHEN_SPECIAL: "Cuisine spé",
         CircuitType.LAUNDRY: "Buanderie",
-        CircuitType.BOILER: "Chaudière",
+        CircuitType.BOILER: "Cumulus (ECS)",
         CircuitType.HEATING: "Chauffage",
         CircuitType.TOWEL_WARMER: "Sèche-serv.",
         CircuitType.KITCHEN_SOCKET: "Prises cuisine",
