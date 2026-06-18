@@ -1,6 +1,6 @@
 # Règles batIA — Équipements & Tableau électrique (NF C 15-100)
 
-> Document de référence — état au **2026-06-17**.
+> Document de référence — état au **2026-06-18** (règles tableau v2).
 > Source de vérité : `src/planrec/nfc_rules.py` (équipements par pièce),
 > `src/planrec/nfc_tableau.py` (circuits + tableau), `src/planrec/nfc_pricing.py`
 > (prix). Ce document synthétise les règles métier réellement implémentées.
@@ -56,19 +56,31 @@ Notes :
 - Tant que les surfaces ne sont pas calculées, le forfait par type s'applique.
 - Aucun chauffage en cuisine, WC, cellier, dégagement, extérieur, garage.
 
+### VMC, pompe à chaleur, borne véhicule
+- **VMC** : auto, **1 par logement**, placée **cellier → SDB** (rien si aucune).
+  Circuit 16 A / 1,5 mm², **Type A**. Pastille + ligne « VMC » dédiées.
+- **Pompe à chaleur** et **borne de recharge véhicule** : **ajout manuel** (palette),
+  32 A / 6 mm², **Type F**. Pastille + ligne dédiées. Non générées automatiquement.
+
 ---
 
-## 4. Garantie lave-linge (niveau logement)
+## 4. Garanties de placement au niveau logement
 
-Tout logement doit comporter **au moins une alimentation lave-linge**.
-
+### Lave-linge — au moins une alimentation par logement
 - Si une pièce porte déjà un lave-linge (cellier détecté) → rien à faire.
-- Sinon → rattachement à la **première pièce candidate** selon l'ordre de
-  priorité : **Salle de bain → Cuisine → Garage → Dégagement**.
-- Si **aucune** pièce candidate plausible n'existe (logement réduit à un WC ou à
-  des chambres) → **pas de lave-linge** ajouté (pas d'alimentation fantôme).
+- Sinon → rattachement à la **première pièce candidate** : **Salle de bain →
+  Cuisine → Garage → Dégagement**.
+- Si **aucune** pièce candidate plausible (logement réduit à un WC ou à des
+  chambres) → **pas de lave-linge** ajouté (pas d'alimentation fantôme).
 
-Le lave-linge garanti est une alimentation spécialisée 20A (voir §5 et §6).
+### ECS (cumulus / eau chaude sanitaire) — alimentation spécialisée
+- Générée dans le **cellier** s'il existe (règle cellier).
+- Sinon → **garage** uniquement s'il est **attenant** à la maison, sinon **SDB**.
+- Si aucune candidate → pas d'ECS auto.
+- L'attribut « garage attenant » est déterminé géométriquement (polygone garage
+  partageant un mur avec une pièce intérieure) — *brique séparée, à venir*.
+
+Le lave-linge et l'ECS garantis sont des alimentations spécialisées 20A (§5, §6).
 
 ---
 
@@ -80,6 +92,7 @@ Deux familles d'appareils, traitées différemment :
 |---|---|---|---|
 | **Alimentation spécialisée** | Four, Plaque, Lave-vaisselle, Lave-linge, Sèche-linge, Cumulus | Pastille générique « Alim spé » | **1 ligne « Alimentation spécialisée » agrégée par pièce** (prix unitaire 70 €) |
 | **Chauffage** | Convecteur, Sèche-serviettes | Pastille propre (icône dédiée) | Ligne dédiée « Convecteur » / « Sèche-serviettes » |
+| **Équipements fixes** | VMC, Pompe à chaleur, Borne véhicule | Pastille propre | Ligne dédiée « VMC » / « Alim pompe à chaleur » / « Alim borne véhicule » |
 
 - Les **types précis** (Four/Plaque/…) restent connus en interne pour
   dimensionner le tableau (ampérage, section, différentiel) — voir §6.
@@ -96,28 +109,33 @@ Deux familles d'appareils, traitées différemment :
 Chaque type d'usage produit un ou plusieurs circuits, avec son disjoncteur, sa
 section de câble et sa limite de points par circuit.
 
-| Circuit | Disjoncteur | Section câble | Max par circuit | Différentiel Type A imposé |
+| Circuit | Disjoncteur | Section câble | Max par circuit | Différentiel |
 |---|---|---|---|---|
-| **Éclairage** | 10 A | 1,5 mm² | 5 points | non |
-| **Prises** | **16 A** | **1,5 mm²** | **5 prises** | non |
-| **Four** | 20 A | 2,5 mm² | 1 (circuit dédié) | non |
-| **Plaque de cuisson** | **32 A** | **6 mm²** | 1 (dédié) | **oui** |
-| **Lave-vaisselle** | 20 A | 2,5 mm² | 1 (dédié) | non |
-| **Lave-linge** | 20 A | 2,5 mm² | 1 (dédié) | **oui** |
-| **Sèche-linge** | 20 A | 2,5 mm² | 1 (dédié) | non |
-| **Chaudière / Cumulus** | 20 A | 2,5 mm² | 1 (dédié) | non |
-| **Convecteur** | 20 A | 2,5 mm² | 2 convecteurs | non |
-| **Sèche-serviettes** | 20 A | 2,5 mm² | 1 (dédié) | non |
+| **Éclairage** | 10 A | 1,5 mm² | 5 points | **A** |
+| **Prises** (générales) | **16 A** | **1,5 mm²** | **8 prises** | AC |
+| **Prises cuisine** | **20 A** | **2,5 mm²** | **6 prises** | AC |
+| **Four** | 20 A | 2,5 mm² | 1 (circuit dédié) | AC |
+| **Plaque de cuisson** | **32 A** | **6 mm²** | 1 (dédié) | **A** |
+| **Lave-vaisselle** | 20 A | 2,5 mm² | 1 (dédié) | AC |
+| **Lave-linge** | 20 A | 2,5 mm² | 1 (dédié) | **A** |
+| **Sèche-linge** | 20 A | 2,5 mm² | 1 (dédié) | AC |
+| **Chaudière / Cumulus (ECS)** | 20 A | 2,5 mm² | 1 (dédié) | AC |
+| **Convecteur** | 20 A | 2,5 mm² | 2 convecteurs | AC |
+| **Sèche-serviettes** | 20 A | 2,5 mm² | 1 (dédié) | AC |
+| **VMC** | 16 A | 1,5 mm² | 1 (dédié) | **A** |
+| **Pompe à chaleur** | **32 A** | **6 mm²** | 1 (dédié) | **F** |
+| **Borne véhicule** | **32 A** | **6 mm²** | 1 (dédié) | **F** |
 
 Règles de regroupement :
-- **Éclairage** et **prises** : bin-packing — on remplit des circuits jusqu'à la
-  limite (5), les grandes pièces sont découpées en plusieurs circuits.
+- **Éclairage** et **prises générales** : bin-packing — on remplit des circuits
+  jusqu'à la limite (5 points / 8 prises), les grandes pièces sont découpées.
+- **Prises cuisine** : circuit dédié 20 A / 2,5 mm² (6 max), séparé des prises générales.
 - **Appareils spécialisés** : 1 circuit dédié par appareil.
 - **Convecteurs** : 2 par circuit maximum.
-- **Sèche-serviettes** : 1 circuit dédié par salle de bain.
+- **Sèche-serviettes / VMC / PAC / borne** : 1 circuit dédié chacun.
 
-> Note : les limites « 5 prises » et « 5 points lumineux » suivent la NF C 15-100
-> pour le 1,5 mm² (16 A). Le RJ45 n'est pas dans le tableau de puissance.
+> Note : limites « 8 prises » (16 A / 1,5 mm²) et « 5 points lumineux » selon
+> NF C 15-100. Le RJ45 n'est pas dans le tableau de puissance.
 
 ---
 
@@ -137,24 +155,33 @@ Règles de regroupement :
 
 Minimum réglementaire absolu : **2 différentiels** par logement (même en studio).
 
-### 7.3 Type A vs Type AC
-- Le **1er différentiel est de Type A** et reçoit **tous les circuits qui exigent
-  le Type A** : **Plaque de cuisson** et **Lave-linge**.
-- Les différentiels suivants sont de **Type AC** et reçoivent le reste.
+### 7.3 Familles de différentiels (Type A / F / AC)
+Chaque circuit appartient à une famille selon le type de différentiel requis :
 
-### 7.4 Répartition des circuits (bin-packing)
-1. Les circuits Type A obligatoires → différentiel n°1 (Type A).
-2. Les autres circuits sont triés par ampérage décroissant et placés sur le
-   différentiel **le moins chargé** (max 8 circuits par DDR).
-3. Si tous les différentiels sont saturés → on ajoute un différentiel AC.
+| Type | Circuits |
+|---|---|
+| **Type A** | Éclairage, VMC, Plaque de cuisson, Lave-linge |
+| **Type F** | Pompe à chaleur, Borne véhicule (super-immunisé, fuites HF) |
+| **Type AC** | Tout le reste : prises, four, lave-vaisselle, sèche-linge, ECS, convecteurs, sèche-serviettes |
+
+- Au moins **1 différentiel Type A** (l'éclairage est toujours présent).
+- **1+ différentiel Type F** uniquement si PAC ou borne installées.
+
+### 7.4 Répartition des circuits
+1. Chaque famille (A / F / AC) est placée sur ses propres différentiels.
+2. Chaque famille est découpée par paquets de **8 circuits max**.
+3. Les circuits **AC** sont **répartis équitablement** (round-robin) sur autant
+   de différentiels que nécessaire pour atteindre le minimum réglementaire —
+   en zones indépendantes plutôt qu'en différentiels de réserve vides.
 
 ### 7.5 Calibre d'un différentiel
 `calibre = Σ(ampérages chauffage + ECS) + Σ(ampérages autres usages) / 2`,
 arrondi au **calibre normalisé supérieur** parmi **{25, 40, 63, 80, 100, 125} A**.
 
-- « Chauffage + ECS » (comptés plein) = convecteurs, sèche-serviettes, cumulus.
+- « Chauffage + ECS » (comptés plein) = convecteurs, sèche-serviettes, cumulus,
+  **pompe à chaleur**.
 - « Autres usages » (coefficient de simultanéité 0,5) = prises, éclairage,
-  électroménager non-chauffant.
+  électroménager non-chauffant, VMC, borne véhicule.
 
 ---
 
@@ -171,6 +198,9 @@ arrondi au **calibre normalisé supérieur** parmi **{25, 40, 63, 80, 100, 125} 
 | **Alimentation spécialisée** (Four/Plaque/LV/LL/SL/Cumulus) | **70 €** |
 | Convecteur (alim) | 65 € |
 | Sèche-serviettes (alim) | 70 € |
+| VMC | 90 € |
+| Alim pompe à chaleur | 150 € |
+| Alim borne véhicule | 250 € |
 
 TVA : Neuf 20 % · Rénovation > 2 ans 10 % · Rénovation énergie 5,5 %.
 
