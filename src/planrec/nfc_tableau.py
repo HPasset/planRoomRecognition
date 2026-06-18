@@ -536,25 +536,35 @@ def _distribute_circuits_to_rcds(
     ac_circuits = [c for c in circuits
                    if not c.requires_type_a and not c.requires_type_f]
 
-    def _chunk(items: list[Circuit], rcd_type: str) -> list[RCD]:
-        out: list[RCD] = []
-        for i in range(0, len(items), MAX_BREAKERS_PER_RCD):
-            out.append(RCD(id=generate_rcd_id(), rcd_type=rcd_type, amps=40,
-                           sensitivity_ma=30,
-                           circuits=items[i:i + MAX_BREAKERS_PER_RCD]))
-        return out
+    def _spread(items: list[Circuit], rcd_type: str, n_groups: int) -> list[RCD]:
+        """Répartit `items` sur `n_groups` DDR de façon équilibrée (round-robin
+        par ampérage décroissant). Renvoie des DDR (éventuellement vides si
+        n_groups dépasse le besoin, pour atteindre un minimum réglementaire)."""
+        rcds = [RCD(id=generate_rcd_id(), rcd_type=rcd_type, amps=40,
+                    sensitivity_ma=30, circuits=[]) for _ in range(n_groups)]
+        for i, c in enumerate(sorted(items, key=lambda c: -c.breaker_amps)):
+            rcds[i % n_groups].circuits.append(c)
+        return rcds
+
+    # Type A : toujours ≥ 1 (l'éclairage est toujours présent).
+    n_a = max(1, math.ceil(len(a_circuits) / MAX_BREAKERS_PER_RCD))
+    # Type F : seulement si des circuits le requièrent.
+    n_f = math.ceil(len(f_circuits) / MAX_BREAKERS_PER_RCD)
+    # Type AC : au moins de quoi tenir le cap de 8, et de quoi compléter le
+    # minimum réglementaire (typologie/surface) en zones AC indépendantes.
+    n_ac_min = math.ceil(len(ac_circuits) / MAX_BREAKERS_PER_RCD) if ac_circuits else 0
+    n_ac = max(n_ac_min, n_rcds - n_a - n_f)
+    if ac_circuits:
+        n_ac = max(n_ac, 1)
+    n_ac = max(n_ac, 0)
 
     rcds: list[RCD] = []
-    # Toujours ≥ 1 Type A (l'éclairage est toujours présent) ; si vide, 1 DDR A.
-    rcds.extend(_chunk(a_circuits, "A") or
-                [RCD(id=generate_rcd_id(), rcd_type="A", amps=40,
-                     sensitivity_ma=30, circuits=[])])
-    # Type F seulement si des circuits le requièrent.
-    rcds.extend(_chunk(f_circuits, "F"))
-    # Reste en AC.
-    rcds.extend(_chunk(ac_circuits, "AC"))
+    rcds.extend(_spread(a_circuits, "A", n_a))
+    rcds.extend(_spread(f_circuits, "F", n_f))
+    rcds.extend(_spread(ac_circuits, "AC", n_ac))
 
-    # Complément jusqu'au minimum (typologie/surface) avec des DDR AC vides.
+    # Si le minimum n'est toujours pas atteint (aucun circuit AC), compléter
+    # avec des DDR AC de réserve.
     while len(rcds) < n_rcds:
         rcds.append(RCD(id=generate_rcd_id(), rcd_type="AC", amps=40,
                         sensitivity_ma=30, circuits=[]))

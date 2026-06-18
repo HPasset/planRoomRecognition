@@ -17,6 +17,10 @@ CIRCUIT_COLORS: dict[CircuitType, str] = {
     CircuitType.BOILER:          "#C62828",  # rouge sombre
     CircuitType.HEATING:         "#EF5350",  # rouge clair
     CircuitType.TOWEL_WARMER:    "#EF9A9A",  # rose clair
+    CircuitType.KITCHEN_SOCKET:  "#1E88E5",  # bleu soutenu (prises cuisine 20A)
+    CircuitType.VMC:             "#78909C",  # gris bleuté
+    CircuitType.HEAT_PUMP:       "#00897B",  # teal (PAC)
+    CircuitType.EV_CHARGER:      "#3949AB",  # indigo (borne)
 }
 
 
@@ -49,25 +53,29 @@ def render_svg(tableau: Tableau) -> str:
 
     for i, rcd in enumerate(tableau.rcds):
         y = 30 + i * MODULE_H
-        parts.append(_render_rcd_row(rcd, y))
+        parts.append(_render_rcd_row(rcd, y, idx=i + 1))
 
     parts.append('</svg>')
     return "".join(parts)
 
 
-def _render_rcd_row(rcd: RCD, y: int) -> str:
-    """Une rangée RCD = bloc ID + N modules disjoncteur."""
+def _render_rcd_row(rcd: RCD, y: int, idx: int) -> str:
+    """Une rangée RCD = bloc ID + N modules disjoncteur.
+
+    `idx` = numéro séquentiel 1-based pour cross-référencer avec la table
+    de détail des circuits ('ID 1', 'ID 2', ...).
+    """
     parts: list[str] = []
 
     # Bloc RCD (gauche, fond blanc bord noir épais)
     parts.append(
         f'<rect x="0" y="{y}" width="{RCD_BLOCK_W}" height="{MODULE_H}" '
         f'fill="white" stroke="#000" stroke-width="2"/>'
-        f'<text x="{RCD_BLOCK_W // 2}" y="{y + 25}" font-size="12" '
-        f'font-weight="bold" text-anchor="middle">ID {rcd.amps} A</text>'
-        f'<text x="{RCD_BLOCK_W // 2}" y="{y + 45}" font-size="11" '
-        f'text-anchor="middle">Type {rcd.rcd_type}</text>'
-        f'<text x="{RCD_BLOCK_W // 2}" y="{y + 62}" font-size="10" '
+        f'<text x="{RCD_BLOCK_W // 2}" y="{y + 22}" font-size="13" '
+        f'font-weight="bold" text-anchor="middle">ID {idx}</text>'
+        f'<text x="{RCD_BLOCK_W // 2}" y="{y + 40}" font-size="11" '
+        f'text-anchor="middle">{rcd.amps} A · Type {rcd.rcd_type}</text>'
+        f'<text x="{RCD_BLOCK_W // 2}" y="{y + 58}" font-size="10" '
         f'text-anchor="middle">{rcd.sensitivity_ma} mA</text>'
     )
 
@@ -80,11 +88,20 @@ def _render_rcd_row(rcd: RCD, y: int) -> str:
 
 
 def _wrap_label(label: str, max_chars_per_line: int = 9, max_lines: int = 3) -> list[str]:
-    """Découpe un label en lignes de ≤ max_chars_per_line, en coupant aux espaces.
+    """Découpe un label en lignes de ≤ max_chars_per_line, en coupant aux espaces
+    ET aux traits d'union (évite que "Sèche-serviettes" dépasse du module).
     Si le dernier mot ne tient pas après max_lines, le dernier mot est tronqué avec …
     Les mots individuels plus longs que max_chars_per_line restent sur leur propre
     ligne (overflow gracieux plutôt que coupure intra-mot)."""
-    words = label.split()
+    # Tokenize : split sur espaces puis sur traits d'union en gardant le tiret
+    # collé au token précédent ("Sèche-serviettes" → ["Sèche-", "serviettes"]).
+    words: list[str] = []
+    for raw in label.split():
+        parts = raw.split("-")
+        for i, p in enumerate(parts):
+            if not p:
+                continue
+            words.append(p + "-" if i < len(parts) - 1 else p)
     lines: list[str] = []
     current = ""
     for word in words:
@@ -162,6 +179,10 @@ def render_html_table(tableau: Tableau) -> str:
         CircuitType.BOILER: "Chaudière",
         CircuitType.HEATING: "Chauffage",
         CircuitType.TOWEL_WARMER: "Sèche-serv.",
+        CircuitType.KITCHEN_SOCKET: "Prises cuisine",
+        CircuitType.VMC: "VMC",
+        CircuitType.HEAT_PUMP: "Pompe à chaleur",
+        CircuitType.EV_CHARGER: "Borne véhicule",
     }
     for rcd in tableau.rcds:
         for circuit in rcd.circuits:
@@ -218,7 +239,7 @@ def export_pdf(tableau: Tableau) -> bytes:
     mod_w_mm = 8 * mm
     mod_h_mm = 14 * mm
     rcd_w_mm = 32 * mm
-    for rcd in tableau.rcds:
+    for rcd_idx, rcd in enumerate(tableau.rcds, start=1):
         # Bloc RCD
         c.setStrokeColor(colors.black)
         c.setFillColor(colors.white)
@@ -227,10 +248,10 @@ def export_pdf(tableau: Tableau) -> bytes:
         c.setFillColor(colors.black)
         c.setFont("Helvetica-Bold", 9)
         c.drawCentredString(20 * mm + rcd_w_mm / 2, y_cursor - 5 * mm,
-                            f"ID {rcd.amps} A")
+                            f"ID {rcd_idx}")
         c.setFont("Helvetica", 7)
         c.drawCentredString(20 * mm + rcd_w_mm / 2, y_cursor - 9 * mm,
-                            f"Type {rcd.rcd_type}")
+                            f"{rcd.amps} A · Type {rcd.rcd_type}")
         c.drawCentredString(20 * mm + rcd_w_mm / 2, y_cursor - 12 * mm,
                             f"{rcd.sensitivity_ma} mA")
 
