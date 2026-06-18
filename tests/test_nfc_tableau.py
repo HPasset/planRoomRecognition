@@ -5,10 +5,11 @@ import pytest
 from src.planrec.nfc_tableau import CircuitType, Circuit
 
 
-def test_circuit_type_has_7_values():
-    """7 types de circuits couvrent le périmètre V1."""
+def test_circuit_type_values():
+    """Types de circuits couverts (V1 + v2 : prises cuisine, VMC, PAC, borne)."""
     expected = {"lighting", "socket", "kitchen_special", "laundry",
-                "boiler", "heating", "towel_warmer"}
+                "boiler", "heating", "towel_warmer",
+                "kitchen_socket", "vmc", "heat_pump", "ev_charger"}
     actual = {ct.value for ct in CircuitType}
     assert actual == expected
 
@@ -143,13 +144,13 @@ def test_sockets_pack_small_rooms_together():
     assert circuits[0].n_devices == 4
 
 
-def test_sockets_large_room_dedicated_circuit():
-    """Pièce 12 prises → découpée en circuits de 5 max (NFC) : 5 + 5 + 2."""
+def test_sockets_large_room_split_by_eight():
+    """Pièce 12 prises → découpée en circuits de 8 max : 8 + 4."""
     from src.planrec.nfc_tableau import _build_socket_circuits
     rooms = [("Sejour", 12)]
     circuits = _build_socket_circuits(rooms)
-    assert len(circuits) == 3
-    assert sorted(c.n_devices for c in circuits) == [2, 5, 5]
+    assert len(circuits) == 2
+    assert sorted(c.n_devices for c in circuits) == [4, 8]
     assert all(c.breaker_amps == 16 and c.cable_section_mm2 == 1.5
                for c in circuits)
 
@@ -159,7 +160,7 @@ def test_heating_pack_2_convectors_per_circuit():
     from src.planrec.nfc_tableau import _build_heating_circuits
     rooms_with_conv = [("Sejour", 1), ("Chambre 1", 1), ("Chambre 2", 1),
                        ("Chambre 3", 1)]
-    circuits = _build_heating_circuits(rooms_with_conv, n_towel_warmers=0)
+    circuits = _build_heating_circuits(rooms_with_conv, towel_warmer_rooms=[])
     heating = [c for c in circuits if c.type.value == "heating"]
     assert len(heating) == 2
     assert all(c.breaker_amps == 20 and c.cable_section_mm2 == 2.5
@@ -168,57 +169,77 @@ def test_heating_pack_2_convectors_per_circuit():
 
 
 def test_heating_1_circuit_per_towel_warmer():
-    """3 sèche-serviettes → 3 circuits dédiés TOWEL_WARMER (1 par circuit)."""
+    """3 sèche-serviettes → 3 circuits dédiés TOWEL_WARMER (1 par circuit),
+    chaque circuit garde la SDB d'origine dans rooms_served."""
     from src.planrec.nfc_tableau import _build_heating_circuits
-    circuits = _build_heating_circuits(rooms_with_convectors=[],
-                                       n_towel_warmers=3)
+    circuits = _build_heating_circuits(
+        rooms_with_convectors=[],
+        towel_warmer_rooms=["SDB 1", "SDB 2", "SDB 3"],
+    )
     tw = [c for c in circuits if c.type.value == "towel_warmer"]
     assert len(tw) == 3
+    assert [c.rooms_served for c in tw] == [["SDB 1"], ["SDB 2"], ["SDB 3"]]
+
+
+def test_heating_single_towel_warmer_keeps_room():
+    """1 sèche-serviettes → label sans index + rooms_served=[sdb]."""
+    from src.planrec.nfc_tableau import _build_heating_circuits
+    circuits = _build_heating_circuits([], towel_warmer_rooms=["SDB"])
+    tw = [c for c in circuits if c.type.value == "towel_warmer"]
+    assert len(tw) == 1
+    assert tw[0].rooms_served == ["SDB"]
+    assert tw[0].label == "Sèche-serviettes"
 
 
 def test_heating_empty_lists():
     from src.planrec.nfc_tableau import _build_heating_circuits
-    circuits = _build_heating_circuits([], n_towel_warmers=0)
+    circuits = _build_heating_circuits([], towel_warmer_rooms=[])
     assert circuits == []
 
 
 def test_specialized_each_appliance_one_circuit():
-    """6 appareils spé → 6 circuits dédiés."""
+    """6 appareils spé → 6 circuits dédiés, room d'origine conservée."""
     from src.planrec.nfc_tableau import _build_specialized_circuits
     from src.planrec.nfc_rules import EquipmentType
-    counts = {
-        EquipmentType.OVEN: 1,
-        EquipmentType.COOKTOP: 1,
-        EquipmentType.DISHWASHER: 1,
-        EquipmentType.WASHING_MACHINE: 1,
-        EquipmentType.DRYER: 1,
-        EquipmentType.BOILER: 1,
+    rooms_by_type = {
+        EquipmentType.OVEN: ["Cuisine"],
+        EquipmentType.COOKTOP: ["Cuisine"],
+        EquipmentType.DISHWASHER: ["Cuisine"],
+        EquipmentType.WASHING_MACHINE: ["Cellier"],
+        EquipmentType.DRYER: ["Cellier"],
+        EquipmentType.BOILER: ["Cellier"],
     }
-    circuits = _build_specialized_circuits(counts)
+    circuits = _build_specialized_circuits(rooms_by_type)
     assert len(circuits) == 6
+    # Toutes les pièces d'origine sont préservées dans rooms_served
+    rooms_seen = [c.rooms_served[0] for c in circuits]
+    assert rooms_seen.count("Cuisine") == 3
+    assert rooms_seen.count("Cellier") == 3
 
 
 def test_specialized_plaque_is_32A_6mm2_type_a():
     """Plaque cuisson → calibre 32A, câble 6mm², requires_type_a=True."""
     from src.planrec.nfc_tableau import _build_specialized_circuits
     from src.planrec.nfc_rules import EquipmentType
-    counts = {EquipmentType.COOKTOP: 1}
-    circuits = _build_specialized_circuits(counts)
+    rooms_by_type = {EquipmentType.COOKTOP: ["Cuisine"]}
+    circuits = _build_specialized_circuits(rooms_by_type)
     assert len(circuits) == 1
     plaque = circuits[0]
     assert plaque.breaker_amps == 32
     assert plaque.cable_section_mm2 == 6.0
     assert plaque.requires_type_a is True
+    assert plaque.rooms_served == ["Cuisine"]
 
 
 def test_specialized_lavelinge_is_20A_2_5mm2_type_a():
     from src.planrec.nfc_tableau import _build_specialized_circuits
     from src.planrec.nfc_rules import EquipmentType
-    counts = {EquipmentType.WASHING_MACHINE: 1}
-    circuits = _build_specialized_circuits(counts)
+    rooms_by_type = {EquipmentType.WASHING_MACHINE: ["Cellier"]}
+    circuits = _build_specialized_circuits(rooms_by_type)
     assert circuits[0].breaker_amps == 20
     assert circuits[0].cable_section_mm2 == 2.5
     assert circuits[0].requires_type_a is True
+    assert circuits[0].rooms_served == ["Cellier"]
 
 
 def test_min_rcds_T2_returns_2():
@@ -326,6 +347,106 @@ def test_generate_tableau_T3_complete_flow():
     assert any("RJ45" in n for n in tableau.notes)
 
 
+def test_generate_tableau_propagates_rooms_to_specialized_and_towel_circuits():
+    """rooms_served est rempli pour tous les circuits spé (Four/Plaque/LV en
+    Cuisine, LL/SL/Chaudière en Cellier) et pour chaque sèche-serviettes (SDB)."""
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "K1", "c2_class": "Kitchen"},
+        {"id": "C1", "c2_class": "Storage"},
+        {"id": "S1", "c2_class": "Bath"},
+        {"id": "S2", "c2_class": "Bath"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    tableau = generate_tableau(devis_global=devis, heating_enabled=True)
+
+    all_circuits = [c for rcd in tableau.rcds for c in rcd.circuits]
+    by_label_prefix = lambda prefix: [
+        c for c in all_circuits if c.label.startswith(prefix)
+    ]
+    # Cuisine
+    for prefix in ("Four", "Plaque cuisson", "Lave-vaisselle"):
+        matches = by_label_prefix(prefix)
+        assert matches, f"circuit {prefix} manquant"
+        for c in matches:
+            assert c.rooms_served == ["Cuisine"], (
+                f"{prefix}: rooms_served={c.rooms_served}"
+            )
+    # Cellier
+    for prefix in ("Lave-linge", "Sèche-linge", "Chaudière"):
+        matches = by_label_prefix(prefix)
+        assert matches, f"circuit {prefix} manquant"
+        for c in matches:
+            assert c.rooms_served == ["CellierBuanderie"], (
+                f"{prefix}: rooms_served={c.rooms_served}"
+            )
+    # Sèche-serviettes : 1 par SDB, room indexée propagée
+    tw = [c for c in all_circuits if c.type.value == "towel_warmer"]
+    assert len(tw) == 2
+    rooms_seen = sorted(c.rooms_served[0] for c in tw)
+    assert rooms_seen == ["SalleDeBain 1", "SalleDeBain 2"]
+
+
+def test_generate_tableau_room_labels_overrides_cat_seen_indexing():
+    """room_labels permet de préserver les labels pastille même après
+    suppression d'une pièce intermédiaire — sinon cat_seen ré-indexerait
+    ('Chambre 3' → 'Chambre 2' après drag-out de 'Chambre 2'), ce qui
+    déroute l'utilisateur."""
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    # Simule l'état post-drag-out de Chambre 2 : il reste Chambre 1 et
+    # Chambre 3 (room_id = pastille_id réel).
+    rooms = [
+        {"id": "pid_c1", "c2_class": "BedRoom"},
+        {"id": "pid_c3", "c2_class": "BedRoom"},
+        {"id": "pid_k1", "c2_class": "Kitchen"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    room_labels = {
+        "pid_c1": "Chambre 1",
+        "pid_c3": "Chambre 3",
+        "pid_k1": "Cuisine",
+    }
+    tableau = generate_tableau(
+        devis_global=devis, heating_enabled=True, room_labels=room_labels,
+    )
+
+    all_rooms = set()
+    for rcd in tableau.rcds:
+        for c in rcd.circuits:
+            all_rooms.update(c.rooms_served)
+    # Labels d'origine préservés
+    assert "Chambre 3" in all_rooms
+    # AUCUN circuit ne doit afficher "Chambre 2" — il n'existe plus
+    assert "Chambre 2" not in all_rooms
+
+
+def test_generate_tableau_falls_back_to_cat_seen_when_no_label():
+    """Si room_labels n'a pas un room_id donné, fallback sur cat_seen
+    (compat ascendante avec les call sites qui ne passent pas room_labels)."""
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+
+    rooms = [
+        {"id": "r1", "c2_class": "BedRoom"},
+        {"id": "r2", "c2_class": "BedRoom"},
+    ]
+    devis = compute_devis_global(rooms, heating_enabled=True)
+    # room_labels vide → cat_seen prend le relais
+    tableau = generate_tableau(
+        devis_global=devis, heating_enabled=True, room_labels={},
+    )
+    all_rooms = set()
+    for rcd in tableau.rcds:
+        for c in rcd.circuits:
+            all_rooms.update(c.rooms_served)
+    assert "Chambre 1" in all_rooms
+    assert "Chambre 2" in all_rooms
+
+
 def test_generate_tableau_typology_override():
     """typology_override force la typologie quel que soit le devis."""
     from src.planrec.nfc_tableau import generate_tableau
@@ -379,16 +500,136 @@ def test_edge_case_T1_studio_one_rcd_type_A():
     assert tableau.rcds[0].rcd_type == "A"
 
 
-def test_edge_case_minimal_logement_sans_piece_candidate_no_type_a():
+def test_edge_case_minimal_logement_no_laundry_circuit():
     """Logement minimal (séjour seul) : aucune pièce candidate au lave-linge
-    garanti (ni SDB/cuisine/garage/entrée ni cellier) → pas de circuit Type A
-    (retour métier 2026-06-17 : pas de lave-linge fantôme)."""
-    from src.planrec.nfc_tableau import generate_tableau
+    garanti → pas de circuit LAUNDRY. Les seuls circuits Type A sont l'éclairage
+    (v2 : éclairage en Type A ; pas de lave-linge fantôme — 2026-06-17)."""
+    from src.planrec.nfc_tableau import generate_tableau, CircuitType
     from src.planrec.nfc_rules import compute_devis_global
 
     rooms = [{"id": "L1", "c2_class": "LivingRoom", "surface_m2": 25.0}]
     devis = compute_devis_global(rooms, heating_enabled=False)
     tableau = generate_tableau(devis_global=devis, heating_enabled=False)
-    type_a_circuits = [c for r in tableau.rcds for c in r.circuits
-                       if c.requires_type_a]
-    assert type_a_circuits == []
+    circuits = [c for r in tableau.rcds for c in r.circuits]
+    assert not any(c.type == CircuitType.LAUNDRY for c in circuits)
+    type_a = [c for c in circuits if c.requires_type_a]
+    assert type_a and all(c.type == CircuitType.LIGHTING for c in type_a)
+
+
+# --- v2 : différentiels A/F/AC, prises cuisine, VMC/PAC/borne ---
+
+@pytest.fixture
+def simple_kitchen_devis():
+    from src.planrec.nfc_rules import compute_devis_global
+    return compute_devis_global([{"id": "K1", "c2_class": "Kitchen"}],
+                                heating_enabled=False)
+
+
+def test_circuit_has_type_f_flag_default_false():
+    from src.planrec.nfc_tableau import Circuit, CircuitType
+    c = Circuit(id="c1", type=CircuitType.SOCKET, label="x", breaker_amps=16,
+                cable_section_mm2=1.5)
+    assert c.requires_type_f is False
+
+
+def test_new_circuit_types_v2_exist():
+    from src.planrec.nfc_tableau import CircuitType
+    assert CircuitType.KITCHEN_SOCKET.value == "kitchen_socket"
+    assert CircuitType.VMC.value == "vmc"
+    assert CircuitType.HEAT_PUMP.value == "heat_pump"
+    assert CircuitType.EV_CHARGER.value == "ev_charger"
+
+
+def test_lighting_circuits_require_type_a():
+    from src.planrec.nfc_tableau import _build_lighting_circuits
+    circuits = _build_lighting_circuits([("Sejour", 3)])
+    assert circuits and all(c.requires_type_a for c in circuits)
+
+
+def test_kitchen_sockets_dedicated_20a():
+    from src.planrec.nfc_tableau import _build_kitchen_socket_circuits, CircuitType
+    circuits = _build_kitchen_socket_circuits([("Cuisine", 6)])
+    assert len(circuits) == 1
+    assert circuits[0].type == CircuitType.KITCHEN_SOCKET
+    assert circuits[0].breaker_amps == 20
+    assert circuits[0].cable_section_mm2 == 2.5
+    assert circuits[0].n_devices == 6
+
+
+def test_generate_tableau_kitchen_sockets_separate(simple_kitchen_devis):
+    from src.planrec.nfc_tableau import generate_tableau, CircuitType
+    tableau = generate_tableau(devis_global=simple_kitchen_devis, heating_enabled=False)
+    circuits = [c for r in tableau.rcds for c in r.circuits]
+    ksock = [c for c in circuits if c.type == CircuitType.KITCHEN_SOCKET]
+    assert len(ksock) == 1 and ksock[0].breaker_amps == 20
+    # aucune prise cuisine sur un circuit SOCKET 16A
+    gen_sock = [c for c in circuits if c.type == CircuitType.SOCKET]
+    assert all(c.breaker_amps == 16 for c in gen_sock)
+
+
+def test_specialized_vmc_pac_ev_specs():
+    from src.planrec.nfc_tableau import _build_specialized_circuits, CircuitType
+    from src.planrec.nfc_rules import EquipmentType
+    out = _build_specialized_circuits({
+        EquipmentType.VMC: ["Cellier"],
+        EquipmentType.HEAT_PUMP: ["Sejour"],
+        EquipmentType.EV_CHARGER: ["Garage"],
+    })
+    by_type = {c.type: c for c in out}
+    vmc = by_type[CircuitType.VMC]
+    assert (vmc.breaker_amps, vmc.cable_section_mm2) == (16, 1.5)
+    assert vmc.requires_type_a and not vmc.requires_type_f
+    pac = by_type[CircuitType.HEAT_PUMP]
+    assert (pac.breaker_amps, pac.cable_section_mm2) == (32, 6.0)
+    assert pac.requires_type_f and not pac.requires_type_a
+    ev = by_type[CircuitType.EV_CHARGER]
+    assert (ev.breaker_amps, ev.cable_section_mm2) == (32, 6.0)
+    assert ev.requires_type_f
+
+
+def test_rcd_amps_counts_heat_pump_as_heating():
+    from src.planrec.nfc_tableau import _compute_rcd_amps, Circuit, CircuitType
+    pac = Circuit(id="p", type=CircuitType.HEAT_PUMP, label="PAC",
+                  breaker_amps=32, cable_section_mm2=6.0, requires_type_f=True)
+    assert _compute_rcd_amps([pac]) == 40
+
+
+def test_distribute_groups_by_differential_type():
+    from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, Circuit, CircuitType
+    light = Circuit(id="l", type=CircuitType.LIGHTING, label="Ecl", breaker_amps=10,
+                    cable_section_mm2=1.5, requires_type_a=True)
+    plaque = Circuit(id="p", type=CircuitType.KITCHEN_SPECIAL, label="Plaque",
+                     breaker_amps=32, cable_section_mm2=6.0, requires_type_a=True)
+    ev = Circuit(id="e", type=CircuitType.EV_CHARGER, label="Borne", breaker_amps=32,
+                 cable_section_mm2=6.0, requires_type_f=True)
+    sock = Circuit(id="s", type=CircuitType.SOCKET, label="Prises", breaker_amps=16,
+                   cable_section_mm2=1.5)
+    rcds = _distribute_circuits_to_rcds([light, plaque, ev, sock], n_rcds=2)
+    a = [r for r in rcds if r.rcd_type == "A"]
+    f = [r for r in rcds if r.rcd_type == "F"]
+    ac = [r for r in rcds if r.rcd_type == "AC"]
+    assert a and all(c.requires_type_a for r in a for c in r.circuits)
+    assert f and all(c.requires_type_f for r in f for c in r.circuits)
+    assert ac and all(not c.requires_type_a and not c.requires_type_f
+                      for r in ac for c in r.circuits)
+
+
+def test_distribute_no_type_f_when_absent():
+    from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, Circuit, CircuitType
+    light = Circuit(id="l", type=CircuitType.LIGHTING, label="Ecl", breaker_amps=10,
+                    cable_section_mm2=1.5, requires_type_a=True)
+    sock = Circuit(id="s", type=CircuitType.SOCKET, label="P", breaker_amps=16,
+                   cable_section_mm2=1.5)
+    rcds = _distribute_circuits_to_rcds([light, sock], n_rcds=2)
+    assert not any(r.rcd_type == "F" for r in rcds)
+    assert any(r.rcd_type == "A" for r in rcds)
+
+
+def test_distribute_splits_group_over_eight():
+    from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, Circuit, CircuitType
+    circuits = [Circuit(id=f"l{i}", type=CircuitType.LIGHTING, label="E",
+                        breaker_amps=10, cable_section_mm2=1.5, requires_type_a=True)
+                for i in range(10)]
+    rcds = _distribute_circuits_to_rcds(circuits, n_rcds=1)
+    a = [r for r in rcds if r.rcd_type == "A"]
+    assert len(a) == 2 and all(len(r.circuits) <= 8 for r in a)
