@@ -48,6 +48,11 @@ EQUIP_TYPES: dict[str, dict[str, str]] = {
     # NEW V1.2 — chauffage (rouge clair)
     "Convector":      {"label": "Convecteur",     "color": "rgb(239, 83, 80)",  "svg_id": "convector"},
     "TowelWarmer":    {"label": "Sèche-serv.",    "color": "rgb(239, 154, 154)", "svg_id": "towelwarmer"},
+    # NEW v2 — VMC (auto), PAC + borne (manuels). svg_id = special_feed en
+    # attendant des assets dédiés.
+    "VMC":            {"label": "VMC",            "color": "rgb(120, 144, 156)", "svg_id": "special_feed"},
+    "HeatPump":       {"label": "PAC",            "color": "rgb(0, 137, 123)",   "svg_id": "special_feed"},
+    "EVCharger":      {"label": "Borne",          "color": "rgb(57, 73, 171)",   "svg_id": "special_feed"},
 }
 
 
@@ -67,6 +72,9 @@ NFC_TO_EQUIP_TYPE: dict[EquipmentType, str] = {
     EquipmentType.BOILER: "Boiler",
     EquipmentType.CONVECTOR: "Convector",
     EquipmentType.TOWEL_WARMER: "TowelWarmer",
+    EquipmentType.VMC: "VMC",
+    EquipmentType.HEAT_PUMP: "HeatPump",
+    EquipmentType.EV_CHARGER: "EVCharger",
 }
 
 

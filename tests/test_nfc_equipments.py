@@ -28,14 +28,14 @@ def test_equip_types_has_5_entries():
 
 
 def test_nfc_to_equip_type_covers_all_enums():
-    """Le mapping doit couvrir les 13 valeurs de EquipmentType (V1.2)."""
+    """Le mapping doit couvrir les 16 valeurs de EquipmentType (V1.2 + v2)."""
     assert NFC_TO_EQUIP_TYPE[EquipmentType.SOCKET] == "Prise"
     assert NFC_TO_EQUIP_TYPE[EquipmentType.RJ45] == "RJ45"
     assert NFC_TO_EQUIP_TYPE[EquipmentType.LIGHT_POINT] == "LightPoint"
     assert NFC_TO_EQUIP_TYPE[EquipmentType.SWITCH] == "Switch"
     assert NFC_TO_EQUIP_TYPE[EquipmentType.SPECIAL_FEED] == "SpecialFeed"
-    # Tous les enums sont mappés (5 legacy + 8 V1.2 typés)
-    assert len(NFC_TO_EQUIP_TYPE) == 13
+    # Tous les enums sont mappés (5 legacy + 8 V1.2 typés + 3 v2 VMC/PAC/borne)
+    assert len(NFC_TO_EQUIP_TYPE) == 16
 
 
 def test_generate_equipment_id_format():
@@ -578,3 +578,29 @@ def test_new_equipment_types_v2_have_price_and_label():
     assert EquipmentType.VMC.value == "vmc"
     assert EquipmentType.HEAT_PUMP.value == "pompe_a_chaleur"
     assert EquipmentType.EV_CHARGER.value == "borne_vehicule"
+
+
+def test_vmc_pac_ev_have_own_pastille_and_palette():
+    from src.planrec.nfc_equipments import (
+        EQUIP_TYPES, NFC_TO_EQUIP_TYPE, CANVAS_HIDDEN_EQUIP_KEYS,
+        generate_equipments_from_devis_global,
+    )
+    from src.planrec.nfc_rules import EquipmentType, compute_devis_global
+    for key in ("VMC", "HeatPump", "EVCharger"):
+        assert key in EQUIP_TYPES
+        assert key not in CANVAS_HIDDEN_EQUIP_KEYS
+    assert NFC_TO_EQUIP_TYPE[EquipmentType.VMC] == "VMC"
+    assert NFC_TO_EQUIP_TYPE[EquipmentType.HEAT_PUMP] == "HeatPump"
+    assert NFC_TO_EQUIP_TYPE[EquipmentType.EV_CHARGER] == "EVCharger"
+    dg = compute_devis_global([{"id": "S1", "c2_class": "Bath"}])
+    types = {i["type"] for i in generate_equipments_from_devis_global(dg)}
+    assert "VMC" in types
+
+
+def test_vmc_billed_on_own_line():
+    from app.streamlit_app import build_devis_lines_initial
+    from src.planrec.nfc_pricing import DEFAULT_PRICES_HT
+    from src.planrec.nfc_rules import compute_devis_global
+    dg = compute_devis_global([{"id": "S1", "c2_class": "Bath"}])
+    lines, _ = build_devis_lines_initial(dg, DEFAULT_PRICES_HT)
+    assert "VMC" in {l["Équipement"] for l in lines}
