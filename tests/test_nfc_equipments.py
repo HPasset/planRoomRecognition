@@ -567,3 +567,14 @@ def test_heating_pastilles_use_own_type_not_special_feed():
         counts[inst["type"]] = counts.get(inst["type"], 0) + 1
     assert counts.get("Convector", 0) == 3
     assert counts.get("TowelWarmer", 0) == 1
+
+
+def test_new_equipment_types_v2_have_price_and_label():
+    from src.planrec.nfc_rules import EquipmentType
+    from src.planrec.nfc_pricing import DEFAULT_PRICES_HT, EQUIPMENT_LABELS_FR
+    for t in (EquipmentType.VMC, EquipmentType.HEAT_PUMP, EquipmentType.EV_CHARGER):
+        assert DEFAULT_PRICES_HT[t] > 0
+        assert len(EQUIPMENT_LABELS_FR[t]) > 0
+    assert EquipmentType.VMC.value == "vmc"
+    assert EquipmentType.HEAT_PUMP.value == "pompe_a_chaleur"
+    assert EquipmentType.EV_CHARGER.value == "borne_vehicule"

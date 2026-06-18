@@ -48,6 +48,10 @@ class EquipmentType(str, Enum):
     # NEW V1.2 — chauffage électrique
     CONVECTOR = "convecteur"
     TOWEL_WARMER = "seche_serviettes"
+    # NEW v2 — VMC (auto), PAC + borne véhicule (manuels)
+    VMC = "vmc"
+    HEAT_PUMP = "pompe_a_chaleur"
+    EV_CHARGER = "borne_vehicule"
 
 
 # Appareils à alimentation dédiée fournis par l'occupant : l'artisan pose

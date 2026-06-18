@@ -27,6 +27,10 @@ DEFAULT_PRICES_HT: dict[EquipmentType, float] = {
     # NEW V1.2 — chauffage
     EquipmentType.CONVECTOR: 65.0,         # alim seule, hors convecteur
     EquipmentType.TOWEL_WARMER: 70.0,
+    # NEW v2
+    EquipmentType.VMC: 90.0,
+    EquipmentType.HEAT_PUMP: 150.0,        # alim seule
+    EquipmentType.EV_CHARGER: 250.0,       # alim seule
 }
 
 
@@ -45,6 +49,9 @@ EQUIPMENT_LABELS_FR: dict[EquipmentType, str] = {
     EquipmentType.BOILER: "Chaudière/cumulus",
     EquipmentType.CONVECTOR: "Convecteur",
     EquipmentType.TOWEL_WARMER: "Sèche-serviettes",
+    EquipmentType.VMC: "VMC",
+    EquipmentType.HEAT_PUMP: "Alim pompe à chaleur",
+    EquipmentType.EV_CHARGER: "Alim borne véhicule",
 }
 
 # Mapping inverse (label FR → enum)
