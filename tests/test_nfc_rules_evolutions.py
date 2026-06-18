@@ -129,3 +129,55 @@ def test_tableau_force_rcd_type_a_sans_cellier():
     ])
     tableau = generate_tableau(devis_global=dg, heating_enabled=True)
     assert any(rcd.rcd_type == "A" for rcd in tableau.rcds)
+
+
+def test_vmc_auto_placed_cellier_then_sdb():
+    dg = compute_devis_global([
+        {"id": "C1", "c2_class": "Storage"},
+        {"id": "S1", "c2_class": "Bath"},
+    ])
+    vmc_rooms = [d.room_id for d in dg.per_room
+                 if d.items.get(EquipmentType.VMC, 0) >= 1]
+    assert vmc_rooms == ["C1"]
+
+
+def test_vmc_fallback_sdb_when_no_cellier():
+    dg = compute_devis_global([{"id": "S1", "c2_class": "Bath"}])
+    s1 = next(d for d in dg.per_room if d.room_id == "S1")
+    assert s1.items.get(EquipmentType.VMC) == 1
+
+
+def test_vmc_none_when_no_candidate():
+    dg = compute_devis_global([{"id": "B1", "c2_class": "BedRoom"}])
+    assert all(d.items.get(EquipmentType.VMC, 0) == 0 for d in dg.per_room)
+
+
+def test_ecs_in_cellier_no_change():
+    dg = compute_devis_global([{"id": "C1", "c2_class": "Storage"}])
+    c1 = next(d for d in dg.per_room if d.room_id == "C1")
+    assert c1.items.get(EquipmentType.BOILER) == 1
+
+
+def test_ecs_fallback_garage_only_if_attenant():
+    dg = compute_devis_global([
+        {"id": "G1", "c2_class": "Garage", "attenant": True},
+        {"id": "S1", "c2_class": "Bath"},
+    ])
+    boiler_rooms = [d.room_id for d in dg.per_room
+                    if d.items.get(EquipmentType.BOILER, 0) >= 1]
+    assert boiler_rooms == ["G1"]
+
+
+def test_ecs_fallback_sdb_when_garage_not_attenant():
+    dg = compute_devis_global([
+        {"id": "G1", "c2_class": "Garage", "attenant": False},
+        {"id": "S1", "c2_class": "Bath"},
+    ])
+    boiler_rooms = [d.room_id for d in dg.per_room
+                    if d.items.get(EquipmentType.BOILER, 0) >= 1]
+    assert boiler_rooms == ["S1"]
+
+
+def test_ecs_none_when_no_candidate():
+    dg = compute_devis_global([{"id": "B1", "c2_class": "BedRoom"}])
+    assert all(d.items.get(EquipmentType.BOILER, 0) == 0 for d in dg.per_room)

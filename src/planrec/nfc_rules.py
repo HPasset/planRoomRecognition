@@ -93,6 +93,7 @@ class Devis:
     items: dict[EquipmentType, int] = field(default_factory=dict)
     special_feeds_detail: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    attenant: bool = False  # garage accolé à la maison (renseigné par la géométrie)
 
     @property
     def total_equipment(self) -> int:
@@ -329,6 +330,47 @@ def _ensure_washing_machine(out: DevisGlobal) -> None:
                 return
 
 
+# Repli de placement de la VMC (auto, 1/logement) : cellier → SDB.
+_VMC_FALLBACK_PRIORITY: tuple[NFCCategory, ...] = (
+    NFCCategory.STORAGE,
+    NFCCategory.BATH,
+)
+
+
+def _ensure_vmc(out: DevisGlobal) -> None:
+    """1 VMC par logement (auto). Placement cellier → SDB ; rien sinon."""
+    for d in out.per_room:
+        if d.items.get(EquipmentType.VMC, 0) >= 1:
+            return
+    for cat in _VMC_FALLBACK_PRIORITY:
+        for d in out.per_room:
+            if d.nfc_category == cat:
+                d.items[EquipmentType.VMC] = 1
+                return
+
+
+def _ensure_ecs(out: DevisGlobal) -> None:
+    """Garantit une alim ECS (cumulus) hors cellier : garage si attenant → SDB.
+
+    Le cellier génère déjà l'ECS via sa propre règle. Ici on couvre le cas sans
+    cellier : garage seulement s'il est attenant à la maison, sinon SDB. Rien si
+    aucune pièce candidate (cohérent garantie lave-linge, 2026-06-17).
+    """
+    for d in out.per_room:
+        if d.items.get(EquipmentType.BOILER, 0) >= 1:
+            return
+    for d in out.per_room:
+        if d.nfc_category == NFCCategory.GARAGE and d.attenant:
+            d.items[EquipmentType.BOILER] = 1
+            d.special_feeds_detail.append("Cumulus (ECS)")
+            return
+    for d in out.per_room:
+        if d.nfc_category == NFCCategory.BATH:
+            d.items[EquipmentType.BOILER] = 1
+            d.special_feeds_detail.append("Cumulus (ECS)")
+            return
+
+
 def compute_devis_global(
     rooms: list[dict],
     handicap: bool = False,
@@ -359,6 +401,9 @@ def compute_devis_global(
             ocr_hint=r.get("ocr_hint"),
             heating_enabled=heating_enabled,
         )
+        devis.attenant = bool(r.get("attenant", False))
         out.per_room.append(devis)
+    _ensure_vmc(out)
     _ensure_washing_machine(out)
+    _ensure_ecs(out)
     return out
