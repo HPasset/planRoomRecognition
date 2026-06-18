@@ -553,10 +553,7 @@ def _distribute_circuits_to_rcds(
     # Type AC : au moins de quoi tenir le cap de 8, et de quoi compléter le
     # minimum réglementaire (typologie/surface) en zones AC indépendantes.
     n_ac_min = math.ceil(len(ac_circuits) / MAX_BREAKERS_PER_RCD) if ac_circuits else 0
-    n_ac = max(n_ac_min, n_rcds - n_a - n_f)
-    if ac_circuits:
-        n_ac = max(n_ac, 1)
-    n_ac = max(n_ac, 0)
+    n_ac = max(n_ac_min, n_rcds - n_a - n_f, 0)
 
     rcds: list[RCD] = []
     rcds.extend(_spread(a_circuits, "A", n_a))

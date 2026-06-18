@@ -50,9 +50,9 @@ EQUIP_TYPES: dict[str, dict[str, str]] = {
     "TowelWarmer":    {"label": "Sèche-serv.",    "color": "rgb(239, 154, 154)", "svg_id": "towelwarmer"},
     # NEW v2 — VMC (auto), PAC + borne (manuels). svg_id = special_feed en
     # attendant des assets dédiés.
-    "VMC":            {"label": "VMC",            "color": "rgb(120, 144, 156)", "svg_id": "special_feed"},
-    "HeatPump":       {"label": "PAC",            "color": "rgb(0, 137, 123)",   "svg_id": "special_feed"},
-    "EVCharger":      {"label": "Borne",          "color": "rgb(57, 73, 171)",   "svg_id": "special_feed"},
+    "VMC":            {"label": "VMC",            "color": "rgb(120, 144, 156)", "svg_id": "specfeed"},
+    "HeatPump":       {"label": "PAC",            "color": "rgb(0, 137, 123)",   "svg_id": "specfeed"},
+    "EVCharger":      {"label": "Borne",          "color": "rgb(57, 73, 171)",   "svg_id": "specfeed"},
 }
 
 
