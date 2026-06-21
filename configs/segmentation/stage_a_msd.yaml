@@ -23,7 +23,7 @@ scheduler:
 training:
   epochs: 80
   early_stop_patience: 10
-  mixed_precision: "no"
+  mixed_precision: "bf16"   # A10G OK ; ~½ mémoire d'activation (évite l'OOM 768/batch4)
   oversample_rare_classes: true
 
 logging:

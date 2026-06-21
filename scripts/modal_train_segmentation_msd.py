@@ -103,6 +103,9 @@ def train_remote(config_yaml_text: str):
     import os
     os.environ["PYTHONPATH"] = "/workspace/batia"
     os.environ.setdefault("WANDB_MODE", "online")   # stream live (pas offline)
+    # Réduit la fragmentation mémoire CUDA (l'OOM A10G laissait ~774 Mo réservés
+    # non-alloués) — combiné au bf16 de la config, donne de la marge en 768/batch4.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     os.chdir("/workspace/batia")
 
     cfg_path = Path("/workspace/batia/configs/segmentation") / CONFIG_FILENAME
