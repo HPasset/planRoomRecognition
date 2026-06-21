@@ -102,6 +102,7 @@ def train_remote(config_yaml_text: str):
     """Stage A MSD : entraînement depuis le backbone COCO public (pas d'init v2)."""
     import os
     os.environ["PYTHONPATH"] = "/workspace/batia"
+    os.environ.setdefault("WANDB_MODE", "online")   # stream live (pas offline)
     os.chdir("/workspace/batia")
 
     cfg_path = Path("/workspace/batia/configs/segmentation") / CONFIG_FILENAME
@@ -114,6 +115,16 @@ def train_remote(config_yaml_text: str):
     from src.segmentation.trainer import Trainer
 
     cfg = load_config(str(cfg_path))
+
+    # Fail-fast si wandb demandé mais clé absente : évite un wandb.init() headless
+    # qui traîne/échoue après avoir déjà allumé le GPU (= GPU gaspillé).
+    if cfg.logging.tracker == "wandb" and not os.environ.get("WANDB_API_KEY"):
+        raise RuntimeError(
+            "WANDB_API_KEY absent — vérifie le secret Modal 'wandb-secret' "
+            "(doit contenir WANDB_API_KEY), ou mets logging.tracker: none."
+        )
+    print(f"[modal] wandb tracker={cfg.logging.tracker} "
+          f"project={cfg.logging.project} run={cfg.run_name}", flush=True)
 
     # Commit du volume runs à chaque sauvegarde de checkpoint (persiste les
     # poids + permet l'auto-resume après timeout).
