@@ -5,7 +5,13 @@ Source : data/raw/msd/mds_V2_5.372k.csv (geom WKT métrique + roomtype + plan_id
 Sortie : <out>/images|semantic|instance/{split}/<plan_id>.png + splits.json.
 """
 from __future__ import annotations
+import argparse
+import json
+import random
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import cv2
 from shapely import wkt as shapely_wkt
 from shapely.geometry import Polygon
@@ -79,3 +85,65 @@ def rasterize_plan(entities: list[dict], size: int = 768, margin: int = 16):
             cv2.fillPoly(image, [pts], (0, 0, 0))
 
     return image, semantic, instance
+
+
+_USECOLS = ["plan_id", "entity_type", "roomtype", "geom"]
+
+
+def split_plan_ids(plan_ids, seed=42, val_frac=0.05, test_frac=0.05):
+    ids = sorted(set(map(str, plan_ids)))
+    random.Random(seed).shuffle(ids)
+    n = len(ids)
+    n_val = int(round(n * val_frac))
+    n_test = int(round(n * test_frac))
+    return {"val": ids[:n_val],
+            "test": ids[n_val:n_val + n_test],
+            "train": ids[n_val + n_test:]}
+
+
+def write_dataset(df, out_dir, size=768, margin=16, seed=42,
+                  val_frac=0.05, test_frac=0.05):
+    out = Path(out_dir)
+    splits = split_plan_ids(df["plan_id"].unique(), seed, val_frac, test_frac)
+    split_of = {sid: s for s, sids in splits.items() for sid in sids}
+    for sub in ("images", "semantic", "instance"):
+        for s in splits:
+            (out / sub / s).mkdir(parents=True, exist_ok=True)
+
+    for plan_id, grp in df.groupby("plan_id"):
+        sid = str(plan_id)
+        split = split_of[sid]
+        entities = grp[["roomtype", "entity_type", "geom"]].to_dict("records")
+        try:
+            image, semantic, instance = rasterize_plan(entities, size, margin)
+        except Exception as e:
+            print(f"[skip] plan {sid}: {e}")
+            continue
+        cv2.imwrite(str(out / "images" / split / f"{sid}.png"), image)
+        cv2.imwrite(str(out / "semantic" / split / f"{sid}.png"), semantic)
+        cv2.imwrite(str(out / "instance" / split / f"{sid}.png"), instance)
+
+    (out / "splits.json").write_text(json.dumps(splits, indent=2))
+    return splits
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", default="data/raw/msd/mds_V2_5.372k.csv")
+    ap.add_argument("--out", default="data/processed/msd_panoptic")
+    ap.add_argument("--size", type=int, default=768)
+    ap.add_argument("--margin", type=int, default=16)
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--limit", type=int, default=0, help="0 = tous les plans")
+    args = ap.parse_args()
+
+    df = pd.read_csv(args.csv, usecols=_USECOLS)
+    if args.limit:
+        keep = df["plan_id"].drop_duplicates().head(args.limit)
+        df = df[df["plan_id"].isin(keep)]
+    splits = write_dataset(df, args.out, args.size, args.margin, args.seed)
+    print({k: len(v) for k, v in splits.items()})
+
+
+if __name__ == "__main__":
+    main()

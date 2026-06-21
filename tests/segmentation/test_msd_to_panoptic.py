@@ -50,3 +50,38 @@ def test_rasterize_plan_paints_room_then_walls_and_instances():
     assert set(np.unique(instance)).issubset({0, 1})
     assert (instance == 1).sum() > 0
     assert instance[(semantic == CLASS_ID["Wall"])].max() == 0
+
+
+import json
+import pandas as pd
+from scripts.msd_to_panoptic import write_dataset, split_plan_ids
+
+
+def test_split_plan_ids_deterministic_and_disjoint():
+    ids = [str(i) for i in range(100)]
+    s1 = split_plan_ids(ids, seed=42, val_frac=0.1, test_frac=0.1)
+    s2 = split_plan_ids(ids, seed=42, val_frac=0.1, test_frac=0.1)
+    assert s1 == s2
+    allid = set(s1["train"]) | set(s1["val"]) | set(s1["test"])
+    assert allid == set(ids)
+    assert not (set(s1["train"]) & set(s1["val"]))
+    assert len(s1["val"]) == 10 and len(s1["test"]) == 10
+
+
+def test_write_dataset_smoke(tmp_path):
+    room = "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"
+    wall = "POLYGON ((0 4, 4 4, 4 4.2, 0 4.2, 0 4))"
+    df = pd.DataFrame([
+        {"plan_id": 1, "entity_type": "area", "roomtype": "Bedroom", "geom": room},
+        {"plan_id": 1, "entity_type": "separator", "roomtype": "Structure", "geom": wall},
+        {"plan_id": 2, "entity_type": "area", "roomtype": "Kitchen", "geom": room},
+    ])
+    write_dataset(df, tmp_path, size=64, margin=4, seed=0, val_frac=0.5, test_frac=0.0)
+
+    splits = json.loads((tmp_path / "splits.json").read_text())
+    assert set(splits) == {"train", "val", "test"}
+    ids = splits["train"] + splits["val"] + splits["test"]
+    assert sorted(ids) == ["1", "2"]
+    for sid, split in [(i, s) for s in splits for i in splits[s]]:
+        for sub in ("images", "semantic", "instance"):
+            assert (tmp_path / sub / split / f"{sid}.png").exists()
