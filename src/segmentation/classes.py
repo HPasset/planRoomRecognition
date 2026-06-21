@@ -86,3 +86,29 @@ def CUBICASA_TO_C2(cubicasa_label: str) -> int:
     """Map a CubiCasa room label to a C2 class id. Unknown → Background (0)."""
     c2_name = _CUBICASA_RAW_MAP.get(cubicasa_label.strip(), "Background")
     return CLASS_ID[c2_name]
+
+
+# MSD (Modified Swiss Dwellings) roomtype → C2 class id.
+# Murs = "Structure" ; ouvertures (Door/Window/Entrance Door) gérées par YOLO
+# en aval → Background ; "Stairs" absent de la taxo C2 → Background.
+_MSD_RAW_MAP: dict[str, str] = {
+    "Structure": "Wall",
+    "Kitchen": "Kitchen",
+    "Livingroom": "LivingRoom",
+    "Dining": "LivingRoom",
+    "Bedroom": "BedRoom",
+    "Bathroom": "Bath",
+    "Corridor": "Entry",
+    "Storeroom": "Storage",
+    "Balcony": "Outdoor",
+    "Door": "Background",
+    "Window": "Background",
+    "Entrance Door": "Background",
+    "Stairs": "Background",
+}
+
+
+def MSD_TO_C2(msd_roomtype: str) -> int:
+    """Map un `roomtype` MSD vers un id de classe C2. Inconnu → Background (0)."""
+    c2_name = _MSD_RAW_MAP.get(msd_roomtype.strip(), "Background")
+    return CLASS_ID[c2_name]
