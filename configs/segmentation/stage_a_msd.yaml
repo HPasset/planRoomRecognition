@@ -3,8 +3,9 @@ seed: 42
 
 data:
   dataset_root: data/processed/msd_panoptic
-  image_size: 768
+  image_size: 512        # 768->512 : ~2.3x plus rapide (prior Stage A, FR remonte en Stage B)
   batch_size: 4
+  num_workers: 8         # overlap data/GPU sur le cloud (Mac local: laisser 0)
 
 model:
   backbone: facebook/mask2former-swin-small-coco-panoptic
@@ -21,7 +22,7 @@ scheduler:
   warmup_steps: 1000
 
 training:
-  epochs: 80
+  epochs: 40             # 80->40 : généreux pour un pré-train ; early-stop actif
   early_stop_patience: 10
   mixed_precision: "bf16"   # A10G OK ; ~½ mémoire d'activation (évite l'OOM 768/batch4)
   oversample_rare_classes: true

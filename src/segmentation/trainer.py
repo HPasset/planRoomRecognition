@@ -90,15 +90,18 @@ class Trainer:
                                       cfg.data.image_size, train=False)
 
         sampler = self._build_origin_sampler()
+        nw = cfg.data.num_workers
         self.train_loader = DataLoader(
             self.train_ds, batch_size=cfg.data.batch_size,
             sampler=sampler, shuffle=(sampler is None),
-            num_workers=0, drop_last=True,
+            num_workers=nw, drop_last=True,
             collate_fn=self._collate,
+            pin_memory=True, persistent_workers=nw > 0,
         )
         self.val_loader = DataLoader(
-            self.val_ds, batch_size=1, shuffle=False, num_workers=0,
+            self.val_ds, batch_size=1, shuffle=False, num_workers=nw,
             collate_fn=self._collate,
+            pin_memory=True, persistent_workers=nw > 0,
         )
 
         # Param groups: backbone (lower LR) vs the rest (head LR)

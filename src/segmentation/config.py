@@ -10,6 +10,9 @@ class DataConfig(BaseModel):
     dataset_root: str
     image_size: int = Field(ge=256, le=1536)
     batch_size: int = Field(ge=1, le=64)
+    # DataLoader worker processes. 0 (défaut) = chargement synchrone (sûr sur
+    # Mac/MPS) ; >0 recommandé sur GPU cloud pour ne pas affamer le GPU.
+    num_workers: int = Field(default=0, ge=0, le=32)
     # If set, train loader uses WeightedRandomSampler. Keys must match values in
     # <dataset_root>/sample_origins.json (e.g. {"fr": 8.0, "cc": 1.0}).
     oversample_origin: dict[str, float] | None = None
