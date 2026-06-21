@@ -10,11 +10,19 @@ import json
 import random
 from pathlib import Path
 
+import sys
+
 import numpy as np
 import pandas as pd
 import cv2
 from shapely import wkt as shapely_wkt
 from shapely.geometry import Polygon
+
+# Racine du repo sur sys.path pour permettre `python scripts/msd_to_panoptic.py`
+# sans PYTHONPATH (conftest ne couvre que pytest) — convention des autres scripts.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.segmentation.classes import MSD_TO_C2, CLASS_ID, ROOM_CLASS_IDS
 
