@@ -101,3 +101,86 @@ class SegmentationInference:
             walls=walls,
             warnings=[],
         )
+
+
+class DualSegmentationInference:
+    """Deux modèles dédiés : pièces (FR-only Swin-S) + murs (DWG-only Swin-T).
+
+    Le modèle pièces `fr_only_v1` bat l'ancien combiné CubiCasa+FR (test mIoU
+    0,66 vs 0,59) ET est 100 % license-clean, mais il n'est pas optimisé pour
+    les murs. On dérive donc les murs d'un modèle dédié `wall_only_dwg_v3`
+    (Wall IoU FR ~0,68). Contrat de sortie identique à `SegmentationInference` :
+    `.predict(path) -> SegmentationOutput` — l'app en aval ne voit aucune
+    différence (mêmes `.rooms`, même `.walls.mask_path`).
+
+    Dégradation gracieuse : si le checkpoint mur est absent, on retombe sur les
+    murs (médiocres) du modèle pièces et on l'annonce dans `warnings`.
+    """
+
+    def __init__(
+        self,
+        room_checkpoint: str | Path,
+        wall_checkpoint: str | Path | None = None,
+        room_backbone: str = "facebook/mask2former-swin-small-coco-panoptic",
+        wall_backbone: str = "facebook/mask2former-swin-tiny-coco-panoptic",
+        room_image_size: int = 768,
+        wall_image_size: int = 640,
+        device: str = "auto",
+        walls_out_dir: str | Path = "runs/segmentation/inference_walls",
+        model_version: str = "batia-dual-fr_only+walls_dwg-v0.1",
+    ):
+        self.model_version = model_version
+        walls_out_dir = Path(walls_out_dir)
+
+        # Modèle pièces : ses murs sont ignorés → scratch dir séparé pour ne
+        # pas écraser le masque mur (le bon) produit par le modèle dédié.
+        self.room_model = SegmentationInference(
+            checkpoint_path=room_checkpoint,
+            backbone=room_backbone,
+            image_size=room_image_size,
+            device=device,
+            walls_out_dir=walls_out_dir / "_room_scratch",
+            model_version=model_version,
+        )
+
+        self.wall_model: SegmentationInference | None = None
+        if wall_checkpoint is not None and Path(wall_checkpoint).exists():
+            self.wall_model = SegmentationInference(
+                checkpoint_path=wall_checkpoint,
+                backbone=wall_backbone,
+                image_size=wall_image_size,
+                device=device,
+                walls_out_dir=walls_out_dir,
+                model_version=model_version,
+            )
+
+    @property
+    def image_size(self) -> int:
+        return self.room_model.image_size
+
+    def predict(self, image_path: str | Path) -> SegmentationOutput:
+        t0 = time.time()
+        room_out = self.room_model.predict(image_path)
+
+        warnings = list(room_out.warnings)
+        if self.wall_model is not None:
+            wall_out = self.wall_model.predict(image_path)
+            walls = wall_out.walls
+            warnings += wall_out.warnings
+        else:
+            walls = room_out.walls
+            warnings.append(
+                "Checkpoint mur dédié absent : murs dérivés du modèle pièces "
+                "(qualité dégradée)."
+            )
+
+        elapsed_ms = int((time.time() - t0) * 1000)
+        return SegmentationOutput(
+            plan_id=room_out.plan_id,
+            image_size=room_out.image_size,
+            model_version=self.model_version,
+            inference_time_ms=elapsed_ms,
+            rooms=room_out.rooms,
+            walls=walls,
+            warnings=warnings,
+        )

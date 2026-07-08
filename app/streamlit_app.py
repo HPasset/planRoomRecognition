@@ -53,7 +53,7 @@ from src.planrec.polygon_postprocess import (
     postprocess_polygon,
 )
 from src.segmentation.classes import CLASS_NAMES, ROOM_CLASS_IDS
-from src.segmentation.inference import SegmentationInference
+from src.segmentation.inference import DualSegmentationInference
 from src.segmentation.schema import RoomDetection, SegmentationOutput
 
 
@@ -158,7 +158,11 @@ def _bbox_rotation_deg(bbox: list[list[int]]) -> int:
     return 0
 
 
-DEFAULT_CHECKPOINT = "runs/segmentation/stage_b_finetune_v1/checkpoints/best.pt"
+# Deux modèles dédiés (cf DualSegmentationInference) :
+#  - pièces : fr_only_v1 (Swin-S, FR-only, license-clean, bat l'ancien combiné)
+#  - murs   : wall_only_dwg_v3 (Swin-T, DWG-only, Wall IoU FR ~0,68)
+DEFAULT_CHECKPOINT = "runs/segmentation/fr_only_v1/checkpoints/best.pt"
+WALL_CHECKPOINT = "runs/segmentation/wall_only_dwg_v3/checkpoints/best.pt"
 
 # === YOLO Brique A (détection meubles, 9 classes NFC) — purement visuel ===
 YOLO_BRIQUE_A_CHECKPOINT = "runs/detect/runs/detect/brique_a_v1/weights/best.pt"
@@ -187,10 +191,13 @@ WALL_LINE_COLOR_BGR = (255, 0, 255)     # magenta for detected wall lines (BGR=R
 
 
 @st.cache_resource(show_spinner=False)
-def load_seg_model(checkpoint_path: str, image_size: int) -> SegmentationInference:
-    return SegmentationInference(
-        checkpoint_path=checkpoint_path,
-        image_size=image_size,
+def load_seg_model(
+    room_checkpoint: str, wall_checkpoint: str, image_size: int
+) -> DualSegmentationInference:
+    return DualSegmentationInference(
+        room_checkpoint=room_checkpoint,
+        wall_checkpoint=wall_checkpoint,
+        room_image_size=image_size,
         device="auto",
     )
 
@@ -1125,8 +1132,10 @@ def main():
         st.markdown("---")
         st.header("Modèle")
         checkpoint = st.text_input(
-            "Checkpoint", value=DEFAULT_CHECKPOINT,
-            help="Chemin vers le .pt (best.pt Stage B par défaut)."
+            "Checkpoint pièces", value=DEFAULT_CHECKPOINT,
+            help="Modèle segmentation PIÈCES (fr_only_v1, license-clean). "
+                 f"Les murs viennent d'un modèle dédié séparé "
+                 f"(`{WALL_CHECKPOINT}`)."
         )
         image_size = st.select_slider(
             "Résolution inférence",
@@ -1244,8 +1253,12 @@ def main():
 
     if _devis_triggered:
         ocr_done_key = f"ocr_first_done_{img_hash}"
+        # Nom du run (dossier parent) plutôt que "best.pt" — sinon tous les
+        # checkpoints collisionnent. Inclut le modèle mur dédié.
+        _room_tag = Path(checkpoint).parent.parent.name or Path(checkpoint).name
+        _wall_tag = Path(WALL_CHECKPOINT).parent.parent.name
         seg_cache_key = (
-            f"seg_result_{img_hash}_{Path(checkpoint).name}_{image_size}"
+            f"seg_result_{img_hash}_{_room_tag}+{_wall_tag}_{image_size}"
             if enable_segmentation else None
         )
         needs_ocr_compute = ocr_done_key not in st.session_state
@@ -1303,7 +1316,9 @@ def main():
                     else:
                         if show_progress:
                             st.write("⏳ Chargement du modèle Mask2Former...")
-                        inference = load_seg_model(checkpoint, image_size)
+                        inference = load_seg_model(
+                            checkpoint, WALL_CHECKPOINT, image_size
+                        )
                         if show_progress:
                             st.write("✓ Modèle segmentation prêt")
                             st.write("⏳ Inférence segmentation (Mask2Former Swin-S)...")
@@ -1824,6 +1839,21 @@ def main():
     devis_lines_key = f"devis_lines_{img_hash}"
     devis_lines_nid_key = f"{devis_lines_key}_nextid"
 
+    def _push_qty_widget_states(_df):
+        """Pousse _df.Qté → widget-states `qty_{rid}`.
+
+        Le widget Qté est UNIDIRECTIONNEL (pas de force-sync à chaque run,
+        pas de on_change ; cf _apply_qty_change en post-render). Donc TOUT
+        code qui modifie df.Qté hors du widget (rebuild, drag-in/out canvas,
+        ajout de ligne) DOIT appeler ceci avant son st.rerun() — sinon le
+        widget garde sa valeur périmée et _apply_qty_change réécrirait df
+        vers l'ancienne valeur (revert de l'incrément)."""
+        for _li in _df.index:
+            _r = int(_df.at[_li, "_id"])
+            st.session_state[f"{devis_lines_key}_qty_{_r}"] = int(
+                _df.at[_li, "Qté"]
+            )
+
     # V1.2 — auto-construit devis_lines + equipments à l'init OU quand le user
     # invalide via "Générer devis" (qui delete devis_lines_key). Utilise
     # reconcile_equipments_for_line pour PRÉSERVER les positions existantes
@@ -2036,6 +2066,9 @@ def main():
             st.session_state[devis_lines_key] = _df_devis
             st.session_state[devis_lines_nid_key] = _next_id_after
             st.session_state[equipments_state_key] = _current_eq
+            # Push les Qté recalculées vers les widget-states (ex. surface
+            # séjour → nb prises recomputé). cf _push_qty_widget_states.
+            _push_qty_widget_states(_df_devis)
             # Persiste pour le panneau debug placement (scope outer).
             st.session_state[f"pastilles_by_room_{img_hash}"] = _pastilles_by_room
             if _old_ids != _new_ids:
@@ -2344,6 +2377,7 @@ def main():
                 f"pastille_to_devis_room_{img_hash}"
             ] = _pid_to_room_map
             st.session_state[f"_eq_just_populated_{img_hash}"] = True
+            _push_qty_widget_states(_df_devis)
             # Sync editor_key + rebuild devis_global pour que le tableau
             # électrique reflète l'ajout sans clic supplémentaire.
             _sync_editor_key_from_pastilles()
@@ -2369,6 +2403,7 @@ def main():
                         "via le tableau devis."
                     )
             st.session_state[devis_lines_key] = df_devis
+            _push_qty_widget_states(df_devis)
             st.rerun()
 
         if removed_eq_ids and devis_lines_key in st.session_state:
@@ -2385,6 +2420,7 @@ def main():
                         df_devis.at[line_idx, "Qté"]
                     ) - n_removed
             st.session_state[devis_lines_key] = df_devis
+            _push_qty_widget_states(df_devis)
             st.rerun()
 
         # Phase 2 : sync DataFrame éditeur : drop rows dont pastille supprimée
@@ -2777,18 +2813,26 @@ def main():
                     _eq_val if _eq_val in EQUIPMENT_LABELS_LIST
                     else EQUIPMENT_LABELS_LIST[0]
                 )
-                st.session_state[f"{devis_lines_key}_qty_{_rid}"] = int(
-                    df_devis_current.loc[_idx, "Qté"]
-                )
+                # Qté : init-once SEULEMENT (pas de force-sync à chaque run).
+                # Le force-sync à chaque run + on_change crée une oscillation :
+                # quand le backend recalcule Qté (surface séjour → nb prises),
+                # le frontend lag d'un render et Streamlit re-tire on_change
+                # avec la valeur périmée → ping-pong infini. Le widget Qté est
+                # désormais unidirectionnel (cf _apply_qty_change + push dans
+                # le rebuild). On n'initialise ici que si la clé manque.
+                _qkey = f"{devis_lines_key}_qty_{_rid}"
+                if _qkey not in st.session_state:
+                    st.session_state[_qkey] = int(
+                        df_devis_current.loc[_idx, "Qté"]
+                    )
                 st.session_state[f"{devis_lines_key}_ht_{_rid}"] = float(
                     df_devis_current.loc[_idx, "Prix HT (€)"]
                 )
 
-            # Callback générique : sync widget value → DataFrame.
-            # Cas spécial "qty" : reconcile aussi equipments_state +
-            # _equip_ids pour que les pastilles canvas suivent (sinon Qté et
-            # nombre de pastilles divergent → décrément buggy au prochain
-            # drag-out).
+            # Callback générique pièce/eq/ht : sync widget value → DataFrame.
+            # NB : la Qté n'est PAS gérée ici (pas de on_change sur son widget,
+            # cf _apply_qty_change en post-render) pour éviter l'oscillation
+            # force-sync ⟂ on_change.
             def _on_devis_edit(rid: int, widget_suffix: str, df_field: str, caster):
                 wkey = f"{devis_lines_key}_{widget_suffix}_{rid}"
                 if wkey not in st.session_state:
@@ -2802,50 +2846,61 @@ def main():
                 mask = df_cur["_id"] == rid
                 new_val = caster(st.session_state[wkey])
                 df_cur.loc[mask, df_field] = new_val
-                if widget_suffix == "qty":
-                    from src.planrec.nfc_equipments import (
-                        reconcile_equipments_for_line,
-                    )
-                    line_idx = df_cur[mask].index[0]
-                    line_room = str(df_cur.at[line_idx, "Pièce"])
-                    line_label = str(df_cur.at[line_idx, "Équipement"])
-                    line_type = _DEVIS_LABEL_TO_EQUIP_TYPE.get(line_label)
-                    if line_type is not None:
-                        pastilles_state = st.session_state.get(
-                            pastilles_state_key, [],
-                        )
-                        pastilles_by_room = {
-                            str(p.get("label", "")): (
-                                int(p["x"]), int(p["y"]),
-                            )
-                            for p in pastilles_state
-                        }
-                        smart_placer = _make_smart_placer(
-                            seg_result=result if enable_segmentation else None,
-                            image_size=(image_w, image_h),
-                            pastilles_by_room=pastilles_by_room,
-                        )
-                        current_eq = list(
-                            st.session_state.get(equipments_state_key, []),
-                        )
-                        new_eq_state, new_line_ids = (
-                            reconcile_equipments_for_line(
-                                current_state=current_eq,
-                                line_room=line_room,
-                                line_type=line_type,
-                                new_qty=int(new_val),
-                                smart_placer=smart_placer,
-                            )
-                        )
-                        st.session_state[equipments_state_key] = new_eq_state
-                        df_cur.at[line_idx, "_equip_ids"] = new_line_ids
-                        # Force React à re-prendre l'état Python comme source
-                        # de vérité (sinon les pastilles supprimées re-echoent
-                        # depuis le canvas et créent une boucle).
-                        st.session_state[
-                            f"_eq_just_populated_{img_hash}"
-                        ] = True
                 st.session_state[devis_lines_key] = df_cur
+
+            # Qté : PAS de on_change (cf force-sync supprimé plus haut). On lit
+            # la valeur de retour du widget en post-render et on réconcilie
+            # uniquement si elle diffère du df. Flux unidirectionnel widget→df,
+            # qui casse la boucle d'oscillation surface→nb prises.
+            def _apply_qty_change(rid: int, new_qty: int) -> bool:
+                if devis_lines_key not in st.session_state:
+                    return False
+                df_cur = st.session_state[devis_lines_key]
+                mask = df_cur["_id"] == rid
+                if not mask.any():
+                    return False
+                line_idx = df_cur[mask].index[0]
+                if int(df_cur.at[line_idx, "Qté"]) == int(new_qty):
+                    return False
+                df_cur.at[line_idx, "Qté"] = int(new_qty)
+                from src.planrec.nfc_equipments import (
+                    reconcile_equipments_for_line,
+                )
+                line_room = str(df_cur.at[line_idx, "Pièce"])
+                line_label = str(df_cur.at[line_idx, "Équipement"])
+                line_type = _DEVIS_LABEL_TO_EQUIP_TYPE.get(line_label)
+                if line_type is not None:
+                    # Ancres ROOM-keyées (les MÊMES que le rebuild, persistées
+                    # en 2040), PAS keyées par label de pastille : sinon
+                    # .get("Sejour") rate (le label réel est "Séjour / Salon")
+                    # → fallback centre image → prises placées hors du séjour.
+                    # seg_result=None → placement cluster autour de l'ancre room
+                    # (cohérent avec le rebuild pour les non-chambres ; évite le
+                    # placement polygone qui s'activerait ici faute de
+                    # bedroom_rooms).
+                    pastilles_by_room = st.session_state.get(
+                        f"pastilles_by_room_{img_hash}", {},
+                    )
+                    smart_placer = _make_smart_placer(
+                        seg_result=None,
+                        image_size=(image_w, image_h),
+                        pastilles_by_room=pastilles_by_room,
+                    )
+                    current_eq = list(
+                        st.session_state.get(equipments_state_key, []),
+                    )
+                    new_eq_state, new_line_ids = reconcile_equipments_for_line(
+                        current_state=current_eq,
+                        line_room=line_room,
+                        line_type=line_type,
+                        new_qty=int(new_qty),
+                        smart_placer=smart_placer,
+                    )
+                    st.session_state[equipments_state_key] = new_eq_state
+                    df_cur.at[line_idx, "_equip_ids"] = new_line_ids
+                    st.session_state[f"_eq_just_populated_{img_hash}"] = True
+                st.session_state[devis_lines_key] = df_cur
+                return True
 
             # Layout "Ajouter une ligne" : selectbox pièce + bouton
             col_add_piece, col_add_btn, _ = st.columns([2, 1, 2])
@@ -3120,13 +3175,16 @@ def main():
                             label_visibility="collapsed",
                         )
                     with cols[3]:
-                        st.number_input(
+                        # Pas de on_change : flux unidirectionnel. On lit la
+                        # valeur de retour et on réconcilie en post-render via
+                        # _apply_qty_change (casse l'oscillation force-sync).
+                        _new_qty = st.number_input(
                             "Qté", min_value=0, max_value=99, step=1,
                             key=f"{devis_lines_key}_qty_{rid}",
-                            on_change=_on_devis_edit,
-                            args=(rid, "qty", "Qté", int),
                             label_visibility="collapsed",
                         )
+                        if _apply_qty_change(rid, int(_new_qty)):
+                            st.rerun()
                     with cols[4]:
                         st.number_input(
                             "HT", min_value=0.0, max_value=10000.0, step=1.0,
