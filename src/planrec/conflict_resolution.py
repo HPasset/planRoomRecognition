@@ -30,7 +30,9 @@ def conflict_choices(record: dict) -> dict:
     """Extrait de quoi peupler la modale pour un fusion_record en conflit.
 
     Retourne les noms de classe C2 (domaine segmentation) — la conversion vers
-    les libellés devis FR se fait côté app (c2_class_to_devis_label)."""
+    les libellés devis FR se fait côté app (c2_class_to_devis_label).
+    Précondition : `record` doit être un conflit (`conflict=True`), ce qui
+    garantit `ocr_class_id is not None`."""
     room = record["room"]
     ocr_class_id = record["ocr_class_id"]
     ocr_text = ""

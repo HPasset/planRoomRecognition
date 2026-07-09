@@ -132,9 +132,9 @@ def _apply_resolutions_to_pastilles(
         for p in pastilles:
             if str(p["id"]) != str(pid):
                 continue
-            claimed.add(str(pid))
             if p.get("type") == label:
-                break  # OCR avait raison : rien à changer
+                break  # OCR avait raison : rien à changer (pas de claim)
+            claimed.add(str(pid))
             affected_types.add(p.get("type"))   # ancien type → re-numéroter
             affected_types.add(label)            # nouveau type → re-numéroter
             p["type"] = label
@@ -1806,7 +1806,7 @@ def main():
                         "seg": f"Segmentation → {s}",
                         "autre": "Autre type…",
                     }[k],
-                    key=f"conflict_radio_{rid}",
+                    key=f"conflict_radio_{img_hash}_{rid}",
                 )
                 if opt == "autre":
                     autre_default = (
@@ -1817,7 +1817,7 @@ def main():
                         "Choisir le type",
                         DEVIS_LABELS,
                         index=autre_default,
-                        key=f"conflict_autre_{rid}",
+                        key=f"conflict_autre_{img_hash}_{rid}",
                     )
                 elif opt == "seg":
                     pending[rid] = seg_label
@@ -1830,6 +1830,7 @@ def main():
                 _apply_resolutions_to_pastilles(
                     img_hash, result.rooms, resolutions
                 )
+                _sync_editor_key_from_pastilles()
                 _trigger_devis_regen()
                 st.rerun()
 
