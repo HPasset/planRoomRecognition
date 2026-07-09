@@ -1793,6 +1793,9 @@ def main():
         any_postprocess = (
             simplify_epsilon_pct > 0 or axis_align_tolerance_deg or snap_active_walls
         )
+        _resolutions = st.session_state.get(
+            f"conflict_resolutions_{img_hash}", {}
+        )
         for room in result.rooms:
             if room.confidence < threshold:
                 continue
@@ -1809,7 +1812,10 @@ def main():
                 )
             else:
                 poly = room.polygon
-            rgb = PALETTE[room.type_id]
+            if room.id in _resolutions:
+                rgb = resolved_color_for_label(_resolutions[room.id])
+            else:
+                rgb = PALETTE[room.type_id]
             r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
             seg_polygons.append({
                 "type_name": room.type,
