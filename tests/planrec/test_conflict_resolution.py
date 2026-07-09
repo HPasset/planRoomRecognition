@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from src.planrec.conflict_resolution import (
     conflict_choices,
     find_pastille_in_room,
+    reindex_labels,
     unresolved_conflicts,
 )
 from src.segmentation.classes import CLASS_ID, CLASS_NAMES
@@ -81,3 +82,28 @@ def test_find_pastille_multiple_returns_closest_to_centroid():
 
 def test_find_pastille_empty_list_returns_none():
     assert find_pastille_in_room([], [[0, 0], [10, 0], [10, 10], [0, 10]]) is None
+
+
+def test_reindex_labels_single_instance_bare():
+    pastilles = [{"id": "a", "type": "Chambre", "label": "Chambre 3"}]
+    reindex_labels(pastilles, {"Chambre"})
+    assert pastilles[0]["label"] == "Chambre"
+
+
+def test_reindex_labels_multiple_numbered_in_order():
+    pastilles = [
+        {"id": "a", "type": "Chambre", "label": "Chambre"},
+        {"id": "b", "type": "Chambre", "label": "Chambre 2"},
+    ]
+    reindex_labels(pastilles, {"Chambre"})
+    assert [p["label"] for p in pastilles] == ["Chambre 1", "Chambre 2"]
+
+
+def test_reindex_labels_only_touches_given_types():
+    pastilles = [
+        {"id": "a", "type": "Cuisine", "label": "KEEP"},
+        {"id": "b", "type": "Chambre", "label": "Chambre"},
+    ]
+    reindex_labels(pastilles, {"Chambre"})
+    assert pastilles[0]["label"] == "KEEP"
+    assert pastilles[1]["label"] == "Chambre"

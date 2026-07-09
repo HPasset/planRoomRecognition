@@ -27,6 +27,7 @@ import streamlit as st
 from app.components.pastille_canvas import pastille_canvas
 from src.planrec.conflict_resolution import (
     find_pastille_in_room,
+    reindex_labels,
     unresolved_conflicts,
 )
 from src.planrec.fusion import FR_TO_C2, fuse_rooms_with_ocr
@@ -118,28 +119,29 @@ def _apply_resolutions_to_pastilles(
         return False
     rooms_by_id = {r.id: r for r in seg_rooms}
     changed = False
+    claimed: set[str] = set()
+    affected_types: set[str] = set()
     for seg_room_id, label in resolutions.items():
         room = rooms_by_id.get(seg_room_id)
         if room is None:
             continue
         pid = find_pastille_in_room(pastilles, room.polygon)
-        if pid is None:
+        if pid is None or pid in claimed:
             continue
         for p in pastilles:
             if str(p["id"]) != str(pid):
                 continue
+            claimed.add(str(pid))
             if p.get("type") == label:
                 break  # OCR avait raison : rien à changer
-            n_same = sum(
-                1 for q in pastilles
-                if q.get("type") == label and str(q["id"]) != str(pid)
-            )
+            affected_types.add(p.get("type"))   # ancien type → re-numéroter
+            affected_types.add(label)            # nouveau type → re-numéroter
             p["type"] = label
-            p["label"] = f"{label} {n_same + 1}" if n_same > 0 else label
             p["color"] = DEVIS_LABEL_TO_COLOR.get(label, "rgb(200,200,200)")
             changed = True
             break
     if changed:
+        reindex_labels(pastilles, affected_types)
         st.session_state[key] = pastilles
     return changed
 

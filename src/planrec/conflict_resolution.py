@@ -71,3 +71,16 @@ def find_pastille_in_room(
             best_dist = d
             best_id = str(p["id"])
     return best_id
+
+
+def reindex_labels(pastilles: list[dict], types: set[str]) -> None:
+    """Re-numérote in-place le champ 'label' des pastilles pour chaque type de
+    `types` : un seul exemplaire → 'Type' ; plusieurs → 'Type 1', 'Type 2'…
+    Miroir de l'indexation faite à l'init OCR, pour cohérence pastille↔devis."""
+    for t in types:
+        same = [p for p in pastilles if p.get("type") == t]
+        if len(same) == 1:
+            same[0]["label"] = t
+        elif len(same) > 1:
+            for i, p in enumerate(same, 1):
+                p["label"] = f"{t} {i}"
