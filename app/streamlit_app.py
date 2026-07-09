@@ -25,6 +25,10 @@ import pandas as pd
 import streamlit as st
 
 from app.components.pastille_canvas import pastille_canvas
+from src.planrec.conflict_resolution import (
+    find_pastille_in_room,
+    unresolved_conflicts,
+)
 from src.planrec.fusion import FR_TO_C2, fuse_rooms_with_ocr
 from src.planrec.nfc_pricing import (
     DEFAULT_PRICES_HT,
@@ -52,7 +56,7 @@ from src.planrec.polygon_postprocess import (
     extract_wall_lines,
     postprocess_polygon,
 )
-from src.segmentation.classes import CLASS_NAMES, ROOM_CLASS_IDS
+from src.segmentation.classes import CLASS_ID, CLASS_NAMES, ROOM_CLASS_IDS
 from src.segmentation.inference import DualSegmentationInference
 from src.segmentation.schema import RoomDetection, SegmentationOutput
 
@@ -88,6 +92,56 @@ DEVIS_LABEL_TO_PARAMS: dict[str, tuple[str, str | None]] = {
     "Extérieur (Terrasse...)": ("Outdoor", None),
 }
 DEVIS_LABELS = list(DEVIS_LABEL_TO_PARAMS.keys())
+
+
+def resolved_color_for_label(devis_label: str) -> tuple[int, int, int]:
+    """Label devis résolu → couleur RGB de l'overlay seg (via classe C2 + PALETTE).
+    Label inconnu → gris neutre (robustesse : pas de crash)."""
+    params = DEVIS_LABEL_TO_PARAMS.get(devis_label)
+    if params is None:
+        return (128, 128, 128)
+    c2_name = params[0]
+    rgb = PALETTE[CLASS_ID[c2_name]]
+    return (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+
+
+def _apply_resolutions_to_pastilles(
+    img_hash: str, seg_rooms: list, resolutions: dict[str, str]
+) -> bool:
+    """Pour chaque (seg_room_id → label) résolu, trouve la pastille dans le
+    polygone de la pièce seg et set son type/label/color. No-op si le type ne
+    change pas ou si aucune pastille dedans. Retourne True si au moins une
+    pastille a changé."""
+    key = f"pastilles_state_{img_hash}"
+    pastilles = st.session_state.get(key, [])
+    if not pastilles:
+        return False
+    rooms_by_id = {r.id: r for r in seg_rooms}
+    changed = False
+    for seg_room_id, label in resolutions.items():
+        room = rooms_by_id.get(seg_room_id)
+        if room is None:
+            continue
+        pid = find_pastille_in_room(pastilles, room.polygon)
+        if pid is None:
+            continue
+        for p in pastilles:
+            if str(p["id"]) != str(pid):
+                continue
+            if p.get("type") == label:
+                break  # OCR avait raison : rien à changer
+            n_same = sum(
+                1 for q in pastilles
+                if q.get("type") == label and str(q["id"]) != str(pid)
+            )
+            p["type"] = label
+            p["label"] = f"{label} {n_same + 1}" if n_same > 0 else label
+            p["color"] = DEVIS_LABEL_TO_COLOR.get(label, "rgb(200,200,200)")
+            changed = True
+            break
+    if changed:
+        st.session_state[key] = pastilles
+    return changed
 
 
 def c2_class_to_devis_label(c2_class: str, ocr_hint: str = "") -> str:
@@ -893,7 +947,7 @@ def main():
                 for _k in list(st.session_state.keys()):
                     if _k.startswith(("devis_", "pastille_", "equipments_",
                                        "surface_", "ocr_", "seg_", "_eq_",
-                                       "canvas_reset_")):
+                                       "canvas_reset_", "conflict_resolutions_")):
                         del st.session_state[_k]
                 st.rerun()
 
@@ -1604,7 +1658,8 @@ def main():
                     or k.startswith(f"equipments_state_{img_hash}")
                     or k.startswith(f"pastilles_state_{img_hash}")
                     or k.startswith(f"pastille_to_devis_room_{img_hash}")
-                    or k.startswith(f"surface_by_pid_{img_hash}"))
+                    or k.startswith(f"surface_by_pid_{img_hash}")
+                    or k.startswith(f"conflict_resolutions_{img_hash}"))
             ]
             for k in keys_to_del:
                 del st.session_state[k]
