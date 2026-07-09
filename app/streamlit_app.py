@@ -26,6 +26,7 @@ import streamlit as st
 
 from app.components.pastille_canvas import pastille_canvas
 from src.planrec.conflict_resolution import (
+    conflict_choices,
     find_pastille_in_room,
     reindex_labels,
     unresolved_conflicts,
@@ -1766,6 +1767,81 @@ def main():
         {"type": lbl, "label": lbl, "color": color}
         for lbl, color in DEVIS_LABEL_TO_COLOR.items()
     ]
+
+    # --- Résolution des conflits OCR / Segmentation (modale) ---
+    if enable_segmentation and result is not None and fusion_records:
+        _res_key = f"conflict_resolutions_{img_hash}"
+        _res = st.session_state.get(_res_key, {})
+        _conflict_records = [r for r in fusion_records if r["conflict"]]
+        _total_conflicts = len(_conflict_records)
+
+        @st.dialog("Trancher les conflits OCR / Segmentation")
+        def _conflict_dialog():
+            resolutions = dict(st.session_state.get(_res_key, {}))
+            pending: dict[str, str] = {}
+            for rec in _conflict_records:
+                info = conflict_choices(rec)
+                rid = info["seg_room_id"]
+                ocr_label = c2_class_to_devis_label(
+                    info["ocr_class_name"], info["ocr_text"]
+                )
+                seg_label = c2_class_to_devis_label(info["seg_class_name"])
+                # Pré-sélection si déjà résolu
+                prev = resolutions.get(rid)
+                if prev == ocr_label:
+                    default_idx = 0
+                elif prev == seg_label:
+                    default_idx = 1
+                elif prev is not None:
+                    default_idx = 2
+                else:
+                    default_idx = 0
+                st.markdown(f"**Texte OCR : « {info['ocr_text'] or '—'} »**")
+                opt = st.radio(
+                    "Type réel de la pièce",
+                    options=["ocr", "seg", "autre"],
+                    index=default_idx,
+                    format_func=lambda k, o=ocr_label, s=seg_label: {
+                        "ocr": f"OCR → {o}",
+                        "seg": f"Segmentation → {s}",
+                        "autre": "Autre type…",
+                    }[k],
+                    key=f"conflict_radio_{rid}",
+                )
+                if opt == "autre":
+                    autre_default = (
+                        DEVIS_LABELS.index(prev)
+                        if prev in DEVIS_LABELS else 0
+                    )
+                    pending[rid] = st.selectbox(
+                        "Choisir le type",
+                        DEVIS_LABELS,
+                        index=autre_default,
+                        key=f"conflict_autre_{rid}",
+                    )
+                elif opt == "seg":
+                    pending[rid] = seg_label
+                else:
+                    pending[rid] = ocr_label
+                st.divider()
+            if st.button("Valider les choix", type="primary"):
+                resolutions.update(pending)
+                st.session_state[_res_key] = resolutions
+                _apply_resolutions_to_pastilles(
+                    img_hash, result.rooms, resolutions
+                )
+                _trigger_devis_regen()
+                st.rerun()
+
+        if _total_conflicts > 0:
+            _n_resolved = _total_conflicts - len(
+                unresolved_conflicts(_conflict_records, _res)
+            )
+            _btn_label = (
+                f"⚠ Résoudre les conflits ({_n_resolved}/{_total_conflicts})"
+            )
+            if st.button(_btn_label, key=f"open_conflict_{img_hash}"):
+                _conflict_dialog()
 
     # Palette équipements (Phase 2 : statique, drag-in en Phase 4).
     # Les sous-types V1.2 (Four, Plaque, LV, LL, SL, Chaudière, Convecteur,
