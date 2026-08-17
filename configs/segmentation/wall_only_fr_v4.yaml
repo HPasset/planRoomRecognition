@@ -1,0 +1,53 @@
+# Wall-only Mask2Former — v4, le premier run mesurable sur plans FR.
+#
+# Dataset : data/processed/walls_only_v4 — 217 train (149 DWG + 68 FR),
+#           15 val et 13 test **100 % FR**.
+#           C'est le vrai changement de ce run : le val de v3 était 23 DWG pour
+#           4 FR, donc chaque métrique publiée était dominée par des plans qui
+#           ne ressemblent pas aux nôtres. Les chiffres de v3 et de v4 ne sont
+#           PAS comparables — v4 se mesure contre lui-même et contre le rappel
+#           terrain sur plans FR (38,2 % avec v3).
+#
+# Init    : runs/segmentation/wall_only_dwg_v3/checkpoints/best.pt.
+#           On continue l'apprentissage existant : le FR est passé de 25 à 96
+#           plans, pas la peine de réapprendre la base DWG.
+#
+# Compute : Modal A10G 24 GB, ~30-45 min.
+#
+# Écart avec v3 :
+# - FR annotés : 25 → 96 plans (lots 3 à 8, annotés à la main dans CVAT)
+# - val/test    : FR uniquement
+# - epochs      : 20 → 30 (4× plus de signal FR à intégrer)
+
+run_name: wall_only_fr_v4
+seed: 42
+
+data:
+  dataset_root: /data/walls_only_v4
+  image_size: 640
+  batch_size: 4
+
+model:
+  backbone: facebook/mask2former-swin-tiny-coco-panoptic
+
+optimizer:
+  lr_backbone: 3.0e-6
+  lr_head: 3.0e-5
+  weight_decay: 0.05
+  grad_accumulation: 2
+  grad_clip_norm: 1.0
+
+scheduler:
+  warmup_steps: 50
+
+training:
+  epochs: 30
+  early_stop_patience: 6
+  mixed_precision: "no"
+
+logging:
+  tracker: wandb
+  project: batia-segmentation
+
+checkpoint:
+  output_dir: /runs/wall_only_fr_v4
