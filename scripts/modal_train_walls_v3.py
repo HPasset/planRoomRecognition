@@ -15,6 +15,16 @@ Usage :
 
     # 2. Lance training détaché (--detach OBLIGATOIRE)
     modal run --detach scripts/modal_train_walls_v3.py::train
+
+    # v4 : même wrapper, autre config et autre checkpoint d'init
+    modal volume put batia-walls-dwg-v3 data/processed/walls_only_v4 /walls_only_v4
+    modal run --detach scripts/modal_train_walls_v3.py::train \\
+        --config configs/segmentation/wall_only_fr_v4.yaml \\
+        --init runs/segmentation/wall_only_dwg_v3/checkpoints/best.pt
+
+Le dossier du dataset sur le volume et le dossier de sortie sont lus dans la
+config (`data.dataset_root`, `checkpoint.output_dir`) : rien à synchroniser à
+la main entre les deux fichiers.
 """
 from __future__ import annotations
 
@@ -25,10 +35,8 @@ import modal
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATASET_LOCAL = PROJECT_ROOT / "data" / "processed" / "walls_dwg_only_v3"
-CONFIG_LOCAL = PROJECT_ROOT / "configs" / "segmentation" / "wall_only_dwg_v3.yaml"
-V2_CKPT_LOCAL = PROJECT_ROOT / "runs" / "segmentation" / "wall_only_dwg_v2" / "checkpoints" / "best.pt"
-RUNS_LOCAL = PROJECT_ROOT / "runs" / "segmentation" / "wall_only_dwg_v3"
+DEFAULT_CONFIG = "configs/segmentation/wall_only_dwg_v3.yaml"
+DEFAULT_INIT = "runs/segmentation/wall_only_dwg_v2/checkpoints/best.pt"
 
 
 app = modal.App("batia-walls-training-v3")
@@ -65,9 +73,9 @@ runs_volume = modal.Volume.from_name(
     volumes={"/data": dataset_volume},
     timeout=600,
 )
-def check_dataset() -> dict:
+def check_dataset(dataset_remote: str = "/data/walls_dwg_only_v3") -> dict:
     import json
-    p = Path("/data/walls_dwg_only_v3")
+    p = Path(dataset_remote)
     if not p.exists():
         return {"present": False}
     splits = json.loads((p / "splits.json").read_text())
@@ -93,6 +101,7 @@ def train_remote(
     config_yaml_text: str,
     v2_ckpt_bytes: bytes,
     config_filename: str = "wall_only_dwg_v3.yaml",
+    output_remote: str = "/runs/wall_only_dwg_v3",
 ):
     """Fine-tune depuis v2 best.pt sur dataset v3 (DWG + FR)."""
     import os
@@ -116,9 +125,9 @@ def train_remote(
 
     cfg = load_config(str(cfg_path))
 
-    # Si déjà un last.pt sur le volume v3, on laisse Trainer auto-resume
-    # (cas reprise après timeout). Sinon, on init depuis v2.
-    v3_last = Path("/runs/wall_only_dwg_v3/checkpoints/last.pt")
+    # Si déjà un last.pt sur le volume pour ce run, on laisse Trainer auto-resume
+    # (cas reprise après timeout). Sinon, on init depuis le checkpoint fourni.
+    v3_last = Path(output_remote) / "checkpoints" / "last.pt"
 
     # Setup commit hook
     _orig_save_state = Trainer._save_state
@@ -148,43 +157,58 @@ def train_remote(
 
 
 @app.local_entrypoint()
-def train():
-    print("=== Étape 1 : Vérification dataset Modal volume v3 ===")
-    state = check_dataset.remote()
+def train(config: str = DEFAULT_CONFIG, init: str = DEFAULT_INIT):
+    import yaml
+
+    config_local = Path(config)
+    if not config_local.is_absolute():
+        config_local = PROJECT_ROOT / config_local
+    init_local = Path(init)
+    if not init_local.is_absolute():
+        init_local = PROJECT_ROOT / init_local
+
+    if not config_local.exists():
+        print(f"  ❌ Config absent : {config_local}")
+        sys.exit(1)
+    config_text = config_local.read_text(encoding="utf-8")
+    cfg = yaml.safe_load(config_text)
+    dataset_remote = cfg["data"]["dataset_root"]        # ex. /data/walls_only_v4
+    output_remote = cfg["checkpoint"]["output_dir"]     # ex. /runs/wall_only_fr_v4
+    run_name = cfg["run_name"]
+    runs_local = PROJECT_ROOT / "runs" / "segmentation" / run_name
+
+    print(f"=== Étape 1 : Vérification de {dataset_remote} sur le volume ===")
+    state = check_dataset.remote(dataset_remote)
     print(f"  Dataset state: {state}")
 
     if not state["present"]:
         print("\n  ❌ Dataset absent. Run d'abord :")
         print(f"     modal volume put batia-walls-dwg-v3 "
-              f"{DATASET_LOCAL} /walls_dwg_only_v3")
+              f"data/processed/{Path(dataset_remote).name} "
+              f"/{Path(dataset_remote).name}")
         sys.exit(1)
 
     print(f"\n  Train/Val/Test : "
           f"{state['n_train']}/{state['n_val']}/{state['n_test']}")
 
-    print("\n=== Étape 2 : Lecture du config + checkpoint v2 ===")
-    if not CONFIG_LOCAL.exists():
-        print(f"  ❌ Config absent : {CONFIG_LOCAL}")
+    print(f"\n=== Étape 2 : Lecture du config + checkpoint d'init ===")
+    if not init_local.exists():
+        print(f"  ❌ Checkpoint d'init absent : {init_local}")
         sys.exit(1)
-    if not V2_CKPT_LOCAL.exists():
-        print(f"  ❌ Checkpoint v2 absent : {V2_CKPT_LOCAL}")
-        print(f"     Download d'abord : modal volume get batia-walls-runs "
-              f"/wall_only_dwg_v2/checkpoints/best.pt {V2_CKPT_LOCAL}")
-        sys.exit(1)
-    config_text = CONFIG_LOCAL.read_text(encoding="utf-8")
-    v2_ckpt_bytes = V2_CKPT_LOCAL.read_bytes()
-    print(f"  Config lu ({len(config_text)} bytes).")
-    print(f"  v2 ckpt lu ({len(v2_ckpt_bytes)/1e6:.1f} MB).")
+    init_bytes = init_local.read_bytes()
+    print(f"  Config lu : {config_local.name} ({len(config_text)} bytes).")
+    print(f"  Init lu   : {init_local.name} ({len(init_bytes)/1e6:.1f} MB).")
 
-    print("\n=== Étape 3 : Training distant détaché (A10G, init from v2) ===")
+    print(f"\n=== Étape 3 : Training distant détaché (A10G, init depuis {init_local.parents[1].name}) ===")
     print("  (~30-45 min estimé selon N. .spawn() = détaché.)")
-    function_call = train_remote.spawn(config_text, v2_ckpt_bytes)
+    function_call = train_remote.spawn(config_text, init_bytes,
+                                       config_local.name, output_remote)
     print(f"  FunctionCall ID : {function_call.object_id}")
     print("  Run détaché lancé.")
 
     print("\n=== Suite ===")
     print("  modal app list")
     print(f"  modal volume get batia-walls-runs "
-          f"/wall_only_dwg_v3/checkpoints/best.pt "
-          f"{RUNS_LOCAL}/checkpoints/best.pt")
-    print("\nWandb : project batia-segmentation, run wall_only_dwg_v3.")
+          f"{output_remote.replace('/runs', '', 1)}/checkpoints/best.pt "
+          f"{runs_local}/checkpoints/best.pt")
+    print(f"\nWandb : project batia-segmentation, run {run_name}.")
