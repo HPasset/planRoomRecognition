@@ -53,8 +53,15 @@ OBB_WEIGHTS = "runs/obb/fr_obb_v2/weights/best.pt"
 OBB_SIZE = 2048
 OPENINGS = {11: "Door", 12: "Window", 13: "french_door", 14: "sliding_door"}
 
-# marge de scellement retenue par le benchmark de rooms_from_sealed_walls.py
-SEAL_MARGIN = 10
+# Marge de scellement, en px. Balayée sur les 18 plans du split test avec le
+# masque de murs de wall_only_fr_v5 : la précision ET le rappel montent ensemble
+# jusqu'à 22, puis plafonnent.
+#   10 -> 68 polygones, 81 % de précision, 32,2 % de rappel
+#   22 -> 85 polygones, 86 %,              42,7 %
+#   26 -> 84 polygones, 87 %,              42,7 %
+# Pas d'arbitrage à faire ici : les polygones gagnés sont de vraies pièces qui
+# restaient collées à leur voisine faute d'ouverture scellée.
+SEAL_MARGIN = 22
 
 
 # --------------------------------------------------------------------------- murs
@@ -80,13 +87,13 @@ def solid_walls(img: np.ndarray) -> np.ndarray:
 class WallModel:
     """Masque de murs par le checkpoint Mask2Former, à la résolution native."""
 
-    def __init__(self, ckpt: str, device: str):
+    def __init__(self, ckpt: str, device: str, size: int = WALL_SIZE):
         import torch
         from src.segmentation.checkpoint import load_checkpoint
         from src.segmentation.classes import CLASS_ID, NUM_CLASSES
         from src.segmentation.model import build_model, get_processor
 
-        self.torch, self.wall_id = torch, CLASS_ID["Wall"]
+        self.torch, self.wall_id, self.size = torch, CLASS_ID["Wall"], size
         self.device = device
         self.model = build_model(backbone=WALL_BACKBONE, num_classes=NUM_CLASSES)
         self.model.load_state_dict(
@@ -97,13 +104,13 @@ class WallModel:
     def __call__(self, img: np.ndarray) -> np.ndarray:
         from src.segmentation.preprocess import letterbox, unletterbox_mask
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        pad, info = letterbox(rgb, target_size=WALL_SIZE)
+        pad, info = letterbox(rgb, target_size=self.size)
         t = (pad.astype(np.float32) / 255.0 - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
         t = self.torch.from_numpy(t).permute(2, 0, 1).unsqueeze(0).float().to(self.device)
         with self.torch.no_grad():
             out = self.model(pixel_values=t)
         sem = self.proc.post_process_semantic_segmentation(
-            out, target_sizes=[(WALL_SIZE, WALL_SIZE)])[0].cpu().numpy()
+            out, target_sizes=[(self.size, self.size)])[0].cpu().numpy()
         # Retirer les bandes de padding avant de remonter : sans ça la
         # prédiction est étirée et tous les murs sont décalés.
         m = (sem == self.wall_id).astype(np.uint8)
@@ -369,6 +376,8 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--walls", choices=("model", "threshold"), default="model")
     ap.add_argument("--wall-ckpt", default=WALL_CKPT)
+    ap.add_argument("--wall-size", type=int, default=WALL_SIZE,
+                    help="résolution d'entraînement du checkpoint (640 v4, 1024 v5)")
     ap.add_argument("--obb-weights", default=OBB_WEIGHTS)
     ap.add_argument("--no-openings", action="store_true",
                     help="sauter la détection d'ouvertures (plus rapide, fuit aux portes)")
@@ -380,8 +389,11 @@ def main() -> None:
     ap.add_argument("--min-frac", type=float, default=0.003)
     ap.add_argument("--eps", type=float, default=0.006, help="simplification du contour")
     ap.add_argument("--min-solid", type=float, default=0.3,
-                    help="part minimale du pourtour tombant sur du mur épais "
-                         "(0 = tout garder, 0.6 = 86 %% de précision mais 22 %% de rappel)")
+                    help="part minimale du pourtour tombant sur du mur épais. "
+                         "N'a d'effet qu'avec --walls threshold (43 -> 65 %% de "
+                         "précision) ; avec le modèle 1024 les murs sont en aplat "
+                         "partout et aucune composante ne tombe sous le seuil — "
+                         "0, 0.2 et 0.3 y donnent des résultats identiques.")
     ap.add_argument("--merge-with", type=Path, default=None,
                     help="export CVAT existant : ses frames déjà annotées sont "
                          "recopiées telles quelles au lieu d'être pré-annotées")
@@ -405,7 +417,7 @@ def main() -> None:
     if args.walls == "model":
         import torch
         device = "mps" if torch.backends.mps.is_available() else "cpu"
-        wall_fn = WallModel(args.wall_ckpt, device)
+        wall_fn = WallModel(args.wall_ckpt, device, args.wall_size)
 
     yolo = None
     if not args.no_openings:

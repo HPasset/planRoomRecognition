@@ -1,0 +1,53 @@
+# Wall-only Mask2Former — v5 : v4 à 1024 px au lieu de 640.
+#
+# Une seule variable change par rapport à v4, pour que l'écart soit lisible.
+#
+# Pourquoi la résolution : à 640, un plan de 2400 px est réduit 3,75x, donc une
+# cloison dessinée sur 4 px arrive à 1 px dans l'entrée du modèle — physiquement
+# illisible. À 1024 elle remonte vers 1,7 px. C'est le même raisonnement qui a
+# marché sur Window et sliding_door en passant l'OBB de 1024 à 2048.
+#
+# Symptôme visé : l'extraction des pièces trouve 5,4 régions par plan pour 9,4
+# pièces réelles (39,6 % à IoU>=0,5, marge 22). Ce ne sont plus les ouvertures
+# qui fuient — la marge de scellement sature — ce sont les cloisons fines qui
+# manquent au masque, donc des pièces voisines qui restent fusionnées.
+#
+# Init : wall_only_fr_v4/best.pt (IoU Wall 0,874 sur val FR à 640).
+#
+# batch 4 -> 2 et grad_accumulation 2 -> 4 : 1024 px = 2,56x les pixels de 640,
+# et on garde le même batch effectif de 8.
+#
+# Compute : Modal A10G 24 GB, ~1 h 30 attendu (2,5x le run 640).
+
+run_name: wall_only_fr_v5
+seed: 42
+
+data:
+  dataset_root: /data/walls_only_v4
+  image_size: 1024
+  batch_size: 2
+
+model:
+  backbone: facebook/mask2former-swin-tiny-coco-panoptic
+
+optimizer:
+  lr_backbone: 3.0e-6
+  lr_head: 3.0e-5
+  weight_decay: 0.05
+  grad_accumulation: 4
+  grad_clip_norm: 1.0
+
+scheduler:
+  warmup_steps: 50
+
+training:
+  epochs: 30
+  early_stop_patience: 6
+  mixed_precision: "no"
+
+logging:
+  tracker: wandb
+  project: batia-segmentation
+
+checkpoint:
+  output_dir: /runs/wall_only_fr_v5

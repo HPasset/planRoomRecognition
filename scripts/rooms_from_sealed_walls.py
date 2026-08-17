@@ -38,16 +38,20 @@ OPENINGS = {11: "Door", 12: "Window", 13: "french_door", 14: "sliding_door"}
 GT_ROOT = Path("data/processed/fr_panoptic_lot01")
 
 
-def wall_mask(model, processor, device, path: Path) -> np.ndarray:
-    """Masque de murs binaire, remonté à la résolution native du plan."""
+def wall_mask(model, processor, device, path: Path, size: int = WALL_SIZE) -> np.ndarray:
+    """Masque de murs binaire, remonté à la résolution native du plan.
+
+    `size` doit être celle de l'entraînement du checkpoint : évaluer un modèle
+    entraîné à 1024 en lui donnant du 640 mesure autre chose que le modèle.
+    """
     rgb = cv2.cvtColor(cv2.imread(str(path)), cv2.COLOR_BGR2RGB)
-    pad, info = letterbox(rgb, target_size=WALL_SIZE)
+    pad, info = letterbox(rgb, target_size=size)
     t = (pad.astype(np.float32) / 255.0 - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
     t = torch.from_numpy(t).permute(2, 0, 1).unsqueeze(0).float().to(device)
     with torch.no_grad():
         out = model(pixel_values=t)
     sem = processor.post_process_semantic_segmentation(
-        out, target_sizes=[(WALL_SIZE, WALL_SIZE)])[0].cpu().numpy()
+        out, target_sizes=[(size, size)])[0].cpu().numpy()
     # Le letterbox pade en carré : le plan n'occupe qu'un sous-rectangle des
     # 640x640. Redimensionner le carré entier vers le plan étire la prédiction
     # et décale tous les murs — c'est ce qui faisait fuir les pièces.
@@ -96,6 +100,8 @@ def gt_rooms(name: str):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--wall-ckpt", default=WALL_CKPT)
+    ap.add_argument("--wall-size", type=int, default=WALL_SIZE,
+                    help="résolution d'entraînement du checkpoint (640 pour v4, 1024 pour v5)")
     ap.add_argument("--margin", type=int, nargs="+", default=[0, 6, 10, 14])
     ap.add_argument("--close", type=int, default=5)
     ap.add_argument("--conf", type=float, default=0.25)
@@ -121,7 +127,7 @@ def main() -> None:
         r = yolo.predict(str(p), imgsz=OBB_SIZE, conf=args.conf, device=device, verbose=False)[0]
         quads = r.obb.xyxyxyxy.cpu().numpy() if r.obb is not None else np.empty((0, 4, 2))
         cls = r.obb.cls.cpu().numpy().astype(int) if r.obb is not None else np.empty(0, int)
-        cache[f] = (wall_mask(wm, proc, device, p),
+        cache[f] = (wall_mask(wm, proc, device, p, args.wall_size),
                     quads[np.isin(cls, list(OPENINGS))],
                     gt_rooms(f))
         print(f"  {f[:38]:40s} {len(cache[f][1]):3d} ouvertures | {len(cache[f][2])} pièces GT",
