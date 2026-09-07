@@ -134,7 +134,7 @@ def test_lighting_label_uses_room_codes():
     circuits = _build_lighting_circuits(
         [("Chambre 2", 1), ("Chambre 3", 1), ("Dégagement", 1)], codes=codes)
     assert len(circuits) == 1
-    assert circuits[0].label == "Écl. CH2 CH3 DGT (3)"
+    assert circuits[0].label == "Écl. CH2 CH3 DGT ×3"
     assert circuits[0].rooms_served == ["Chambre 2", "Chambre 3", "Dégagement"]
 
 
@@ -572,7 +572,7 @@ def test_kitchen_sockets_dedicated_20a():
     assert circuits[0].cable_section_mm2 == 2.5
     assert circuits[0].n_devices == 6
     # label sans répétition de "cuisine" + quantité (la pièce est dans rooms_served)
-    assert circuits[0].label == "PC Cuisine (6)"
+    assert circuits[0].label == "PC Cuisine ×6"
     assert circuits[0].rooms_served == ["Cuisine"]
 
 
@@ -692,13 +692,13 @@ def test_distribute_one_lighting_on_type_a_rest_spread_on_ac():
 
 
 def test_generate_tableau_adds_gtl_sockets_on_type_a():
-    """Prises GTL (2) : toujours présentes, 16 A, sur l'ID type A."""
+    """Prises GTL ×2 : toujours présentes, 16 A, sur l'ID type A."""
     from src.planrec.nfc_tableau import generate_tableau, CircuitType
     from src.planrec.nfc_rules import compute_devis_global
     devis = compute_devis_global([{"id": "L1", "c2_class": "LivingRoom"}],
                                  heating_enabled=False)
     tableau = generate_tableau(devis, heating_enabled=False)
-    gtl = [c for r in tableau.rcds for c in r.circuits if c.label == "Prises GTL (2)"]
+    gtl = [c for r in tableau.rcds for c in r.circuits if c.label == "Prises GTL ×2"]
     assert len(gtl) == 1
     assert (gtl[0].type, gtl[0].breaker_amps, gtl[0].n_devices) == (CircuitType.SOCKET, 16, 2)
     assert gtl[0].requires_type_a
@@ -726,7 +726,7 @@ def test_generate_tableau_room_codes_and_bureau():
     all_labels = " ".join(c.label for c in lights)
     for code in ("SEJ", "CH1", "CH2", "BUR", "DGT", "BAIN", "CEL"):
         assert code in all_labels, (code, all_labels)
-    assert all(c.label.startswith("Écl. ") and c.label.endswith(f"({c.n_devices})") for c in lights)
+    assert all(c.label.startswith("Écl. ") and c.label.endswith(f"×{c.n_devices}") for c in lights)
     assert any(c.rooms_served == ["Bureau"] or "Bureau" in c.rooms_served for c in lights)
 
 
