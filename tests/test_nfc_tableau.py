@@ -115,13 +115,27 @@ def test_lighting_one_room_one_circuit_if_few_lights():
     assert set(circuits[0].rooms_served) == {"Sejour", "Chambre 1"}
 
 
-def test_lighting_bin_packing_overflow_creates_2_circuits():
-    """7 lights ne tiennent pas sur 1 circuit (cap 5) → 2 circuits."""
+def test_lighting_big_room_keeps_one_dedicated_circuit():
+    """Pièce > 5 lights (salon 6 spots + 1 PL) → 1 circuit dédié entier, pas
+    de découpage (règle cabinet 2026-09-07). Les autres pièces sont packées
+    à part."""
     from src.planrec.nfc_tableau import _build_lighting_circuits
-    rooms_with_lights = [("Cuisine", 7)]
-    circuits = _build_lighting_circuits(rooms_with_lights)
+    circuits = _build_lighting_circuits([("Sejour", 7), ("WC", 1), ("Chambre 1", 1)])
     assert len(circuits) == 2
-    assert sum(c.n_devices for c in circuits) == 7
+    big = next(c for c in circuits if c.rooms_served == ["Sejour"])
+    assert big.n_devices == 7
+    assert sorted(c.n_devices for c in circuits) == [2, 7]
+
+
+def test_lighting_label_uses_room_codes():
+    """Label = préfixe court + codes pièces (lisible sur l'étiquette)."""
+    from src.planrec.nfc_tableau import _build_lighting_circuits
+    codes = {"Chambre 2": "CH2", "Chambre 3": "CH3", "Dégagement": "DGT"}
+    circuits = _build_lighting_circuits(
+        [("Chambre 2", 1), ("Chambre 3", 1), ("Dégagement", 1)], codes=codes)
+    assert len(circuits) == 1
+    assert circuits[0].label == "Écl. CH2 CH3 DGT"
+    assert circuits[0].rooms_served == ["Chambre 2", "Chambre 3", "Dégagement"]
 
 
 def test_sockets_one_room_one_circuit():
@@ -512,8 +526,9 @@ def test_edge_case_minimal_logement_no_laundry_circuit():
     tableau = generate_tableau(devis_global=devis, heating_enabled=False)
     circuits = [c for r in tableau.rcds for c in r.circuits]
     assert not any(c.type == CircuitType.LAUNDRY for c in circuits)
-    type_a = [c for c in circuits if c.requires_type_a]
-    assert type_a and all(c.type == CircuitType.LIGHTING for c in type_a)
+    type_a_rcd = next(r for r in tableau.rcds if r.rcd_type == "A")
+    types = sorted(c.type for c in type_a_rcd.circuits)
+    assert types == [CircuitType.LIGHTING, CircuitType.SOCKET]  # 1 éclairage + GTL
 
 
 # --- v2 : différentiels A/F/AC, prises cuisine, VMC/PAC/borne ---
@@ -540,10 +555,12 @@ def test_new_circuit_types_v2_exist():
     assert CircuitType.EV_CHARGER.value == "ev_charger"
 
 
-def test_lighting_circuits_require_type_a():
+def test_lighting_circuits_not_flagged_type_a():
+    """Un seul éclairage va sur le type A (choisi à la répartition), les
+    circuits éclairage ne sont donc plus tous flaggés type A (2026-09-07)."""
     from src.planrec.nfc_tableau import _build_lighting_circuits
     circuits = _build_lighting_circuits([("Sejour", 3)])
-    assert circuits and all(c.requires_type_a for c in circuits)
+    assert circuits and not any(c.requires_type_a for c in circuits)
 
 
 def test_kitchen_sockets_dedicated_20a():
@@ -636,3 +653,91 @@ def test_distribute_splits_group_over_eight():
     rcds = _distribute_circuits_to_rcds(circuits, n_rcds=1)
     a = [r for r in rcds if r.rcd_type == "A"]
     assert len(a) == 2 and all(len(r.circuits) <= 8 for r in a)
+
+
+# --- 2026-09-07 : plafond 63 A, prises GTL, un seul éclairage type A, codes ---
+
+def _circ(i, ctype, amps, **kw):
+    from src.planrec.nfc_tableau import Circuit
+    return Circuit(id=f"c{i}", type=ctype, label="x", breaker_amps=amps,
+                   cable_section_mm2=2.5, **kw)
+
+
+def test_distribute_caps_rcd_at_63A():
+    """6 convecteurs 20A comptés plein pot = 120 A → impossible sur un seul
+    ID : découpé en ID ≤ 63 A chacun."""
+    from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, CircuitType
+    circuits = [_circ(i, CircuitType.HEATING, 20) for i in range(6)]
+    rcds = _distribute_circuits_to_rcds(circuits, n_rcds=1)
+    assert all(r.amps <= 63 for r in rcds)
+    assert sum(len(r.circuits) for r in rcds) == 6
+    assert len(rcds) == 2
+
+
+def test_distribute_one_lighting_on_type_a_rest_spread_on_ac():
+    """Un seul éclairage sur l'ID type A ; les autres éclairages vont un par
+    ID AC avant tout autre circuit."""
+    from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, CircuitType
+    lights = [_circ(i, CircuitType.LIGHTING, 10) for i in range(3)]
+    plaque = _circ(10, CircuitType.KITCHEN_SPECIAL, 32, requires_type_a=True)
+    socks = [_circ(20 + i, CircuitType.SOCKET, 16) for i in range(4)]
+    rcds = _distribute_circuits_to_rcds(lights + [plaque] + socks, n_rcds=3)
+    a = [r for r in rcds if r.rcd_type == "A"]
+    ac = [r for r in rcds if r.rcd_type == "AC"]
+    assert len(a) == 1
+    assert sum(1 for c in a[0].circuits if c.type == CircuitType.LIGHTING) == 1
+    assert len(ac) == 2
+    assert all(sum(1 for c in r.circuits if c.type == CircuitType.LIGHTING) == 1
+               for r in ac)
+
+
+def test_generate_tableau_adds_gtl_sockets_on_type_a():
+    """Prises GTL ×2 : toujours présentes, 16 A, sur l'ID type A."""
+    from src.planrec.nfc_tableau import generate_tableau, CircuitType
+    from src.planrec.nfc_rules import compute_devis_global
+    devis = compute_devis_global([{"id": "L1", "c2_class": "LivingRoom"}],
+                                 heating_enabled=False)
+    tableau = generate_tableau(devis, heating_enabled=False)
+    gtl = [c for r in tableau.rcds for c in r.circuits if c.label == "Prises GTL"]
+    assert len(gtl) == 1
+    assert (gtl[0].type, gtl[0].breaker_amps, gtl[0].n_devices) == (CircuitType.SOCKET, 16, 2)
+    assert gtl[0].requires_type_a
+    rcd = next(r for r in tableau.rcds if gtl[0] in r.circuits)
+    assert rcd.rcd_type == "A"
+
+
+def test_generate_tableau_room_codes_and_bureau():
+    """Codes pièces : catégorie + index si plusieurs ; « Bureau » → BUR."""
+    from src.planrec.nfc_tableau import generate_tableau, CircuitType
+    from src.planrec.nfc_rules import compute_devis_global
+    devis = compute_devis_global([
+        {"id": "L1", "c2_class": "LivingRoom"},
+        {"id": "B1", "c2_class": "BedRoom"},
+        {"id": "B2", "c2_class": "BedRoom"},
+        {"id": "B3", "c2_class": "BedRoom"},
+        {"id": "E1", "c2_class": "Entry"},
+        {"id": "S1", "c2_class": "Bath"},
+        {"id": "T1", "c2_class": "Storage"},
+    ], heating_enabled=False)
+    labels = {"B1": "Chambre principale", "B2": "Chambre 2", "B3": "Bureau",
+              "E1": "Dégagement", "S1": "Salle de bain", "T1": "Cellier"}
+    tableau = generate_tableau(devis, heating_enabled=False, room_labels=labels)
+    lights = [c for r in tableau.rcds for c in r.circuits if c.type == CircuitType.LIGHTING]
+    all_labels = " ".join(c.label for c in lights)
+    for code in ("SEJ", "CH1", "CH2", "BUR", "DGT", "BAIN", "CEL"):
+        assert code in all_labels, (code, all_labels)
+    assert all(c.label.startswith("Écl. ") for c in lights)
+    assert any(c.rooms_served == ["Bureau"] or "Bureau" in c.rooms_served for c in lights)
+
+
+def test_generate_tableau_T4_all_rcds_under_63A():
+    from src.planrec.nfc_tableau import generate_tableau
+    from src.planrec.nfc_rules import compute_devis_global
+    rooms = [{"id": "L", "c2_class": "LivingRoom", "surface_m2": 40},
+             {"id": "K", "c2_class": "Kitchen"}, {"id": "S", "c2_class": "Bath"},
+             {"id": "T", "c2_class": "Storage"}, {"id": "E", "c2_class": "Entry"},
+             {"id": "G", "c2_class": "Garage"}, {"id": "O", "c2_class": "Outdoor"}]
+    rooms += [{"id": f"B{i}", "c2_class": "BedRoom", "surface_m2": 12} for i in range(4)]
+    tableau = generate_tableau(compute_devis_global(rooms, heating_enabled=True))
+    assert all(r.amps <= 63 for r in tableau.rcds)
+    assert all(len(r.circuits) <= 8 for r in tableau.rcds)

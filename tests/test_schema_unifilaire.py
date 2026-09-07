@@ -153,3 +153,25 @@ def test_db_and_id_derived_annotations_in_pdf():
     assert "500 mA" in text        # sensibilité AGCP (sélectif)
     assert "30mA" in text          # sensibilité ID 30 mA
     assert "Type A" in text        # type du 1er ID (rcd_type "A")
+
+
+def test_localisation_label_not_truncated():
+    """La bande Localisation affiche le libellé complet (police réduite si
+    besoin), plus de coupe à 16 caractères."""
+    import io
+    from pypdf import PdfReader
+    from src.planrec.nfc_tableau import Circuit, RCD, CircuitType, Tableau
+    from src.planrec.schema_unifilaire import CartoucheInfo, render_schema_unifilaire_pdf
+
+    circ = Circuit(id="c1", type=CircuitType.LIGHTING,
+                   label="Écl. CH2 CH3 DGT BAIN CEL",
+                   breaker_amps=10, cable_section_mm2=1.5)
+    rcd = RCD(id="r1", rcd_type="A", amps=40, sensitivity_ma=30, circuits=[circ])
+    tableau = Tableau(typology="T3", typology_source="auto", surface_m2=None,
+                      heating_enabled=False, rcds=[rcd], total_modules=5,
+                      n_rails=1, notes=[], warnings=[])
+    pdf = render_schema_unifilaire_pdf(tableau, CartoucheInfo(
+        projet="p", client_nom="c", client_ville="v", puissance_kva=9,
+        regime_neutre="TT", date_iso="2026-09-07"))
+    text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
+    assert "CEL" in text, text

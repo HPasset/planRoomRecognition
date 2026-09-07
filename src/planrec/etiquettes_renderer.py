@@ -16,6 +16,7 @@ from src.planrec.icon_assets import (
     load_icon_as_drawing,
     resolve_svg_id_for_circuit as _resolve_svg_id_for_circuit,
 )
+from src.planrec.tableau_renderer import _tokenize_hyphen
 
 
 # Constantes de layout (en millimètres, A4 paysage)
@@ -28,6 +29,7 @@ LOGO_CELL_W_MM = 25.0          # cellule dédiée logo batIA en fin de ligne (Ha
 def compute_strip_widths(
     n_disjoncteurs: int,
     page_usable_width_mm: float,
+    index_col_w_mm: float = INDEX_COL_W_MM,
 ) -> dict:
     """Calcule la largeur de chaque cellule d'une rangée RCD en mm.
 
@@ -39,16 +41,20 @@ def compute_strip_widths(
         n_disjoncteurs: nombre de disjoncteurs effectivement présents sur le RCD
                         (typiquement 1 à 7, max 8 avec overflow géré ailleurs)
         page_usable_width_mm: largeur imprimable de la page (zone hors marges)
+        index_col_w_mm: largeur de la colonne index. Par défaut INDEX_COL_W_MM,
+                        mais un document contenant une rangée "x bis" doit
+                        utiliser une largeur élargie sur TOUTES ses rangées
+                        (colonnes alignées) — cf. compute_index_col_width.
 
     Returns:
         dict avec clés "index", "id", "disjoncteurs" (list[float]),
         "blank" (zone libre), "logo" (cellule logo batIA).
     """
     disjoncteurs_widths = [DISJONCTEUR_CELL_W_MM] * n_disjoncteurs
-    consumed = INDEX_COL_W_MM + ID_CELL_W_MM + sum(disjoncteurs_widths) + LOGO_CELL_W_MM
+    consumed = index_col_w_mm + ID_CELL_W_MM + sum(disjoncteurs_widths) + LOGO_CELL_W_MM
     blank_w = page_usable_width_mm - consumed
     return {
-        "index": INDEX_COL_W_MM,
+        "index": index_col_w_mm,
         "id": ID_CELL_W_MM,
         "disjoncteurs": disjoncteurs_widths,
         "blank": blank_w,
@@ -85,11 +91,46 @@ def paginate_rcds(
     rcds: list[RCD],
     per_page: int = RCDS_PER_PAGE,
 ) -> list[list[RCD]]:
-    """Découpe la liste de RCDs en pages contenant per_page RCDs maximum."""
+    """Découpe la liste de RCDs en pages par CAPACITÉ DE RANGÉES (per_page
+    rangées max par page, cf. split_rcd_into_rows), en gardant toutes les
+    rangées d'un même RCD (rangée principale + "bis") sur la même page —
+    un RCD avec >7 disjoncteurs occupe 2+ rangées et ne doit jamais être
+    coupé entre deux pages.
+
+    Cas dégénéré : un RCD à lui seul ayant plus de per_page rangées déborde
+    simplement sur la page suivante (fallback simple, acceptable)."""
     pages: list[list[RCD]] = []
-    for i in range(0, len(rcds), per_page):
-        pages.append(rcds[i : i + per_page])
+    current_page: list[RCD] = []
+    current_rows = 0
+    for rcd in rcds:
+        n_rows = len(split_rcd_into_rows(rcd, max_per_row=MAX_DISJONCTEURS_PER_ROW))
+        if current_page and current_rows + n_rows > per_page:
+            pages.append(current_page)
+            current_page = []
+            current_rows = 0
+        current_page.append(rcd)
+        current_rows += n_rows
+    if current_page:
+        pages.append(current_page)
     return pages
+
+
+def compute_index_col_width(rcds: list[RCD]) -> float:
+    """Largeur de colonne index à utiliser pour TOUTES les rangées du
+    document : INDEX_COL_W_MM par défaut, ou une largeur élargie si au
+    moins une rangée de débordement ("x bis") existe (le label est alors
+    plus long que le simple numéro)."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    has_overflow = any(
+        len(split_rcd_into_rows(rcd, max_per_row=MAX_DISJONCTEURS_PER_ROW)) > 1
+        for rcd in rcds
+    )
+    if not has_overflow:
+        return INDEX_COL_W_MM
+    widest_label = f"{len(rcds)} bis"
+    widest_w_mm = stringWidth(widest_label, "Helvetica-Bold", 8) / mm + 2.0  # marge 1 mm de chaque côté
+    return max(INDEX_COL_W_MM, widest_w_mm)
 
 
 from reportlab.lib.units import mm
@@ -198,17 +239,12 @@ def _draw_batia_logo_cartouche(canvas, x_mm: float, y_mm: float,
     renderPDF.draw(drawing, canvas, x_logo_mm * mm, y_logo_mm * mm)
 
 
-def _wrap_cell_label(label: str, max_chars: int = 8) -> list[str]:
+def _wrap_cell_label(label: str, max_chars: int = 8, max_lines: int = 3) -> list[str]:
     """Découpe un label en lignes de ≤ max_chars pour tenir dans 17.5 mm.
     Réutilise la stratégie de _wrap_label de tableau_renderer (espaces + traits
-    d'union)."""
-    words: list[str] = []
-    for raw in label.split():
-        parts = raw.split("-")
-        for i, p in enumerate(parts):
-            if not p:
-                continue
-            words.append(p + "-" if i < len(parts) - 1 else p)
+    d'union). 3 lignes en 6 pt tiennent sous le picto (« Écl. CH2 / CH3 DGT /
+    BAIN CEL »)."""
+    words = _tokenize_hyphen(label)
     lines: list[str] = []
     current = ""
     for word in words:
@@ -218,10 +254,10 @@ def _wrap_cell_label(label: str, max_chars: int = 8) -> list[str]:
             current = current + " " + word
         else:
             lines.append(current)
-            if len(lines) >= 2:
+            if len(lines) >= max_lines:
                 break
             current = word
-    if current and len(lines) < 2:
+    if current and len(lines) < max_lines:
         lines.append(current)
     return lines
 
@@ -236,6 +272,7 @@ def render_rcd_row(
     page_usable_width_mm: float,
     is_overflow_row: bool = False,
     x_left_mm: float = 10.0,
+    index_col_w_mm: float = INDEX_COL_W_MM,
 ) -> int:
     """Rend UNE rangée RCD (header strip + body strip) sur le canvas.
 
@@ -259,6 +296,7 @@ def render_rcd_row(
     widths = compute_strip_widths(
         n_disjoncteurs=len(row_circuits),
         page_usable_width_mm=page_usable_width_mm,
+        index_col_w_mm=index_col_w_mm,
     )
 
     # Y bas-gauche des deux strips (reportlab Canvas mesure de bas en haut).
@@ -337,13 +375,11 @@ def render_rcd_row(
         _draw_picto_in_cell(canvas, svg_id,
                             x_cursor_mm, y_body_bottom_mm,
                             DISJONCTEUR_CELL_W_MM, BODY_STRIP_H_MM)
-        # Label sur 2 lignes max, sous le picto
+        # Label sur 3 lignes max, sous le picto (qui occupe les 14 mm du haut)
         label_lines = _wrap_cell_label(circuit.label, max_chars=8)
-        canvas.setFont("Helvetica", 7)
-        # Texte commence à ~7 mm depuis le bas du strip body (sous le picto qui
-        # commence en haut et fait 12 mm)
+        canvas.setFont("Helvetica", 6)
         for i, line in enumerate(label_lines):
-            y_text_mm = y_body_bottom_mm + 5 - (i * 2.5)
+            y_text_mm = y_body_bottom_mm + 5.9 - (i * 2.2)
             canvas.drawCentredString(
                 (x_cursor_mm + DISJONCTEUR_CELL_W_MM / 2) * mm,
                 y_text_mm * mm,
@@ -418,14 +454,15 @@ def render_etiquettes_pdf(tableau: Tableau) -> bytes:
     total_pages = max(len(pages), 1)
 
     global_q_counter = 1
+    rcd_counter = 0  # numéro 1-based du RCD dans le tableau, continu entre pages
+    index_col_w_mm = compute_index_col_width(tableau.rcds)
 
     for page_idx, rcds_in_page in enumerate(pages):
         # Coord y "top" du strip header du 1er RCD : zone utile descendante
         y_top_mm = A4_LANDSCAPE_H_MM - PAGE_MARGIN_MM
-        rcd_index_in_tableau = page_idx * RCDS_PER_PAGE  # 0-based offset
 
         for local_idx, rcd in enumerate(rcds_in_page):
-            rcd_index_in_tableau += 1
+            rcd_counter += 1
             rows = split_rcd_into_rows(rcd, max_per_row=MAX_DISJONCTEURS_PER_ROW)
             for row_idx, row_circuits in enumerate(rows):
                 is_overflow = row_idx > 0
@@ -433,12 +470,13 @@ def render_etiquettes_pdf(tableau: Tableau) -> bytes:
                     canvas=canvas,
                     rcd=rcd,
                     row_circuits=row_circuits,
-                    rcd_index=rcd_index_in_tableau,
+                    rcd_index=rcd_counter,
                     global_q_start=global_q_counter,
                     y_top_mm=y_top_mm,
                     page_usable_width_mm=USABLE_W_MM,
                     is_overflow_row=is_overflow,
                     x_left_mm=PAGE_MARGIN_MM,
+                    index_col_w_mm=index_col_w_mm,
                 )
                 y_top_mm -= (HEADER_STRIP_H_MM + STRIP_INNER_GAP_MM + BODY_STRIP_H_MM + ROW_VERTICAL_GAP_MM)
 

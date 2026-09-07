@@ -290,3 +290,26 @@ def test_render_etiquettes_pdf_empty_tableau_returns_warning_page():
     assert pdf_bytes.startswith(b"%PDF-")
     text = PdfReader(io.BytesIO(pdf_bytes)).pages[0].extract_text()
     assert "Aucun RCD" in text or "vide" in text
+
+
+def test_render_rcd_row_shows_all_room_codes():
+    """Un circuit multi-pièces imprime tous ses codes (3 lignes de 8 car.)."""
+    import io
+    from pypdf import PdfReader
+    from reportlab.pdfgen.canvas import Canvas
+    from reportlab.lib.pagesizes import landscape, A4
+    from src.planrec.etiquettes_renderer import render_rcd_row
+    from src.planrec.nfc_tableau import Circuit, RCD, CircuitType
+
+    circuits = [Circuit(id="c1", type=CircuitType.LIGHTING,
+                        label="Écl. CH2 CH3 DGT BAIN CEL",
+                        breaker_amps=10, cable_section_mm2=1.5)]
+    rcd = RCD(id="rcd1", rcd_type="A", amps=40, sensitivity_ma=30, circuits=circuits)
+    buf = io.BytesIO()
+    canvas = Canvas(buf, pagesize=landscape(A4))
+    render_rcd_row(canvas=canvas, rcd=rcd, row_circuits=circuits, rcd_index=1,
+                   global_q_start=1, y_top_mm=180, page_usable_width_mm=277)
+    canvas.save()
+    text = PdfReader(io.BytesIO(buf.getvalue())).pages[0].extract_text()
+    for code in ("CH2", "CH3", "DGT", "BAIN", "CEL"):
+        assert code in text, (code, text)

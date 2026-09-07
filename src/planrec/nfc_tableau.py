@@ -6,6 +6,7 @@ Source : docs/superpowers/specs/2026-06-02-tableau-electrique-design.md
 """
 from __future__ import annotations
 
+import bisect
 import math
 import secrets
 from dataclasses import dataclass, field
@@ -99,83 +100,73 @@ KITCHEN_SOCKET_MAX_PER_CIRCUIT = 6  # NFC : prises cuisine 20A / 2,5 mm²
 CONVECTOR_MAX_PER_CIRCUIT = 2     # Règle cabinet associé (2× 2000W max)
 
 
-def _compact_rooms_label(prefix: str, rooms: list[str]) -> str:
-    """Label compact pour les modules SVG : prefix + room(s) qui tient
-    en 2-3 lignes max dans 60 px de large. Si >1 pièce, agrégé en '×N'.
-    La liste complète des pièces reste dans Circuit.rooms_served pour
-    le rendu HTML/PDF."""
+
+def _compact_rooms_label(prefix: str, rooms: list[str],
+                         codes: dict[str, str] | None = None) -> str:
+    """Label court pour étiquettes/schéma : prefix + codes des pièces
+    (« Écl. CH2 CH3 DGT »). `codes` mappe label pièce → code court ; à défaut
+    le label complet. La liste complète reste dans Circuit.rooms_served."""
     if not rooms:
         return prefix
-    if len(rooms) == 1:
-        return f"{prefix} {rooms[0]}"
-    return f"{prefix} ×{len(rooms)}"
+    codes = codes or {}
+    seen = dict.fromkeys(codes.get(r, r) for r in rooms)  # dédoublonne, ordre gardé
+    return f"{prefix} " + " ".join(seen)
 
 
 def _build_lighting_circuits(
     rooms_with_lights: list[tuple[str, int]],
+    codes: dict[str, str] | None = None,
 ) -> list[Circuit]:
     """Bin-packing greedy : pièces avec leur n_lights → circuits 5/circuit max.
 
-    Trie pièces par n_lights décroissant. Ouvre circuits successifs en y
-    ajoutant pièces tant que capacité restante.
+    Une pièce qui dépasse 5 points (salon 6 spots + 1 PL) garde un circuit
+    dédié entier, sans découpage (règle cabinet 2026-09-07). Les autres sont
+    packées ensemble par ordre décroissant. Aucun flag type A : la
+    répartition choisit un seul circuit éclairage pour l'ID type A.
     """
     sorted_rooms = sorted(rooms_with_lights, key=lambda x: -x[1])
     circuits: list[Circuit] = []
-    current_capacity = 0
     current_rooms: list[str] = []
     current_n = 0
 
+    def _make(rooms: list[str], n: int) -> Circuit:
+        return Circuit(
+            id=generate_circuit_id(),
+            type=CircuitType.LIGHTING,
+            label=_compact_rooms_label("Écl.", rooms, codes),
+            breaker_amps=10,
+            cable_section_mm2=1.5,
+            rooms_served=list(rooms),
+            n_devices=n,
+        )
+
     def _flush():
-        nonlocal current_capacity, current_rooms, current_n
+        nonlocal current_rooms, current_n
         if current_n > 0:
-            circuits.append(Circuit(
-                id=generate_circuit_id(),
-                type=CircuitType.LIGHTING,
-                label=_compact_rooms_label("Éclairage", current_rooms),
-                breaker_amps=10,
-                cable_section_mm2=1.5,
-                rooms_served=list(current_rooms),
-                n_devices=current_n,
-                requires_type_a=True,
-            ))
-        current_capacity = 0
+            circuits.append(_make(current_rooms, current_n))
         current_rooms = []
         current_n = 0
 
     for room_name, n_lights in sorted_rooms:
         if n_lights > LIGHTING_MAX_PER_CIRCUIT:
-            _flush()
-            n_remaining = n_lights
-            while n_remaining > 0:
-                chunk = min(n_remaining, LIGHTING_MAX_PER_CIRCUIT)
-                circuits.append(Circuit(
-                    id=generate_circuit_id(),
-                    type=CircuitType.LIGHTING,
-                    label=f"Éclairage {room_name}",
-                    breaker_amps=10,
-                    cable_section_mm2=1.5,
-                    rooms_served=[room_name],
-                    n_devices=chunk,
-                    requires_type_a=True,
-                ))
-                n_remaining -= chunk
-        elif current_capacity + n_lights <= LIGHTING_MAX_PER_CIRCUIT:
+            # ponytail: pas de plafond haut ; en ajouter un si le cabinet
+            # remonte des pièces à 12+ spots sur un seul 10 A.
+            circuits.append(_make([room_name], n_lights))
+        elif current_n + n_lights <= LIGHTING_MAX_PER_CIRCUIT:
             current_rooms.append(room_name)
-            current_capacity += n_lights
             current_n += n_lights
         else:
             _flush()
             current_rooms = [room_name]
-            current_capacity = n_lights
             current_n = n_lights
 
     _flush()
     return circuits
 
-
 def _build_heating_circuits(
     rooms_with_convectors: list[tuple[str, int]],
     towel_warmer_rooms: list[str],
+    codes: dict[str, str] | None = None,
 ) -> list[Circuit]:
     """Génère les circuits chauffage : convecteurs packés 2/circuit + 1 circuit
     par sèche-serviettes (1 SDB = 1 circuit dédié)."""
@@ -192,7 +183,7 @@ def _build_heating_circuits(
         circuits.append(Circuit(
             id=generate_circuit_id(),
             type=CircuitType.HEATING,
-            label=_compact_rooms_label("Chauffage", chunk),
+            label=_compact_rooms_label("Chauf.", chunk, codes),
             breaker_amps=20,
             cable_section_mm2=2.5,
             rooms_served=list(chunk),
@@ -220,9 +211,10 @@ def _build_heating_circuits(
 
 def _build_socket_circuits(
     rooms_with_sockets: list[tuple[str, int]],
+    codes: dict[str, str] | None = None,
 ) -> list[Circuit]:
     """Bin-packing greedy : pièces avec leurs n_sockets → circuits de
-    SOCKET_MAX_PER_CIRCUIT (5) prises max. Pièces dépassant la limite prennent
+    SOCKET_MAX_PER_CIRCUIT (8) prises max. Pièces dépassant la limite prennent
     un/des circuit(s) dédié(s) découpés, les plus petites sont packées ensemble."""
     sorted_rooms = sorted(rooms_with_sockets, key=lambda x: -x[1])
     circuits: list[Circuit] = []
@@ -235,7 +227,7 @@ def _build_socket_circuits(
             circuits.append(Circuit(
                 id=generate_circuit_id(),
                 type=CircuitType.SOCKET,
-                label=_compact_rooms_label("Prises", current_rooms),
+                label=_compact_rooms_label("PC", current_rooms, codes),
                 breaker_amps=16,
                 cable_section_mm2=1.5,
                 rooms_served=list(current_rooms),
@@ -253,7 +245,7 @@ def _build_socket_circuits(
                 circuits.append(Circuit(
                     id=generate_circuit_id(),
                     type=CircuitType.SOCKET,
-                    label=f"Prises {room_name}",
+                    label=_compact_rooms_label("PC", [room_name], codes),
                     breaker_amps=16,
                     cable_section_mm2=1.5,
                     rooms_served=[room_name],
@@ -343,6 +335,7 @@ def _build_specialized_circuits(
 # grandes (besoin de séparer en zones indépendantes).
 _TYPO_RCD_RULE = {"T1": 2, "T2": 2, "T3": 3, "T4": 4, "T5": 4}
 MAX_BREAKERS_PER_RCD = 8
+MAX_RCD_AMPS = 63  # calibre max d'un interrupteur différentiel (règle cabinet 2026-09-07)
 
 
 def _compute_min_rcds(
@@ -369,13 +362,61 @@ def _compute_min_rcds(
 
 _NORMALIZED_RCD_AMPS = [25, 40, 63, 80, 100, 125]
 
+# Codes pièces courts pour les libellés d'étiquettes (catégorie NFC → code).
+_CATEGORY_CODES: dict[str, str] = {
+    NFCCategory.LIVINGROOM.value: "SEJ",
+    NFCCategory.KITCHEN.value: "CUIS",
+    NFCCategory.BEDROOM.value: "CH",
+    NFCCategory.BATH.value: "BAIN",
+    NFCCategory.WC.value: "WC",
+    NFCCategory.STORAGE.value: "CEL",
+    NFCCategory.ENTRY.value: "DGT",
+    NFCCategory.OUTDOOR.value: "EXT",
+    NFCCategory.GARAGE.value: "GAR",
+    NFCCategory.UNKNOWN.value: "DIV",
+}
+
+
+def _room_codes(rooms: list[tuple[str, NFCCategory]]) -> dict[str, str]:
+    """label pièce → code court (« CH2 », « BUR », « BAIN »). Index ajouté
+    seulement quand plusieurs pièces partagent le même code. « Bureau » est
+    rangé en Chambre par le devis mais garde son code propre."""
+    base: list[tuple[str, str]] = []
+    for label, cat in rooms:
+        code = "BUR" if "bureau" in label.lower() else _CATEGORY_CODES.get(cat.value, "DIV")
+        base.append((label, code))
+    totals: dict[str, int] = {}
+    for _, code in base:
+        totals[code] = totals.get(code, 0) + 1
+    seen: dict[str, int] = {}
+    out: dict[str, str] = {}
+    for label, code in base:
+        seen[code] = seen.get(code, 0) + 1
+        out[label] = f"{code}{seen[code]}" if totals[code] > 1 else code
+    return out
+
+
+def _gtl_sockets_circuit() -> Circuit:
+    """Prises GTL ×2 : fournies avec le lot tableau, absentes du catalogue,
+    mais toujours sur le schéma et l'ID type A (règle cabinet 2026-09-07)."""
+    return Circuit(
+        id=generate_circuit_id(),
+        type=CircuitType.SOCKET,
+        label="Prises GTL",
+        breaker_amps=16,
+        cable_section_mm2=1.5,
+        rooms_served=["GTL"],
+        n_devices=2,
+        requires_type_a=True,
+    )
+
 
 def _ceil_to_normalized(x: float) -> int:
     """Arrondi au calibre normalisé supérieur dans {25, 40, 63, 80, 100, 125}."""
-    for cap in _NORMALIZED_RCD_AMPS:
-        if x <= cap:
-            return cap
-    return _NORMALIZED_RCD_AMPS[-1]
+    idx = bisect.bisect_left(_NORMALIZED_RCD_AMPS, x)
+    if idx >= len(_NORMALIZED_RCD_AMPS):
+        return _NORMALIZED_RCD_AMPS[-1]
+    return _NORMALIZED_RCD_AMPS[idx]
 
 
 def _compute_rcd_amps(circuits: list[Circuit]) -> int:
@@ -387,16 +428,21 @@ def _compute_rcd_amps(circuits: list[Circuit]) -> int:
     (prises, éclairage, électroménager non-chauffant) prennent un coefficient
     de simultanéité 0.5.
     """
-    heat_types = (
-        CircuitType.HEATING,
-        CircuitType.TOWEL_WARMER,
-        CircuitType.BOILER,
-        CircuitType.HEAT_PUMP,
-    )
-    heat = [c for c in circuits if c.type in heat_types]
-    non_heat = [c for c in circuits if c.type not in heat_types]
-    raw = sum(c.breaker_amps for c in non_heat) / 2 + sum(c.breaker_amps for c in heat)
-    return _ceil_to_normalized(raw)
+    return _ceil_to_normalized(_raw_rcd_amps(circuits))
+
+
+_HEAT_CIRCUIT_TYPES = (
+    CircuitType.HEATING,
+    CircuitType.TOWEL_WARMER,
+    CircuitType.BOILER,
+    CircuitType.HEAT_PUMP,
+)
+
+
+def _raw_rcd_amps(circuits: list[Circuit]) -> float:
+    heat = sum(c.breaker_amps for c in circuits if c.type in _HEAT_CIRCUIT_TYPES)
+    non_heat = sum(c.breaker_amps for c in circuits if c.type not in _HEAT_CIRCUIT_TYPES)
+    return non_heat / 2 + heat
 
 
 def generate_tableau(
@@ -438,6 +484,7 @@ def generate_tableau(
     towel_warmer_rooms: list[str] = []
     spec_rooms: dict[EquipmentType, list[str]] = {}
 
+    room_cats: list[tuple[str, NFCCategory]] = []
     cat_seen: dict[str, int] = {}
     cat_total: dict[str, int] = {}
     for d in devis_global.per_room:
@@ -450,6 +497,7 @@ def generate_tableau(
             (room_labels or {}).get(d.room_id)
             or (f"{cat} {cat_seen[cat]}" if cat_total[cat] > 1 else cat)
         )
+        room_cats.append((room_label, d.nfc_category))
 
         n_light = d.items.get(EquipmentType.LIGHT_POINT, 0)
         if n_light > 0:
@@ -482,13 +530,15 @@ def generate_tableau(
                 )
 
     # Phase 2-5 : générer circuits
+    codes = _room_codes(room_cats)
     circuits: list[Circuit] = []
-    circuits.extend(_build_lighting_circuits(rooms_with_lights))
-    circuits.extend(_build_socket_circuits(rooms_with_sockets))
+    circuits.extend(_build_lighting_circuits(rooms_with_lights, codes))
+    circuits.extend(_build_socket_circuits(rooms_with_sockets, codes))
+    circuits.append(_gtl_sockets_circuit())
     circuits.extend(_build_kitchen_socket_circuits(rooms_with_kitchen_sockets))
     if heating_enabled:
         circuits.extend(_build_heating_circuits(rooms_with_convectors,
-                                                 towel_warmer_rooms))
+                                                 towel_warmer_rooms, codes))
     circuits.extend(_build_specialized_circuits(spec_rooms))
 
     # Phase 6 : nombre min de RCD
@@ -517,55 +567,67 @@ def generate_tableau(
     )
 
 
+
 def _distribute_circuits_to_rcds(
     circuits: list[Circuit],
     n_rcds: int,
 ) -> list[RCD]:
     """Répartit les circuits par famille de différentiel (A / F / AC).
 
-    - Type A : circuits requires_type_a (plaque, lave-linge, éclairage, VMC).
+    - Type A : circuits requires_type_a (plaque, lave-linge, VMC, prises GTL)
+      + UN seul circuit éclairage (le plus chargé).
     - Type F : circuits requires_type_f (pompe à chaleur, borne véhicule).
-    - Type AC : le reste.
-    Chaque famille est découpée en paquets de MAX_BREAKERS_PER_RCD (8). Le
-    nombre total de DDR est complété par des DDR AC vides jusqu'à n_rcds (min
-    typologie/surface). Calibre recalculé par circuit, 30 mA.
+    - Type AC : le reste ; les autres éclairages y sont posés en premier, un
+      par ID, pour qu'un ID qui saute n'éteigne pas tout le logement.
+    Chaque circuit va sur l'ID le moins chargé de sa famille qui tient les deux
+    contraintes : MAX_BREAKERS_PER_RCD (8) et calibre ≤ MAX_RCD_AMPS (63 A) ;
+    sinon un nouvel ID de la même famille est ouvert. Le total est complété
+    par des ID AC vides jusqu'à n_rcds (min typologie/surface). 30 mA.
     """
     a_circuits = [c for c in circuits if c.requires_type_a]
     f_circuits = [c for c in circuits
                   if c.requires_type_f and not c.requires_type_a]
-    ac_circuits = [c for c in circuits
-                   if not c.requires_type_a and not c.requires_type_f]
+    rest = [c for c in circuits
+            if not c.requires_type_a and not c.requires_type_f]
+    lights = sorted((c for c in rest if c.type == CircuitType.LIGHTING),
+                    key=lambda c: -c.n_devices)
+    ac_circuits = [c for c in rest if c.type != CircuitType.LIGHTING]
+    if lights:
+        a_circuits.append(lights.pop(0))
 
-    def _spread(items: list[Circuit], rcd_type: str, n_groups: int) -> list[RCD]:
-        """Répartit `items` sur `n_groups` DDR de façon équilibrée (round-robin
-        par ampérage décroissant). Renvoie des DDR (éventuellement vides si
-        n_groups dépasse le besoin, pour atteindre un minimum réglementaire)."""
-        rcds = [RCD(id=generate_rcd_id(), rcd_type=rcd_type, amps=40,
-                    sensitivity_ma=30, circuits=[]) for _ in range(n_groups)]
-        for i, c in enumerate(sorted(items, key=lambda c: -c.breaker_amps)):
-            rcds[i % n_groups].circuits.append(c)
+    def _new_rcd(rcd_type: str) -> RCD:
+        return RCD(id=generate_rcd_id(), rcd_type=rcd_type, amps=40,
+                   sensitivity_ma=30, circuits=[])
+
+    def _pack(items: list[Circuit], rcd_type: str, n_min: int) -> list[RCD]:
+        rcds = [_new_rcd(rcd_type) for _ in range(n_min)]
+        for c in items:
+            fits = [r for r in rcds
+                    if len(r.circuits) < MAX_BREAKERS_PER_RCD
+                    and _raw_rcd_amps(r.circuits + [c]) <= MAX_RCD_AMPS]
+            if not fits:
+                rcds.append(_new_rcd(rcd_type))
+                fits = [rcds[-1]]
+            target = min(fits, key=lambda r: (_raw_rcd_amps(r.circuits), len(r.circuits)))
+            target.circuits.append(c)
         return rcds
 
-    # Type A : toujours ≥ 1 (l'éclairage est toujours présent).
-    n_a = max(1, math.ceil(len(a_circuits) / MAX_BREAKERS_PER_RCD))
-    # Type F : seulement si des circuits le requièrent.
+    by_amps = lambda cs: sorted(cs, key=lambda c: -c.breaker_amps)
+    n_a = math.ceil(len(a_circuits) / MAX_BREAKERS_PER_RCD)
     n_f = math.ceil(len(f_circuits) / MAX_BREAKERS_PER_RCD)
-    # Type AC : au moins de quoi tenir le cap de 8, et de quoi compléter le
-    # minimum réglementaire (typologie/surface) en zones AC indépendantes.
-    n_ac_min = math.ceil(len(ac_circuits) / MAX_BREAKERS_PER_RCD) if ac_circuits else 0
+    n_ac_min = math.ceil((len(ac_circuits) + len(lights)) / MAX_BREAKERS_PER_RCD)
     n_ac = max(n_ac_min, n_rcds - n_a - n_f, 0)
 
     rcds: list[RCD] = []
-    rcds.extend(_spread(a_circuits, "A", n_a))
-    rcds.extend(_spread(f_circuits, "F", n_f))
-    rcds.extend(_spread(ac_circuits, "AC", n_ac))
+    rcds.extend(_pack(by_amps(a_circuits), "A", n_a))
+    rcds.extend(_pack(by_amps(f_circuits), "F", n_f))
+    # Éclairages d'abord (un par ID AC), puis le reste par ampérage décroissant.
+    rcds.extend(_pack(lights + by_amps(ac_circuits), "AC", n_ac))
 
-    # Si le minimum n'est toujours pas atteint (aucun circuit AC), compléter
-    # avec des DDR AC de réserve.
     while len(rcds) < n_rcds:
-        rcds.append(RCD(id=generate_rcd_id(), rcd_type="AC", amps=40,
-                        sensitivity_ma=30, circuits=[]))
+        rcds.append(_new_rcd("AC"))
 
     for rcd in rcds:
         rcd.amps = _compute_rcd_amps(rcd.circuits)
     return rcds
+

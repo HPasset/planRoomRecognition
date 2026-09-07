@@ -10,6 +10,7 @@ docs/superpowers/specs/2026-06-15-schema-unifilaire-hager-design.md
 """
 from __future__ import annotations
 
+import bisect
 import io
 from dataclasses import dataclass
 
@@ -17,6 +18,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.graphics import renderPDF
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen.canvas import Canvas
 
 from src.planrec.nfc_tableau import Tableau, RCD
@@ -31,6 +33,7 @@ PICTO_PURPLE = "#8217fd"           # violet batIA (charte logo)
 # --- Dérivations ---
 _PUISSANCE_BY_TYPO = {"T1": 6, "T2": 6, "T3": 9, "T4": 12, "T5": 12}
 _DB_CALIBRE_BY_KVA = {3: 15, 6: 30, 9: 45, 12: 60, 15: 60, 18: 90}
+_DB_CALIBRE_KVA_SORTED = sorted(_DB_CALIBRE_BY_KVA)
 
 
 def derive_puissance_kva(typology: str) -> int:
@@ -40,13 +43,8 @@ def derive_puissance_kva(typology: str) -> int:
 
 def derive_db_calibre(puissance_kva: int) -> int:
     """Calibre du disjoncteur de branchement (A) dérivé de la puissance (kVA)."""
-    if puissance_kva in _DB_CALIBRE_BY_KVA:
-        return _DB_CALIBRE_BY_KVA[puissance_kva]
-    best = min(_DB_CALIBRE_BY_KVA)
-    for k in sorted(_DB_CALIBRE_BY_KVA):
-        if k <= puissance_kva:
-            best = k
-    return _DB_CALIBRE_BY_KVA[best]
+    idx = max(0, bisect.bisect_right(_DB_CALIBRE_KVA_SORTED, puissance_kva) - 1)
+    return _DB_CALIBRE_BY_KVA[_DB_CALIBRE_KVA_SORTED[idx]]
 
 
 @dataclass
@@ -57,11 +55,6 @@ class CartoucheInfo:
     puissance_kva: int
     regime_neutre: str
     date_iso: str
-
-
-def circuit_repere(q_idx: int) -> str:
-    """Repère global d'un disjoncteur divisionnaire : 'Q{n}'."""
-    return f"Q{q_idx}"
 
 
 # --- Géométrie page (mm, A4 paysage) ---
@@ -293,7 +286,7 @@ def _draw_q(c: Canvas, x: float, circ, q_idx: int) -> None:
     _draw_q_glyph(c, x, Q_SYM_Y)
     tx = x + 4
     c.setFont("Helvetica-Bold", 6)
-    c.drawString(tx * mm, (Q_SYM_Y + 1.5) * mm, circuit_repere(q_idx))
+    c.drawString(tx * mm, (Q_SYM_Y + 1.5) * mm, f"Q{q_idx}")
     c.setFont("Helvetica", 5)
     c.drawString(tx * mm, (Q_SYM_Y - 2) * mm, f"{DEFAULT_CURVE} {circ.breaker_amps}A")
     c.setFont("Helvetica", 4.5)
@@ -338,11 +331,18 @@ def _draw_picto_slot(c: Canvas, x: float, circ) -> None:
 
 def _draw_localisation(c: Canvas, x: float, circ) -> None:
     """Désignation du départ en texte vertical (bande Localisation)."""
+    label = circ.label or ""
+    max_w = (PICTO_BAND_BOT - LOCAL_LABEL_BASE_Y - 1.0) * mm
+    size = 5.5
+    while size > 3.5 and stringWidth(label, "Helvetica", size) > max_w:
+        size -= 0.5
+    while label and stringWidth(label, "Helvetica", size) > max_w:
+        label = label[:-1]
     c.saveState()
     c.translate(x * mm, LOCAL_LABEL_BASE_Y * mm)
     c.rotate(90)
-    c.setFont("Helvetica", 5.5)
-    c.drawString(0, -1.5 * mm, (circ.label or "")[:16])
+    c.setFont("Helvetica", size)
+    c.drawString(0, -1.5 * mm, label)
     c.restoreState()
 
 
