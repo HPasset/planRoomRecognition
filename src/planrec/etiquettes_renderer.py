@@ -243,7 +243,7 @@ def _wrap_cell_label(label: str, max_chars: int = 8, max_lines: int = 4) -> list
     """Découpe un label en lignes de ≤ max_chars pour tenir dans 17.5 mm.
     Réutilise la stratégie de _wrap_label de tableau_renderer (espaces + traits
     d'union). 4 lignes en 6 pt tiennent sous le picto de 10 mm (« Écl. CH2 /
-    CH3 DGT / BAIN CEL / ×5 »)."""
+    CH3 DGT / BAIN CEL / (×5) »)."""
     words = _tokenize_hyphen(label)
     lines: list[str] = []
     current = ""

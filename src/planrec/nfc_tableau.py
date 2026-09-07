@@ -105,13 +105,13 @@ def _compact_rooms_label(prefix: str, rooms: list[str],
                          codes: dict[str, str] | None = None,
                          count: int | None = None) -> str:
     """Label court pour étiquettes/schéma : prefix + codes des pièces + nombre
-    d'appareils (« Écl. CH2 CH3 DGT ×5 », « PC SEJ ×8 »). `codes` mappe
+    d'appareils (« Écl. CH2 CH3 DGT (×5) », « PC SEJ (×8) »). `codes` mappe
     label pièce → code court ; à défaut le label complet. La liste complète
     reste dans Circuit.rooms_served."""
     codes = codes or {}
     parts = [prefix, *dict.fromkeys(codes.get(r, r) for r in rooms)]  # dédoublonne, ordre gardé
     if count is not None:
-        parts.append(f"×{count}")
+        parts.append(f"(×{count})")
     return " ".join(parts)
 
 
@@ -405,7 +405,7 @@ def _gtl_sockets_circuit() -> Circuit:
     return Circuit(
         id=generate_circuit_id(),
         type=CircuitType.SOCKET,
-        label="Prises GTL ×2",
+        label="Prises GTL (×2)",
         breaker_amps=16,
         cable_section_mm2=1.5,
         rooms_served=[],

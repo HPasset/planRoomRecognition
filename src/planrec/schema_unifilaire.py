@@ -351,9 +351,9 @@ def _draw_localisation(c: Canvas, x: float, circ) -> None:
     sous le départ."""
     header = _LOCALISATION_HEADERS.get(circ.type)
     if header is None or (circ.type == CircuitType.SOCKET and not circ.rooms_served):
-        header = circ.label or ""  # spécialisés, « Prises GTL ×2 »
+        header = circ.label or ""  # spécialisés, « Prises GTL (×2) »
     elif circ.type in (CircuitType.LIGHTING, CircuitType.SOCKET, CircuitType.KITCHEN_SOCKET):
-        header = f"{header} ×{circ.n_devices}"
+        header = f"{header} (×{circ.n_devices})"
     lines = [header] + list(dict.fromkeys(circ.rooms_served))
     max_w = ((CONTENT_RIGHT - SLOTS_LEFT) / SLOTS_PER_FOLIO - 1.5) * mm
     max_lines = int((LOCAL_TOP_Y - CARTOUCHE_TOP_Y - 1.0) / LOCAL_LINE_STEP_MM)

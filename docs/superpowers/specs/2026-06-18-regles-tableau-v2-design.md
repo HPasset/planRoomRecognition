@@ -173,6 +173,6 @@ Non-régression :
 | A1 | Calibre ID | **63 A max** par interrupteur différentiel ; au-delà, les circuits basculent sur un autre ID de la même famille (`MAX_RCD_AMPS`) |
 | A2 | Type A | Plaque, lave-linge, VMC, **prises GTL ×2** (circuit 16 A ajouté systématiquement, absent du catalogue) et **un seul** circuit éclairage ; les autres éclairages sont posés un par ID AC |
 | A3 | Éclairage | 5 points par circuit ; une pièce qui dépasse 5 garde **un circuit dédié entier** (salon 6 spots + 1 PL), plus de découpage |
-| A4 | Libellés | Codes pièces courts : SEJ, CUIS, CH1…, BUR, BAIN, WC, CEL, DGT, EXT, GAR + nombre d'appareils préfixé × pour PC/PL (« Écl. CH2 CH3 DGT BAIN CEL ×5 », « PC SEJ ×8 », « PC CUIS ×6 », « Prises GTL ×2 ») ; étiquettes sur 4 lignes en 6 pt, bande Localisation du schéma en horizontal, une pièce par ligne |
+| A4 | Libellés | Codes pièces courts : SEJ, CUIS, CH1…, BUR, BAIN, WC, CEL, DGT, EXT, GAR + nombre d'appareils « (×n) » pour PC/PL (« Écl. CH2 CH3 DGT BAIN CEL (×5) », « PC SEJ (×8) », « PC CUIS (×6) », « Prises GTL (×2) ») ; étiquettes sur 4 lignes en 6 pt, bande Localisation du schéma en horizontal, une pièce par ligne |
 
 Remplace la décision #1 (« Éclairage : tous circuits » en type A).

@@ -163,10 +163,10 @@ def test_localisation_lists_every_room_horizontally():
     from src.planrec.nfc_tableau import Circuit, RCD, CircuitType, Tableau
     from src.planrec.schema_unifilaire import CartoucheInfo, render_schema_unifilaire_pdf
 
-    circ = Circuit(id="c1", type=CircuitType.LIGHTING, label="Écl. CH2 CH3 DGT BAIN CEL ×5",
+    circ = Circuit(id="c1", type=CircuitType.LIGHTING, label="Écl. CH2 CH3 DGT BAIN CEL (×5)",
                    breaker_amps=10, cable_section_mm2=1.5, n_devices=5,
                    rooms_served=["Chambre 2", "Chambre 3", "Dégagement", "Salle de bain", "Cellier"])
-    gtl = Circuit(id="c2", type=CircuitType.SOCKET, label="Prises GTL ×2",
+    gtl = Circuit(id="c2", type=CircuitType.SOCKET, label="Prises GTL (×2)",
                   breaker_amps=16, cable_section_mm2=1.5, n_devices=2)
     rcd = RCD(id="r1", rcd_type="A", amps=40, sensitivity_ma=30, circuits=[circ, gtl])
     tableau = Tableau(typology="T3", typology_source="auto", surface_m2=None,
@@ -176,5 +176,5 @@ def test_localisation_lists_every_room_horizontally():
         projet="p", client_nom="c", client_ville="v", puissance_kva=9,
         regime_neutre="TT", date_iso="2026-09-07"))
     text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
-    for expected in ("Éclairage ×5", "Chambre 2", "Chambre 3", "Dégagement", "Salle de bain", "Cellier", "Prises GTL ×2"):
+    for expected in ("Éclairage (×5)", "Chambre 2", "Chambre 3", "Dégagement", "Salle de bain", "Cellier", "Prises GTL (×2)"):
         assert expected in text, (expected, text)
