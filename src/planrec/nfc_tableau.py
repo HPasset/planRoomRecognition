@@ -216,43 +216,43 @@ def _build_socket_circuits(
     """Bin-packing greedy : pièces avec leurs n_sockets → circuits de
     SOCKET_MAX_PER_CIRCUIT (8) prises max. Pièces dépassant la limite prennent
     un/des circuit(s) dédié(s) découpés, les plus petites sont packées ensemble."""
-    sorted_rooms = sorted(rooms_with_sockets, key=lambda x: -x[1])
     circuits: list[Circuit] = []
+
+    def _make(rooms: list[str], n: int) -> Circuit:
+        return Circuit(
+            id=generate_circuit_id(),
+            type=CircuitType.SOCKET,
+            label=_compact_rooms_label("PC", rooms, codes),
+            breaker_amps=16,
+            cable_section_mm2=1.5,
+            rooms_served=list(rooms),
+            n_devices=n,
+        )
+
+    # Pièces > 8 prises : circuits pleins dédiés ; le reliquat (< 8) retourne
+    # dans le pool et se packe avec les autres pièces (salon 10 → 8 dédiées,
+    # 2 avec les chambres) au lieu d'un circuit quasi vide.
+    pool: list[tuple[str, int]] = []
+    for room_name, n_sockets in rooms_with_sockets:
+        while n_sockets > SOCKET_MAX_PER_CIRCUIT:
+            circuits.append(_make([room_name], SOCKET_MAX_PER_CIRCUIT))
+            n_sockets -= SOCKET_MAX_PER_CIRCUIT
+        if n_sockets > 0:
+            pool.append((room_name, n_sockets))
+
+    sorted_rooms = sorted(pool, key=lambda x: -x[1])
     current_rooms: list[str] = []
     current_n = 0
 
     def _flush():
         nonlocal current_rooms, current_n
         if current_n > 0:
-            circuits.append(Circuit(
-                id=generate_circuit_id(),
-                type=CircuitType.SOCKET,
-                label=_compact_rooms_label("PC", current_rooms, codes),
-                breaker_amps=16,
-                cable_section_mm2=1.5,
-                rooms_served=list(current_rooms),
-                n_devices=current_n,
-            ))
+            circuits.append(_make(current_rooms, current_n))
         current_rooms = []
         current_n = 0
 
     for room_name, n_sockets in sorted_rooms:
-        if n_sockets > SOCKET_MAX_PER_CIRCUIT:
-            _flush()
-            n_remaining = n_sockets
-            while n_remaining > 0:
-                chunk = min(n_remaining, SOCKET_MAX_PER_CIRCUIT)
-                circuits.append(Circuit(
-                    id=generate_circuit_id(),
-                    type=CircuitType.SOCKET,
-                    label=_compact_rooms_label("PC", [room_name], codes),
-                    breaker_amps=16,
-                    cable_section_mm2=1.5,
-                    rooms_served=[room_name],
-                    n_devices=chunk,
-                ))
-                n_remaining -= chunk
-        elif current_n + n_sockets <= SOCKET_MAX_PER_CIRCUIT:
+        if current_n + n_sockets <= SOCKET_MAX_PER_CIRCUIT:
             current_rooms.append(room_name)
             current_n += n_sockets
         else:
@@ -402,10 +402,10 @@ def _gtl_sockets_circuit() -> Circuit:
     return Circuit(
         id=generate_circuit_id(),
         type=CircuitType.SOCKET,
-        label="Prises GTL",
+        label="Prises GTL ×2",
         breaker_amps=16,
         cable_section_mm2=1.5,
-        rooms_served=["GTL"],
+        rooms_served=[],
         n_devices=2,
         requires_type_a=True,
     )

@@ -155,18 +155,20 @@ def test_db_and_id_derived_annotations_in_pdf():
     assert "Type A" in text        # type du 1er ID (rcd_type "A")
 
 
-def test_localisation_label_not_truncated():
-    """La bande Localisation affiche le libellé complet (police réduite si
-    besoin), plus de coupe à 16 caractères."""
+def test_localisation_lists_every_room_horizontally():
+    """La bande Localisation écrit l'en-tête du circuit puis le nom complet de
+    chaque pièce, une par ligne (plus de texte vertical tronqué)."""
     import io
     from pypdf import PdfReader
     from src.planrec.nfc_tableau import Circuit, RCD, CircuitType, Tableau
     from src.planrec.schema_unifilaire import CartoucheInfo, render_schema_unifilaire_pdf
 
-    circ = Circuit(id="c1", type=CircuitType.LIGHTING,
-                   label="Écl. CH2 CH3 DGT BAIN CEL",
-                   breaker_amps=10, cable_section_mm2=1.5)
-    rcd = RCD(id="r1", rcd_type="A", amps=40, sensitivity_ma=30, circuits=[circ])
+    circ = Circuit(id="c1", type=CircuitType.LIGHTING, label="Écl. CH2 CH3 DGT BAIN CEL",
+                   breaker_amps=10, cable_section_mm2=1.5,
+                   rooms_served=["Chambre 2", "Chambre 3", "Dégagement", "Salle de bain", "Cellier"])
+    gtl = Circuit(id="c2", type=CircuitType.SOCKET, label="Prises GTL ×2",
+                  breaker_amps=16, cable_section_mm2=1.5, n_devices=2)
+    rcd = RCD(id="r1", rcd_type="A", amps=40, sensitivity_ma=30, circuits=[circ, gtl])
     tableau = Tableau(typology="T3", typology_source="auto", surface_m2=None,
                       heating_enabled=False, rcds=[rcd], total_modules=5,
                       n_rails=1, notes=[], warnings=[])
@@ -174,4 +176,5 @@ def test_localisation_label_not_truncated():
         projet="p", client_nom="c", client_ville="v", puissance_kva=9,
         regime_neutre="TT", date_iso="2026-09-07"))
     text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
-    assert "CEL" in text, text
+    for expected in ("Éclairage", "Chambre 2", "Chambre 3", "Dégagement", "Salle de bain", "Cellier", "Prises GTL ×2"):
+        assert expected in text, (expected, text)

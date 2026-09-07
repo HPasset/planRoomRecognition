@@ -21,7 +21,7 @@ from reportlab.graphics import renderPDF
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen.canvas import Canvas
 
-from src.planrec.nfc_tableau import Tableau, RCD
+from src.planrec.nfc_tableau import CircuitType, Tableau, RCD
 from src.planrec.icon_assets import load_icon_as_drawing, resolve_svg_id_for_circuit
 from src.planrec.etiquettes_renderer import _draw_batia_logo_cartouche
 
@@ -329,21 +329,39 @@ def _draw_picto_slot(c: Canvas, x: float, circ) -> None:
     renderPDF.draw(d, c, (x - PICTO_SIZE_MM / 2) * mm, y_bottom * mm)
 
 
+_LOCALISATION_HEADERS = {
+    CircuitType.LIGHTING: "Éclairage",
+    CircuitType.SOCKET: "Prises",
+    CircuitType.KITCHEN_SOCKET: "Prises cuisine",
+    CircuitType.HEATING: "Chauffage",
+}
+LOCAL_LINE_STEP_MM = 2.6
+LOCAL_TOP_Y = PICTO_BAND_BOT - 3.0
+
+
+def _fit_text(text: str, max_w: float, font: str, size: float) -> str:
+    while text and stringWidth(text, font, size) > max_w:
+        text = text[:-1]
+    return text
+
+
 def _draw_localisation(c: Canvas, x: float, circ) -> None:
-    """Désignation du départ en texte vertical (bande Localisation)."""
-    label = circ.label or ""
-    max_w = (PICTO_BAND_BOT - LOCAL_LABEL_BASE_Y - 1.0) * mm
-    size = 5.5
-    while size > 3.5 and stringWidth(label, "Helvetica", size) > max_w:
-        size -= 0.5
-    while label and stringWidth(label, "Helvetica", size) > max_w:
-        label = label[:-1]
-    c.saveState()
-    c.translate(x * mm, LOCAL_LABEL_BASE_Y * mm)
-    c.rotate(90)
-    c.setFont("Helvetica", size)
-    c.drawString(0, -1.5 * mm, label)
-    c.restoreState()
+    """Désignation du départ (bande Localisation) : en-tête du circuit puis
+    le nom complet de chaque pièce, une par ligne, à l'horizontale, centrés
+    sous le départ."""
+    header = _LOCALISATION_HEADERS.get(circ.type, circ.label or "")
+    if circ.type == CircuitType.SOCKET and not circ.rooms_served:
+        header = circ.label or header  # « Prises GTL ×2 »
+    lines = [header] + list(dict.fromkeys(circ.rooms_served))
+    max_w = ((CONTENT_RIGHT - SLOTS_LEFT) / SLOTS_PER_FOLIO - 1.5) * mm
+    max_lines = int((LOCAL_TOP_Y - CARTOUCHE_TOP_Y - 1.0) / LOCAL_LINE_STEP_MM)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + [f"+{len(lines) - max_lines + 1} pièces"]
+    for i, line in enumerate(lines):
+        font = "Helvetica-Bold" if i == 0 else "Helvetica"
+        c.setFont(font, 5.5)
+        c.drawCentredString(x * mm, (LOCAL_TOP_Y - i * LOCAL_LINE_STEP_MM) * mm,
+                            _fit_text(line, max_w, font, 5.5))
 
 
 def _draw_bands_table(c: Canvas) -> None:

@@ -698,7 +698,7 @@ def test_generate_tableau_adds_gtl_sockets_on_type_a():
     devis = compute_devis_global([{"id": "L1", "c2_class": "LivingRoom"}],
                                  heating_enabled=False)
     tableau = generate_tableau(devis, heating_enabled=False)
-    gtl = [c for r in tableau.rcds for c in r.circuits if c.label == "Prises GTL"]
+    gtl = [c for r in tableau.rcds for c in r.circuits if c.label == "Prises GTL ×2"]
     assert len(gtl) == 1
     assert (gtl[0].type, gtl[0].breaker_amps, gtl[0].n_devices) == (CircuitType.SOCKET, 16, 2)
     assert gtl[0].requires_type_a
@@ -741,3 +741,13 @@ def test_generate_tableau_T4_all_rcds_under_63A():
     tableau = generate_tableau(compute_devis_global(rooms, heating_enabled=True))
     assert all(r.amps <= 63 for r in tableau.rcds)
     assert all(len(r.circuits) <= 8 for r in tableau.rcds)
+
+
+def test_sockets_big_room_remainder_packed_with_small_rooms():
+    """Salon 10 prises + 2 chambres de 3 → 8 dédiées au salon, puis 2 + 3 + 3
+    sur un même circuit (le reliquat retourne dans le pool)."""
+    from src.planrec.nfc_tableau import _build_socket_circuits
+    circuits = _build_socket_circuits([("Sejour", 10), ("Chambre 1", 3), ("Chambre 2", 3)])
+    assert sorted(c.n_devices for c in circuits) == [8, 8]
+    mixed = next(c for c in circuits if len(c.rooms_served) > 1)
+    assert set(mixed.rooms_served) == {"Sejour", "Chambre 1", "Chambre 2"}
