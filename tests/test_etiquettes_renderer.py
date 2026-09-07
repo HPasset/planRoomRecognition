@@ -302,7 +302,7 @@ def test_render_rcd_row_shows_all_room_codes():
     from src.planrec.nfc_tableau import Circuit, RCD, CircuitType
 
     circuits = [Circuit(id="c1", type=CircuitType.LIGHTING,
-                        label="Écl. CH2 CH3 DGT BAIN CEL",
+                        label="Écl. CH2 CH3 DGT BAIN CEL (5)",
                         breaker_amps=10, cable_section_mm2=1.5)]
     rcd = RCD(id="rcd1", rcd_type="A", amps=40, sensitivity_ma=30, circuits=circuits)
     buf = io.BytesIO()
@@ -311,5 +311,5 @@ def test_render_rcd_row_shows_all_room_codes():
                    global_q_start=1, y_top_mm=180, page_usable_width_mm=277)
     canvas.save()
     text = PdfReader(io.BytesIO(buf.getvalue())).pages[0].extract_text()
-    for code in ("CH2", "CH3", "DGT", "BAIN", "CEL"):
+    for code in ("CH2", "CH3", "DGT", "BAIN", "CEL", "(5)"):
         assert code in text, (code, text)

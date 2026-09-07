@@ -142,7 +142,7 @@ HEADER_STRIP_H_MM = 8.0        # hauteur du strip header (IDx, Qn, ...)
 BODY_STRIP_H_MM = 22.0         # hauteur du strip body (picto + label)
 ROW_VERTICAL_GAP_MM = 4.0      # gap entre rangées RCD (était 6 avant ajout STRIP_INNER_GAP_MM)
 STRIP_INNER_GAP_MM = 2.0       # gap entre header strip et body strip d'une même rangée RCD
-PICTO_SIZE_MM = 12.0           # taille du pictogramme dans la cellule body
+PICTO_SIZE_MM = 10.0           # taille du pictogramme dans la cellule body (10 mm : 4 lignes de texte dessous)
 PICTO_TOP_OFFSET_MM = 2.0      # marge haute entre le picto et le bord du strip
 TEXT_BELOW_PICTO_GAP_MM = 1.0  # gap vertical entre picto et label texte
 
@@ -239,11 +239,11 @@ def _draw_batia_logo_cartouche(canvas, x_mm: float, y_mm: float,
     renderPDF.draw(drawing, canvas, x_logo_mm * mm, y_logo_mm * mm)
 
 
-def _wrap_cell_label(label: str, max_chars: int = 8, max_lines: int = 3) -> list[str]:
+def _wrap_cell_label(label: str, max_chars: int = 8, max_lines: int = 4) -> list[str]:
     """Découpe un label en lignes de ≤ max_chars pour tenir dans 17.5 mm.
     Réutilise la stratégie de _wrap_label de tableau_renderer (espaces + traits
-    d'union). 3 lignes en 6 pt tiennent sous le picto (« Écl. CH2 / CH3 DGT /
-    BAIN CEL »)."""
+    d'union). 4 lignes en 6 pt tiennent sous le picto de 10 mm (« Écl. CH2 /
+    CH3 DGT / BAIN CEL / (5) »)."""
     words = _tokenize_hyphen(label)
     lines: list[str] = []
     current = ""
@@ -375,11 +375,11 @@ def render_rcd_row(
         _draw_picto_in_cell(canvas, svg_id,
                             x_cursor_mm, y_body_bottom_mm,
                             DISJONCTEUR_CELL_W_MM, BODY_STRIP_H_MM)
-        # Label sur 3 lignes max, sous le picto (qui occupe les 14 mm du haut)
+        # Label sur 4 lignes max, sous le picto (qui occupe les 12 mm du haut)
         label_lines = _wrap_cell_label(circuit.label, max_chars=8)
         canvas.setFont("Helvetica", 6)
         for i, line in enumerate(label_lines):
-            y_text_mm = y_body_bottom_mm + 5.9 - (i * 2.2)
+            y_text_mm = y_body_bottom_mm + 7.6 - (i * 2.2)
             canvas.drawCentredString(
                 (x_cursor_mm + DISJONCTEUR_CELL_W_MM / 2) * mm,
                 y_text_mm * mm,

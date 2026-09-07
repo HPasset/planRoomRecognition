@@ -102,15 +102,17 @@ CONVECTOR_MAX_PER_CIRCUIT = 2     # Règle cabinet associé (2× 2000W max)
 
 
 def _compact_rooms_label(prefix: str, rooms: list[str],
-                         codes: dict[str, str] | None = None) -> str:
-    """Label court pour étiquettes/schéma : prefix + codes des pièces
-    (« Écl. CH2 CH3 DGT »). `codes` mappe label pièce → code court ; à défaut
-    le label complet. La liste complète reste dans Circuit.rooms_served."""
-    if not rooms:
-        return prefix
+                         codes: dict[str, str] | None = None,
+                         count: int | None = None) -> str:
+    """Label court pour étiquettes/schéma : prefix + codes des pièces + nombre
+    d'appareils (« Écl. CH2 CH3 DGT (5) », « PC SEJ (8) »). `codes` mappe
+    label pièce → code court ; à défaut le label complet. La liste complète
+    reste dans Circuit.rooms_served."""
     codes = codes or {}
-    seen = dict.fromkeys(codes.get(r, r) for r in rooms)  # dédoublonne, ordre gardé
-    return f"{prefix} " + " ".join(seen)
+    parts = [prefix, *dict.fromkeys(codes.get(r, r) for r in rooms)]  # dédoublonne, ordre gardé
+    if count is not None:
+        parts.append(f"({count})")
+    return " ".join(parts)
 
 
 def _build_lighting_circuits(
@@ -133,7 +135,7 @@ def _build_lighting_circuits(
         return Circuit(
             id=generate_circuit_id(),
             type=CircuitType.LIGHTING,
-            label=_compact_rooms_label("Écl.", rooms, codes),
+            label=_compact_rooms_label("Écl.", rooms, codes, n),
             breaker_amps=10,
             cable_section_mm2=1.5,
             rooms_served=list(rooms),
@@ -222,7 +224,7 @@ def _build_socket_circuits(
         return Circuit(
             id=generate_circuit_id(),
             type=CircuitType.SOCKET,
-            label=_compact_rooms_label("PC", rooms, codes),
+            label=_compact_rooms_label("PC", rooms, codes, n),
             breaker_amps=16,
             cable_section_mm2=1.5,
             rooms_served=list(rooms),
@@ -266,6 +268,7 @@ def _build_socket_circuits(
 
 def _build_kitchen_socket_circuits(
     rooms_with_sockets: list[tuple[str, int]],
+    codes: dict[str, str] | None = None,
 ) -> list[Circuit]:
     """Prises de cuisine : circuit dédié 20A / 2,5 mm², 6 prises max."""
     circuits: list[Circuit] = []
@@ -276,7 +279,7 @@ def _build_kitchen_socket_circuits(
             circuits.append(Circuit(
                 id=generate_circuit_id(),
                 type=CircuitType.KITCHEN_SOCKET,
-                label=f"Prises cuisine ×{chunk}",
+                label=_compact_rooms_label("PC", [room_name], codes, chunk),
                 breaker_amps=20,
                 cable_section_mm2=2.5,
                 rooms_served=[room_name],
@@ -402,7 +405,7 @@ def _gtl_sockets_circuit() -> Circuit:
     return Circuit(
         id=generate_circuit_id(),
         type=CircuitType.SOCKET,
-        label="Prises GTL ×2",
+        label="Prises GTL (2)",
         breaker_amps=16,
         cable_section_mm2=1.5,
         rooms_served=[],
@@ -535,7 +538,7 @@ def generate_tableau(
     circuits.extend(_build_lighting_circuits(rooms_with_lights, codes))
     circuits.extend(_build_socket_circuits(rooms_with_sockets, codes))
     circuits.append(_gtl_sockets_circuit())
-    circuits.extend(_build_kitchen_socket_circuits(rooms_with_kitchen_sockets))
+    circuits.extend(_build_kitchen_socket_circuits(rooms_with_kitchen_sockets, codes))
     if heating_enabled:
         circuits.extend(_build_heating_circuits(rooms_with_convectors,
                                                  towel_warmer_rooms, codes))
