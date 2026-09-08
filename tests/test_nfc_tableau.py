@@ -692,13 +692,13 @@ def test_distribute_one_lighting_on_type_a_rest_spread_on_ac():
 
 
 def test_generate_tableau_adds_gtl_sockets_on_type_a():
-    """Prises GTL (×2) : toujours présentes, 16 A, sur l'ID type A."""
+    """PC GTL (×2) : toujours présentes, 16 A, sur l'ID type A."""
     from src.planrec.nfc_tableau import generate_tableau, CircuitType
     from src.planrec.nfc_rules import compute_devis_global
     devis = compute_devis_global([{"id": "L1", "c2_class": "LivingRoom"}],
                                  heating_enabled=False)
     tableau = generate_tableau(devis, heating_enabled=False)
-    gtl = [c for r in tableau.rcds for c in r.circuits if c.label == "Prises GTL (×2)"]
+    gtl = [c for r in tableau.rcds for c in r.circuits if c.label == "PC GTL (×2)"]
     assert len(gtl) == 1
     assert (gtl[0].type, gtl[0].breaker_amps, gtl[0].n_devices) == (CircuitType.SOCKET, 16, 2)
     assert gtl[0].requires_type_a

@@ -21,7 +21,7 @@ from reportlab.graphics import renderPDF
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen.canvas import Canvas
 
-from src.planrec.nfc_tableau import CircuitType, Tableau, RCD
+from src.planrec.nfc_tableau import Tableau, RCD
 from src.planrec.icon_assets import load_icon_as_drawing, resolve_svg_id_for_circuit
 from src.planrec.etiquettes_renderer import _draw_batia_logo_cartouche
 
@@ -329,12 +329,6 @@ def _draw_picto_slot(c: Canvas, x: float, circ) -> None:
     renderPDF.draw(d, c, (x - PICTO_SIZE_MM / 2) * mm, y_bottom * mm)
 
 
-_LOCALISATION_HEADERS = {
-    CircuitType.LIGHTING: "Éclairage",
-    CircuitType.SOCKET: "Prises",
-    CircuitType.KITCHEN_SOCKET: "Prises cuisine",
-    CircuitType.HEATING: "Chauffage",
-}
 LOCAL_LINE_STEP_MM = 2.6
 LOCAL_TOP_Y = PICTO_BAND_BOT - 3.0
 
@@ -345,16 +339,21 @@ def _fit_text(text: str, max_w: float, font: str, size: float) -> str:
     return text
 
 
+def _localisation_lines(label: str) -> list[str]:
+    """Découpe un label compact « PC CH1 CH2 (×8) » en en-tête « PC (×8) »
+    puis un code pièce par ligne. Un label sans compteur (« Lave-linge »)
+    reste une seule ligne : même vocabulaire que les étiquettes."""
+    tokens = (label or "").split()
+    if len(tokens) >= 2 and tokens[-1].startswith("(×"):
+        return [f"{tokens[0]} {tokens[-1]}", *tokens[1:-1]]
+    return [label or ""]
+
+
 def _draw_localisation(c: Canvas, x: float, circ) -> None:
     """Désignation du départ (bande Localisation) : en-tête du circuit puis
-    le nom complet de chaque pièce, une par ligne, à l'horizontale, centrés
-    sous le départ."""
-    header = _LOCALISATION_HEADERS.get(circ.type)
-    if header is None or (circ.type == CircuitType.SOCKET and not circ.rooms_served):
-        header = circ.label or ""  # spécialisés, « Prises GTL (×2) »
-    elif circ.type in (CircuitType.LIGHTING, CircuitType.SOCKET, CircuitType.KITCHEN_SOCKET):
-        header = f"{header} (×{circ.n_devices})"
-    lines = [header] + list(dict.fromkeys(circ.rooms_served))
+    le code de chaque pièce, un par ligne, à l'horizontale, centrés sous le
+    départ. Source unique : Circuit.label (identique aux étiquettes)."""
+    lines = _localisation_lines(circ.label)
     max_w = ((CONTENT_RIGHT - SLOTS_LEFT) / SLOTS_PER_FOLIO - 1.5) * mm
     max_lines = int((LOCAL_TOP_Y - CARTOUCHE_TOP_Y - 1.0) / LOCAL_LINE_STEP_MM)
     if len(lines) > max_lines:

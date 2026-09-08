@@ -405,7 +405,7 @@ def _gtl_sockets_circuit() -> Circuit:
     return Circuit(
         id=generate_circuit_id(),
         type=CircuitType.SOCKET,
-        label="Prises GTL (×2)",
+        label="PC GTL (×2)",
         breaker_amps=16,
         cable_section_mm2=1.5,
         rooms_served=[],
