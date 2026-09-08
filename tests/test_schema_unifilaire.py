@@ -180,3 +180,22 @@ def test_localisation_lists_every_room_horizontally():
         assert expected in text, (expected, text)
     for unexpected in ("Éclairage", "Prises", "Chambre 2"):
         assert unexpected not in text, (unexpected, text)
+
+
+def test_cartouche_tableau_uses_colon_not_dash():
+    """Cartouche : « Tableau électrique : T4 », plus aucun tiret cadratin."""
+    import io
+    from pypdf import PdfReader
+    from src.planrec.nfc_tableau import RCD, Tableau
+    from src.planrec.schema_unifilaire import CartoucheInfo, render_schema_unifilaire_pdf
+
+    tableau = Tableau(typology="T4", typology_source="auto", surface_m2=None,
+                      heating_enabled=False, rcds=[RCD(id="r1", rcd_type="A", amps=40,
+                                                       sensitivity_ma=30, circuits=[])],
+                      total_modules=4, n_rails=1, notes=[], warnings=[])
+    pdf = render_schema_unifilaire_pdf(tableau, CartoucheInfo(
+        projet="p", client_nom="c", client_ville="v", puissance_kva=9,
+        regime_neutre="TT", date_iso="2026-09-08"))
+    text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
+    assert "Tableau électrique : T4" in text, text
+    assert "—" not in text

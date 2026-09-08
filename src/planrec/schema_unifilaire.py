@@ -180,12 +180,12 @@ def _draw_cartouche(c: Canvas, tableau: Tableau, cartouche: CartoucheInfo,
     cw = tbl_w / ncol
     ch = tbl_h / nrow
     fields = [
-        ("Projet", cartouche.projet or "—"),
-        ("Client", (cartouche.client_nom or "—") +
+        ("Projet", cartouche.projet or ""),
+        ("Client", (cartouche.client_nom or "") +
                    (f" · {cartouche.client_ville}" if cartouche.client_ville else "")),
         ("Puissance prévisionnelle", f"{cartouche.puissance_kva} kVA"),
         ("Date", cartouche.date_iso),
-        ("Tableau", f"Tableau électrique — {tableau.typology}"),
+        ("Tableau", f"Tableau électrique : {tableau.typology}"),
         ("Régime de neutre", cartouche.regime_neutre),
         ("Folio", f"{folio_idx + 1} / {total}"),
         ("", ""),
