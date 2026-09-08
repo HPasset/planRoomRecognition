@@ -314,3 +314,15 @@ def test_render_rcd_row_shows_all_room_codes():
     text = PdfReader(io.BytesIO(buf.getvalue())).pages[0].extract_text()
     for code in ("CH2", "CH3", "DGT", "BAIN", "CEL", "(×5)"):
         assert code in text, (code, text)
+
+
+def test_kitchen_sockets_use_socket_picto():
+    """Les prises cuisine (circuit dédié 20 A) sont des prises ordinaires :
+    picto prise, pas « alimentation spécialisée »."""
+    from src.planrec.icon_assets import resolve_svg_id_for_circuit
+    from src.planrec.nfc_tableau import Circuit, CircuitType
+    c = Circuit(id="k", type=CircuitType.KITCHEN_SOCKET, label="PC CUIS (×6)",
+                breaker_amps=20, cable_section_mm2=2.5, n_devices=6)
+    assert resolve_svg_id_for_circuit(c) == "socket"
+    vmc = Circuit(id="v", type=CircuitType.VMC, label="VMC", breaker_amps=16, cable_section_mm2=1.5)
+    assert resolve_svg_id_for_circuit(vmc) == "special_feed"

@@ -40,6 +40,7 @@ def load_icon_as_drawing(svg_id: str, color_hex: str = "#000000") -> Drawing:
 CIRCUIT_TYPE_TO_SVG_ID: dict[CircuitType, str] = {
     CircuitType.LIGHTING: "light",
     CircuitType.SOCKET: "socket",
+    CircuitType.KITCHEN_SOCKET: "socket",  # prises ordinaires sur circuit dédié 20 A
     CircuitType.KITCHEN_SPECIAL: "cooktop",
     CircuitType.LAUNDRY: "washing_machine",
     CircuitType.BOILER: "boiler",
@@ -59,7 +60,9 @@ LABEL_PREFIX_TO_SVG_ID: dict[str, str] = {
     "Sèche-serviettes": "towel_warmer",
     "Chauffage": "convector",
     "Éclairage": "light",
+    "Écl.": "light",
     "Prises": "socket",
+    "PC": "socket",
 }
 
 
