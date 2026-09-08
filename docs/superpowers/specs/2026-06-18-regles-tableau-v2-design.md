@@ -174,5 +174,6 @@ Non-régression :
 | A2 | Type A | Plaque, lave-linge, VMC, **prises GTL ×2** (circuit 16 A ajouté systématiquement, absent du catalogue) et **un seul** circuit éclairage ; les autres éclairages sont posés un par ID AC |
 | A3 | Éclairage | 5 points par circuit ; une pièce qui dépasse 5 garde **un circuit dédié entier** (salon 6 spots + 1 PL), plus de découpage |
 | A4 | Libellés | Codes pièces courts : SEJ, CUIS, CH1…, BUR, BAIN, WC, CEL, DGT, EXT, GAR + nombre d'appareils « (×n) » pour PC/PL (« Écl. CH2 CH3 DGT BAIN CEL (×5) », « PC SEJ (×8) », « PC CUIS (×6) », « PC GTL (×2) ») ; étiquettes sur 4 lignes en 6 pt, bande Localisation du schéma en horizontal, une pièce par ligne |
+| A5 | Garnissage des ID (2026-09-08) | Chaque ID porte entre 4 et 8 disjoncteurs ; le nombre d'ID est le min typologie/surface borné par ⌈N/8⌉ et ⌊N/4⌋ ; les circuits vont sur l'ID qui a le moins de disjoncteurs (à égalité, le moins chargé), un A ou un F pouvant accueillir des circuits ordinaires |
 
 Remplace la décision #1 (« Éclairage : tous circuits » en type A).

@@ -338,6 +338,7 @@ def _build_specialized_circuits(
 # grandes (besoin de séparer en zones indépendantes).
 _TYPO_RCD_RULE = {"T1": 2, "T2": 2, "T3": 3, "T4": 4, "T5": 4}
 MAX_BREAKERS_PER_RCD = 8
+MIN_BREAKERS_PER_RCD = 4  # règle cabinet 2026-09-08 : lignes d'ID garnies et équilibrées
 MAX_RCD_AMPS = 63  # calibre max d'un interrupteur différentiel (règle cabinet 2026-09-07)
 
 
@@ -580,12 +581,15 @@ def _distribute_circuits_to_rcds(
     - Type A : circuits requires_type_a (plaque, lave-linge, VMC, prises GTL)
       + UN seul circuit éclairage (le plus chargé).
     - Type F : circuits requires_type_f (pompe à chaleur, borne véhicule).
-    - Type AC : le reste ; les autres éclairages y sont posés en premier, un
-      par ID, pour qu'un ID qui saute n'éteigne pas tout le logement.
-    Chaque circuit va sur l'ID le moins chargé de sa famille qui tient les deux
-    contraintes : MAX_BREAKERS_PER_RCD (8) et calibre ≤ MAX_RCD_AMPS (63 A) ;
-    sinon un nouvel ID de la même famille est ouvert. Le total est complété
-    par des ID AC vides jusqu'à n_rcds (min typologie/surface). 30 mA.
+    - Le reste va sur n'importe quel ID (un A ou un F accepte tout) : les
+      autres éclairages d'abord, un par ID, pour qu'un ID qui saute n'éteigne
+      pas tout le logement, puis par ampérage décroissant.
+    Nombre d'ID visé : le min typologie/surface, borné pour que chaque ligne
+    porte entre MIN_BREAKERS_PER_RCD (4) et MAX_BREAKERS_PER_RCD (8)
+    disjoncteurs (règle cabinet 2026-09-08). Chaque circuit va sur l'ID qui
+    a le moins de disjoncteurs (à égalité, le moins chargé en ampères) et
+    qui tient le calibre ≤ MAX_RCD_AMPS (63 A) ; sinon un nouvel ID de la
+    même famille est ouvert. 30 mA.
     """
     a_circuits = [c for c in circuits if c.requires_type_a]
     f_circuits = [c for c in circuits
@@ -602,33 +606,34 @@ def _distribute_circuits_to_rcds(
         return RCD(id=generate_rcd_id(), rcd_type=rcd_type, amps=40,
                    sensitivity_ma=30, circuits=[])
 
-    def _pack(items: list[Circuit], rcd_type: str, n_min: int) -> list[RCD]:
-        rcds = [_new_rcd(rcd_type) for _ in range(n_min)]
-        for c in items:
-            fits = [r for r in rcds
-                    if len(r.circuits) < MAX_BREAKERS_PER_RCD
-                    and _raw_rcd_amps(r.circuits + [c]) <= MAX_RCD_AMPS]
-            if not fits:
-                rcds.append(_new_rcd(rcd_type))
-                fits = [rcds[-1]]
-            target = min(fits, key=lambda r: (_raw_rcd_amps(r.circuits), len(r.circuits)))
-            target.circuits.append(c)
-        return rcds
-
-    by_amps = lambda cs: sorted(cs, key=lambda c: -c.breaker_amps)
     n_a = math.ceil(len(a_circuits) / MAX_BREAKERS_PER_RCD)
     n_f = math.ceil(len(f_circuits) / MAX_BREAKERS_PER_RCD)
-    n_ac_min = math.ceil((len(ac_circuits) + len(lights)) / MAX_BREAKERS_PER_RCD)
-    n_ac = max(n_ac_min, n_rcds - n_a - n_f, 0)
+    n_total = len(circuits)
+    n_target = max(n_rcds, n_a + n_f, math.ceil(n_total / MAX_BREAKERS_PER_RCD))
+    n_target = max(n_a + n_f, min(n_target, max(1, n_total // MIN_BREAKERS_PER_RCD)))
 
-    rcds: list[RCD] = []
-    rcds.extend(_pack(by_amps(a_circuits), "A", n_a))
-    rcds.extend(_pack(by_amps(f_circuits), "F", n_f))
-    # Éclairages d'abord (un par ID AC), puis le reste par ampérage décroissant.
-    rcds.extend(_pack(lights + by_amps(ac_circuits), "AC", n_ac))
+    rcds: list[RCD] = ([_new_rcd("A") for _ in range(n_a)]
+                       + [_new_rcd("F") for _ in range(n_f)]
+                       + [_new_rcd("AC") for _ in range(n_target - n_a - n_f)])
 
-    while len(rcds) < n_rcds:
-        rcds.append(_new_rcd("AC"))
+    def _place(c: Circuit, family: Optional[str]) -> None:
+        candidates = [r for r in rcds if family is None or r.rcd_type == family]
+        fits = [r for r in candidates
+                if len(r.circuits) < MAX_BREAKERS_PER_RCD
+                and _raw_rcd_amps(r.circuits + [c]) <= MAX_RCD_AMPS]
+        if not fits:
+            rcds.append(_new_rcd(family or "AC"))
+            fits = [rcds[-1]]
+        target = min(fits, key=lambda r: (len(r.circuits), _raw_rcd_amps(r.circuits)))
+        target.circuits.append(c)
+
+    by_amps = lambda cs: sorted(cs, key=lambda c: -c.breaker_amps)
+    for c in by_amps(a_circuits):
+        _place(c, "A")
+    for c in by_amps(f_circuits):
+        _place(c, "F")
+    for c in lights + by_amps(ac_circuits):
+        _place(c, None)
 
     for rcd in rcds:
         rcd.amps = _compute_rcd_amps(rcd.circuits)

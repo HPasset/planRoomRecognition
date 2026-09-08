@@ -301,7 +301,7 @@ def test_distribute_other_rcds_are_type_AC():
                      breaker_amps=32, cable_section_mm2=6.0, requires_type_a=True)
     others = [Circuit(id=f"c{i+2}", type=CircuitType.LIGHTING, label=f"L{i}",
                       breaker_amps=10, cable_section_mm2=1.5)
-              for i in range(2)]
+              for i in range(7)]  # 8 circuits : de quoi garnir 2 ID (≥ 4 chacun)
     rcds = _distribute_circuits_to_rcds([plaque] + others, n_rcds=2)
     assert rcds[0].rcd_type == "A"
     assert rcds[1].rcd_type == "AC"
@@ -526,9 +526,10 @@ def test_edge_case_minimal_logement_no_laundry_circuit():
     tableau = generate_tableau(devis_global=devis, heating_enabled=False)
     circuits = [c for r in tableau.rcds for c in r.circuits]
     assert not any(c.type == CircuitType.LAUNDRY for c in circuits)
-    type_a_rcd = next(r for r in tableau.rcds if r.rcd_type == "A")
-    types = sorted(c.type for c in type_a_rcd.circuits)
-    assert types == [CircuitType.LIGHTING, CircuitType.SOCKET]  # 1 éclairage + GTL
+    # 3 circuits seulement : un seul ID (type A) porte tout — éclairage, PC, GTL.
+    assert len(tableau.rcds) == 1 and tableau.rcds[0].rcd_type == "A"
+    assert sorted(c.type for c in tableau.rcds[0].circuits) == [
+        CircuitType.LIGHTING, CircuitType.SOCKET, CircuitType.SOCKET]
 
 
 # --- v2 : différentiels A/F/AC, prises cuisine, VMC/PAC/borne ---
@@ -622,14 +623,16 @@ def test_distribute_groups_by_differential_type():
                      breaker_amps=32, cable_section_mm2=6.0, requires_type_a=True)
     ev = Circuit(id="e", type=CircuitType.EV_CHARGER, label="Borne", breaker_amps=32,
                  cable_section_mm2=6.0, requires_type_f=True)
-    sock = Circuit(id="s", type=CircuitType.SOCKET, label="Prises", breaker_amps=16,
-                   cable_section_mm2=1.5)
-    rcds = _distribute_circuits_to_rcds([light, plaque, ev, sock], n_rcds=2)
+    socks = [Circuit(id=f"s{i}", type=CircuitType.SOCKET, label="Prises", breaker_amps=16,
+                     cable_section_mm2=1.5) for i in range(9)]
+    rcds = _distribute_circuits_to_rcds([light, plaque, ev] + socks, n_rcds=3)
     a = [r for r in rcds if r.rcd_type == "A"]
     f = [r for r in rcds if r.rcd_type == "F"]
     ac = [r for r in rcds if r.rcd_type == "AC"]
-    assert a and all(c.requires_type_a for r in a for c in r.circuits)
-    assert f and all(c.requires_type_f for r in f for c in r.circuits)
+    # Les circuits exigeant un A (resp. F) n'atterrissent que sur un A (resp. F) ;
+    # un A ou un F peut en revanche accueillir des circuits ordinaires.
+    assert a and all(r.rcd_type == "A" for r in rcds for c in r.circuits if c.requires_type_a)
+    assert f and all(r.rcd_type == "F" for r in rcds for c in r.circuits if c.requires_type_f)
     assert ac and all(not c.requires_type_a and not c.requires_type_f
                       for r in ac for c in r.circuits)
 
@@ -680,7 +683,7 @@ def test_distribute_one_lighting_on_type_a_rest_spread_on_ac():
     from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, CircuitType
     lights = [_circ(i, CircuitType.LIGHTING, 10) for i in range(3)]
     plaque = _circ(10, CircuitType.KITCHEN_SPECIAL, 32, requires_type_a=True)
-    socks = [_circ(20 + i, CircuitType.SOCKET, 16) for i in range(4)]
+    socks = [_circ(20 + i, CircuitType.SOCKET, 16) for i in range(8)]  # 12 circuits → 3 ID
     rcds = _distribute_circuits_to_rcds(lights + [plaque] + socks, n_rcds=3)
     a = [r for r in rcds if r.rcd_type == "A"]
     ac = [r for r in rcds if r.rcd_type == "AC"]
@@ -751,3 +754,30 @@ def test_sockets_big_room_remainder_packed_with_small_rooms():
     assert sorted(c.n_devices for c in circuits) == [8, 8]
     mixed = next(c for c in circuits if len(c.rooms_served) > 1)
     assert set(mixed.rooms_served) == {"Sejour", "Chambre 1", "Chambre 2"}
+
+
+def test_distribute_four_to_eight_breakers_per_rcd_balanced():
+    """Règle cabinet 2026-09-08 : chaque ID porte 4 à 8 disjoncteurs et les
+    lignes sont équilibrées (±1). Le min typologie/surface (ici 4) est
+    ramené à 3 ID pour 14 circuits, quitte à compléter l'ID type A."""
+    from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, CircuitType
+    a_req = [_circ(1, CircuitType.KITCHEN_SPECIAL, 32, requires_type_a=True),
+             _circ(2, CircuitType.LAUNDRY, 20, requires_type_a=True),
+             _circ(3, CircuitType.VMC, 16, requires_type_a=True)]
+    lights = [_circ(10 + i, CircuitType.LIGHTING, 10) for i in range(3)]
+    socks = [_circ(20 + i, CircuitType.SOCKET, 16) for i in range(8)]
+    rcds = _distribute_circuits_to_rcds(a_req + lights + socks, n_rcds=4)
+    sizes = sorted(len(r.circuits) for r in rcds)
+    assert len(rcds) == 3, sizes
+    assert sizes == [4, 5, 5]
+    assert all(4 <= n <= 8 for n in sizes)
+    assert all(r.amps <= 63 for r in rcds)
+
+
+def test_distribute_few_circuits_single_rcd():
+    """Moins de 4 circuits hors famille : pas d'ID AC quasi vide, tout va sur le A."""
+    from src.planrec.nfc_tableau import _distribute_circuits_to_rcds, CircuitType
+    plaque = _circ(1, CircuitType.KITCHEN_SPECIAL, 32, requires_type_a=True)
+    socks = [_circ(20 + i, CircuitType.SOCKET, 16) for i in range(2)]
+    rcds = _distribute_circuits_to_rcds([plaque] + socks, n_rcds=2)
+    assert len(rcds) == 1 and rcds[0].rcd_type == "A" and len(rcds[0].circuits) == 3
