@@ -13,7 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.facturation.db import Base
 from src.facturation.models.enums import (
-    CategorieTVA, FactureStatut, FactureType, ModePaiement, UniteFacturation,
+    CategorieTVA, FactureStatut, FactureType, UniteFacturation,
 )
 
 
@@ -57,7 +57,6 @@ class Facture(Base):
     acompte_montant_ht: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
     montant_du_ttc: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
 
-    mode_paiement: Mapped[Optional[ModePaiement]] = mapped_column(String(5), nullable=True)
     conditions_paiement: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     reference_devis: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     motif_avoir: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

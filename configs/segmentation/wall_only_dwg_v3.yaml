@@ -32,20 +32,16 @@ optimizer:
   grad_clip_norm: 1.0
 
 scheduler:
-  type: cosine
   warmup_steps: 50
 
 training:
   epochs: 20
   early_stop_patience: 5
   mixed_precision: "no"
-  oversample_rare_classes: false
 
 logging:
   tracker: wandb
   project: batia-segmentation
-  log_image_count: 5
 
 checkpoint:
   output_dir: /runs/wall_only_dwg_v3
-  save_every_n_epochs: 1

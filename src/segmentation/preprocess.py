@@ -40,18 +40,6 @@ def letterbox(image: np.ndarray, target_size: int = 768,
     )
 
 
-def unletterbox_polygon(polygon: list[list[int]], info: LetterboxInfo) -> list[list[int]]:
-    """Map polygon coords from letterboxed space back to original image space."""
-    out = []
-    for x, y in polygon:
-        ux = (x - info.pad_left) / info.scale
-        uy = (y - info.pad_top) / info.scale
-        ux = max(0.0, min(info.orig_w, ux))
-        uy = max(0.0, min(info.orig_h, uy))
-        out.append([int(round(ux)), int(round(uy))])
-    return out
-
-
 def unletterbox_mask(mask: np.ndarray, info: LetterboxInfo) -> np.ndarray:
     """Crop padding then resize back to original image size. Uses NEAREST."""
     cropped = mask[

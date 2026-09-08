@@ -353,13 +353,13 @@ def render_rcd_row(
         _draw_picto_in_cell(canvas, "differential",
                             x_cursor_mm, y_body_bottom_mm,
                             widths["id"], BODY_STRIP_H_MM)
-        # Texte sur 2 lignes : "Interrupteur différentiel" / "40 A · Type A · 30 mA"
+        # Texte sur 2 lignes : "Interrupteur différentiel" / "40 A · 30 mA · Type A"
         x_center = (x_cursor_mm + widths["id"] / 2) * mm
         canvas.setFont("Helvetica", 6)
         canvas.drawCentredString(x_center, (y_body_bottom_mm + 5.5) * mm, "Interrupteur différentiel")
         canvas.setFont("Helvetica-Bold", 7)
         canvas.drawCentredString(x_center, (y_body_bottom_mm + 2) * mm,
-                                 f"{rcd.amps} A · Type {rcd.rcd_type} · {rcd.sensitivity_ma} mA")
+                                 f"{rcd.amps} A · {rcd.sensitivity_ma} mA · Type {rcd.rcd_type}")
     x_cursor_mm += widths["id"]
 
     # Cellules Qn body : picto + label tronqué

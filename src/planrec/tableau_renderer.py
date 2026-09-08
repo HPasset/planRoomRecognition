@@ -87,14 +87,9 @@ def _render_rcd_row(rcd: RCD, y: int, idx: int) -> str:
     return "".join(parts)
 
 
-def _wrap_label(label: str, max_chars_per_line: int = 9, max_lines: int = 3) -> list[str]:
-    """Découpe un label en lignes de ≤ max_chars_per_line, en coupant aux espaces
-    ET aux traits d'union (évite que "Sèche-serviettes" dépasse du module).
-    Si le dernier mot ne tient pas après max_lines, le dernier mot est tronqué avec …
-    Les mots individuels plus longs que max_chars_per_line restent sur leur propre
-    ligne (overflow gracieux plutôt que coupure intra-mot)."""
-    # Tokenize : split sur espaces puis sur traits d'union en gardant le tiret
-    # collé au token précédent ("Sèche-serviettes" → ["Sèche-", "serviettes"]).
+def _tokenize_hyphen(label: str) -> list[str]:
+    """Split sur espaces puis sur traits d'union en gardant le tiret collé au
+    token précédent ("Sèche-serviettes" → ["Sèche-", "serviettes"])."""
     words: list[str] = []
     for raw in label.split():
         parts = raw.split("-")
@@ -102,6 +97,16 @@ def _wrap_label(label: str, max_chars_per_line: int = 9, max_lines: int = 3) -> 
             if not p:
                 continue
             words.append(p + "-" if i < len(parts) - 1 else p)
+    return words
+
+
+def _wrap_label(label: str, max_chars_per_line: int = 9, max_lines: int = 3) -> list[str]:
+    """Découpe un label en lignes de ≤ max_chars_per_line, en coupant aux espaces
+    ET aux traits d'union (évite que "Sèche-serviettes" dépasse du module).
+    Si le dernier mot ne tient pas après max_lines, le dernier mot est tronqué avec …
+    Les mots individuels plus longs que max_chars_per_line restent sur leur propre
+    ligne (overflow gracieux plutôt que coupure intra-mot)."""
+    words = _tokenize_hyphen(label)
     lines: list[str] = []
     current = ""
     for word in words:

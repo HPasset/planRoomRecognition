@@ -16,10 +16,6 @@ def _round2(value: Decimal) -> Decimal:
     return value.quantize(_TWO, rounding=ROUND_HALF_EVEN)
 
 
-def compute_ligne_montant(quantite: Decimal, prix_unitaire_ht: Decimal) -> Decimal:
-    return _round2(quantite * prix_unitaire_ht)
-
-
 def compute_facture_totals(lignes: Iterable) -> dict:
     """Renvoie dict avec montant_ht, total_tva, montant_ttc, par_taux."""
     par_taux: dict[Decimal, dict[str, Decimal]] = defaultdict(

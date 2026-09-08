@@ -113,7 +113,7 @@ def nearest_edge(bbox: tuple[int, int, int, int], edges: list[Edge]) -> Edge:
     """Arête contre laquelle la bbox est plaquée = la plus proche.
 
     Distance bbox↔arête = min sur les 4 coins de la bbox de la distance
-    au segment de l'arête. Sert pour `wall_behind` (lit) et `edge_of` (porte).
+    au segment de l'arête. Sert pour le mur derrière le lit et le mur de la porte.
     """
     best = edges[0]
     best_d = float("inf")
@@ -143,11 +143,6 @@ def opposite_edge(edge: Edge, edges: list[Edge]) -> Edge:
             best_score = score
             best = e
     return best if best is not None else edge
-
-
-# Alias sémantiques (même implémentation, intentions distinctes)
-wall_behind = nearest_edge   # mur tête-de-lit
-edge_of = nearest_edge       # mur portant la porte
 
 
 def bed_head_wall(bbox: tuple[int, int, int, int], edges: list[Edge],

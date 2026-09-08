@@ -42,6 +42,7 @@ from tqdm import tqdm
 
 from src.segmentation.classes import CLASS_NAMES, ROOM_CLASS_IDS
 from src.segmentation.inference import SegmentationInference
+from src.planrec.polygon_postprocess import postprocess_polygon, extract_wall_lines
 
 
 SUPPORTED_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"}
@@ -104,6 +105,19 @@ def main():
                          "Default: <out>/../walls_tmp/")
     ap.add_argument("--limit", type=int, default=None,
                     help="Process only the first N plans (debug)")
+    # --- Nettoyage des polygones (pour une pré-annotation éditable à la main) ---
+    ap.add_argument("--simplify-epsilon", type=float, default=2.0,
+                    help="Douglas-Peucker, %% du périmètre (2.0 ≈ 4-6 pts/pièce ; "
+                         "0 = pas de simplification)")
+    ap.add_argument("--axis-align-deg", type=float, default=10.0,
+                    help="Aligne les bords à <N°> de l'horizontale/verticale → "
+                         "rectangles nets (0 = désactivé)")
+    ap.add_argument("--snap-walls", action="store_true",
+                    help="Colle les bords des pièces sur les murs détectés "
+                         "(utilise le masque murs du modèle)")
+    ap.add_argument("--min-confidence", type=float, default=0.5,
+                    help="Ignore les pièces sous ce score → laissées vides dans "
+                         "CVAT (tu les dessines). Défaut 0.5")
     args = ap.parse_args()
 
     plans_dir = Path(args.plans_dir).resolve()
@@ -157,6 +171,7 @@ def main():
 
     annotation_id = 1
     skipped: list[tuple[str, str]] = []
+    pts_raw = pts_clean = n_rooms_kept = n_rooms_dropped = 0
 
     for image_id, plan_path in enumerate(tqdm(plans, desc="Predicting"), start=1):
         # Get image dimensions
@@ -180,15 +195,37 @@ def main():
             skipped.append((plan_path.name, f"{type(e).__name__}: {e}"))
             continue
 
+        # Snap-to-walls : lignes de murs extraites du masque produit par le modèle
+        wall_lines = None
+        if args.snap_walls and result.walls.mask_path:
+            wmask = cv2.imread(result.walls.mask_path, cv2.IMREAD_UNCHANGED)
+            if wmask is not None:
+                wall_lines = extract_wall_lines(wmask)
+
         # Convert each detected room to a COCO annotation
         for room in result.rooms:
+            if room.confidence < args.min_confidence:
+                n_rooms_dropped += 1
+                continue
+            clean = postprocess_polygon(
+                room.polygon,
+                simplify_epsilon_pct=args.simplify_epsilon,
+                axis_align_tolerance_deg=(args.axis_align_deg or None),
+                wall_lines=wall_lines,
+            )
+            pts_raw += len(room.polygon)
+            pts_clean += len(clean)
+            n_rooms_kept += 1
+            xs = [p[0] for p in clean]
+            ys = [p[1] for p in clean]
+            bbox = [min(xs), min(ys), max(xs), max(ys)]
             coco["annotations"].append({
                 "id": annotation_id,
                 "image_id": image_id,
                 "category_id": room.type_id,
-                "segmentation": _polygon_to_coco_segmentation(room.polygon),
+                "segmentation": _polygon_to_coco_segmentation(clean),
                 "area": int(room.area_pixels),
-                "bbox": _bbox_to_coco_format(room.bbox),
+                "bbox": _bbox_to_coco_format(bbox),
                 "iscrowd": 0,
                 "score": float(room.confidence),  # CVAT shows it on hover
             })
@@ -204,6 +241,13 @@ def main():
     print(f"\n✓ Wrote {out_path}")
     print(f"  {n_images} images, {n_anns} pre-annotations "
           f"({n_anns / max(1, n_images):.1f} rooms/plan on average)")
+    if n_rooms_kept:
+        print(f"  Points/pièce : {pts_raw / n_rooms_kept:.1f} brut → "
+              f"{pts_clean / n_rooms_kept:.1f} après nettoyage "
+              f"(simplify={args.simplify_epsilon} axis_align={args.axis_align_deg}° "
+              f"snap_walls={args.snap_walls})")
+    print(f"  Pièces gardées : {n_rooms_kept} | "
+          f"ignorées (conf < {args.min_confidence}) : {n_rooms_dropped}")
     print(f"  Walls masks dumped to {walls_dir}")
     if skipped:
         print(f"\n⚠ {len(skipped)} plans skipped:")

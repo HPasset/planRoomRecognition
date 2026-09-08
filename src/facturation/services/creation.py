@@ -12,7 +12,7 @@ from src.facturation.models import (
     TypeCompteur, UniteFacturation,
 )
 from src.facturation.services.numerotation import next_numero
-from src.facturation.services.totals import compute_facture_totals
+from src.facturation.services.totals import _round2, compute_facture_totals
 
 
 _TVA_DEFAUT = Decimal("20.00")
@@ -36,10 +36,6 @@ def _somme_factures_existantes(session: Session, devis_id: str) -> Decimal:
                         Facture.type != FactureType.AVOIR)
                 .all())
     return sum((f.montant_ht for f in factures), Decimal("0"))
-
-
-def _round_decimal2(v: Decimal) -> Decimal:
-    return v.quantize(Decimal("0.01"))
 
 
 def create_acompte(session: Session, devis_id: str,
@@ -124,7 +120,7 @@ def create_situation(session: Session, devis_id: str,
     f.montant_ht = totals["montant_ht"]
     f.total_tva = totals["total_tva"]
     f.montant_ttc = totals["montant_ttc"]
-    f.montant_du_ttc = _round_decimal2(
+    f.montant_du_ttc = _round2(
         montant_du_ht * (Decimal("1") + _TVA_DEFAUT / Decimal("100"))
     )
 
@@ -164,7 +160,7 @@ def create_solde(session: Session, devis_id: str) -> Facture:
     f.total_tva = totals["total_tva"]
     f.montant_ttc = totals["montant_ttc"]
     montant_du_ht = max(f.montant_ht - acomptes_cumules, Decimal("0"))
-    f.montant_du_ttc = _round_decimal2(
+    f.montant_du_ttc = _round2(
         montant_du_ht * (Decimal("1") + _TVA_DEFAUT / Decimal("100"))
     )
 

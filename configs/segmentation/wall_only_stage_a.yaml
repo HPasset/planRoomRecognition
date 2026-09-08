@@ -31,20 +31,16 @@ optimizer:
   grad_clip_norm: 1.0  # NOT 0.01 — see Stage A bug history
 
 scheduler:
-  type: cosine
   warmup_steps: 500
 
 training:
   epochs: 5  # Pilote — valider end-to-end avant un run long (15h+ sur MPS)
   early_stop_patience: 2
   mixed_precision: "no"  # FP32 — BF16 produces NaN on MPS (Stage A learning)
-  oversample_rare_classes: false
 
 logging:
   tracker: wandb
   project: batia-segmentation
-  log_image_count: 5
 
 checkpoint:
   output_dir: runs/segmentation/wall_only_stage_a_v1
-  save_every_n_epochs: 1

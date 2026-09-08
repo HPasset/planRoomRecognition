@@ -121,10 +121,9 @@ class Trainer:
         self.epoch = 0
         self.best_metric = -math.inf
 
-        self.use_amp = cfg.training.mixed_precision in ("bf16", "fp16")
+        self.use_amp = cfg.training.mixed_precision == "bf16"
         self.amp_dtype = (
             torch.bfloat16 if cfg.training.mixed_precision == "bf16"
-            else torch.float16 if cfg.training.mixed_precision == "fp16"
             else torch.float32
         )
 
@@ -137,17 +136,6 @@ class Trainer:
             project=cfg.logging.project,
             config=cfg.model_dump(),
         )
-
-        # Guard against latent footguns
-        if cfg.training.mixed_precision == "fp16" and self.device.type == "cuda":
-            raise NotImplementedError(
-                "fp16 on CUDA requires GradScaler which is not implemented; "
-                "use bf16 instead, or extend the trainer."
-            )
-        if cfg.scheduler.type not in ("constant", "cosine"):
-            raise NotImplementedError(
-                f"Scheduler '{cfg.scheduler.type}' not implemented; supported: constant, cosine."
-            )
 
     @staticmethod
     def _set_seed(seed: int):
@@ -166,18 +154,7 @@ class Trainer:
             )
         origins = json.loads(origins_path.read_text())
         weights = [oversample.get(origins[sid], 1.0) for sid in self.train_ds.ids]
-        n_per_origin: dict[str, int] = {}
-        for sid in self.train_ds.ids:
-            n_per_origin[origins[sid]] = n_per_origin.get(origins[sid], 0) + 1
-        total_w = sum(w * n_per_origin[origins[sid]] / len(self.train_ds.ids)
-                      for sid, w in zip(self.train_ds.ids, weights))
-        print(f"WeightedRandomSampler enabled — per-origin counts: {n_per_origin}")
-        print(f"  weights: {oversample}")
-        for origin, n in n_per_origin.items():
-            contribution = oversample.get(origin, 1.0) * n / sum(
-                oversample.get(o, 1.0) * c for o, c in n_per_origin.items()
-            ) * 100
-            print(f"    {origin}: ~{contribution:.1f}% of training steps")
+        print(f"WeightedRandomSampler enabled — weights: {oversample}")
         return WeightedRandomSampler(
             weights=torch.tensor(weights, dtype=torch.double),
             num_samples=len(weights),
@@ -192,8 +169,6 @@ class Trainer:
         def lr_lambda(step: int) -> float:
             if step < warmup:
                 return step / max(1, warmup)
-            if self.cfg.scheduler.type == "constant":
-                return 1.0
             progress = (step - warmup) / max(1, total - warmup)
             return 0.5 * (1.0 + math.cos(math.pi * progress))
 

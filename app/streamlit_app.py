@@ -60,7 +60,7 @@ from src.planrec.polygon_postprocess import (
 )
 from src.segmentation.classes import CLASS_ID, CLASS_NAMES, ROOM_CLASS_IDS
 from src.segmentation.inference import DualSegmentationInference
-from src.segmentation.schema import RoomDetection, SegmentationOutput
+from src.segmentation.schema import SegmentationOutput
 
 
 # Palette identique à scripts/visualize_predictions.py — cohérence visuelle.
@@ -164,6 +164,52 @@ def c2_class_to_devis_label(c2_class: str, ocr_hint: str = "") -> str:
     }.get(c2_class, "Chambre")  # fallback default
 
 
+def _editor_to_rooms_input(
+    df: pd.DataFrame,
+    *,
+    use_pastille_id: bool,
+    surface_by_pid: dict[str, float] | None = None,
+) -> tuple[list[dict], list[str | None]]:
+    """Convertit le DataFrame éditeur (pièces) en rooms_input pour
+    compute_devis_global : filtre 'Inclure', résout DEVIS_LABEL_TO_PARAMS,
+    applique l'override surface_by_pid si fourni.
+
+    use_pastille_id=True : room id = pastille_id (fallback "row_NNN" si
+    absent). use_pastille_id=False : room id = "room_NNN" (index-based),
+    quel que soit le pastille_id.
+
+    Retourne aussi la liste parallèle des pastille_id (une entrée par room
+    conservée), utile pour remapper un résultat par pastille en aval.
+    """
+    surface_by_pid = surface_by_pid or {}
+    rooms_input: list[dict] = []
+    pids: list[str | None] = []
+    for idx, row in df.iterrows():
+        if not row.get("Inclure", False):
+            continue
+        label = row.get("Type")
+        if not label or label not in DEVIS_LABEL_TO_PARAMS:
+            continue
+        c2_class, forced_hint = DEVIS_LABEL_TO_PARAMS[label]
+        pid = row.get("_pastille_id")
+        pid_str = str(pid) if pid is not None and not pd.isna(pid) else None
+        surface = float(row.get("Surface (m²)") or 0.0)
+        if pid_str and pid_str in surface_by_pid:
+            surface = surface_by_pid[pid_str]
+        room_id = (
+            (pid_str or f"row_{idx + 1:03d}")
+            if use_pastille_id else f"room_{idx + 1:03d}"
+        )
+        rooms_input.append({
+            "id": room_id,
+            "c2_class": c2_class,
+            "surface_m2": surface if surface > 0 else None,
+            "ocr_hint": forced_hint or row.get("Notes / texte OCR", ""),
+        })
+        pids.append(pid_str)
+    return rooms_input, pids
+
+
 # Couleurs des pastilles du canvas drag-drop : mêmes RGB que PALETTE (overlay
 # segmentation) pour cohérence visuelle. Convertit RGB → string CSS.
 def _rgb_to_css(rgb: tuple[int, int, int]) -> str:
@@ -221,12 +267,19 @@ def _bbox_rotation_deg(bbox: list[list[int]]) -> int:
 DEFAULT_CHECKPOINT = "runs/segmentation/fr_only_v1/checkpoints/best.pt"
 WALL_CHECKPOINT = "runs/segmentation/wall_only_dwg_v3/checkpoints/best.pt"
 
-# === YOLO Brique A (détection meubles, 9 classes NFC) — purement visuel ===
-YOLO_BRIQUE_A_CHECKPOINT = "runs/detect/runs/detect/brique_a_v1/weights/best.pt"
+# === YOLO Brique A (détection meubles) — modèle OBB (rectangles pivotés) ===
+# brique_a_obb_v1 : 15 classes, task=obb. On garde ici le mobilier/sanitaire
+# (11 classes) ; les 4 classes d'ouverture (Door/Window/french_door/sliding_door)
+# sont EXCLUES → le modèle portes dédié reste autoritaire pour le placement
+# (sinon une porte serait comptée comme meuble). L'angle/coins sont conservés
+# dans les détections brutes pour un usage futur (placement orienté, overlay
+# pivoté — non câblés : le rendu React dessine encore des AABB).
+YOLO_BRIQUE_A_CHECKPOINT = "runs/obb/brique_a_obb_v1/weights/best.pt"
 YOLO_DOORS_CHECKPOINT = "runs/train/v3_doors_windows/weights/best.pt"
+YOLO_OBB_OPENING_CLASSES = {"Door", "Window", "french_door", "sliding_door"}
 BATIA_YOLO_CLASSES = [
     "Bathtub", "Shower", "WashBasin", "Toilet", "KitchenSink",
-    "Cooktop", "Refrigerator", "WashingMachine", "Bed",
+    "Cooktop", "Refrigerator", "Dishwasher", "WashingMachine", "Bed", "Closet",
 ]
 # Palette distincte de DEVIS_LABEL_TO_COLOR (qui colore les pièces) — ici on
 # colore les MEUBLES. Couleurs vives pour bien voir les bbox sur le plan.
@@ -238,13 +291,11 @@ YOLO_BRIQUE_A_COLORS: dict[str, str] = {
     "KitchenSink":    _rgb_to_css((50, 205, 50)),     # vert lime
     "Cooktop":        _rgb_to_css((220, 20, 60)),     # rouge crimson
     "Refrigerator":   _rgb_to_css((105, 105, 105)),   # gris foncé
+    "Dishwasher":     _rgb_to_css((255, 105, 180)),   # rose
     "WashingMachine": _rgb_to_css((255, 140, 0)),     # orange
     "Bed":            _rgb_to_css((160, 82, 45)),     # marron
+    "Closet":         _rgb_to_css((199, 179, 130)),   # beige
 }
-ALPHA = 0.40
-CONFLICT_COLOR_BGR = (0, 0, 255)        # red for conflict outlines
-OCR_BOX_COLOR_BGR = (0, 200, 0)         # green for OCR bboxes
-WALL_LINE_COLOR_BGR = (255, 0, 255)     # magenta for detected wall lines (BGR=RGB here)
 
 
 @st.cache_resource(show_spinner=False)
@@ -283,17 +334,23 @@ def run_yolo_brique_a(image_bytes: bytes, conf_threshold: float) -> list[dict]:
     results = model.predict(source=img, conf=conf_threshold, verbose=False)
     out: list[dict] = []
     for r in results:
-        if r.boxes is None:
+        obb = r.obb           # modèle OBB → détections dans .obb (pas .boxes)
+        if obb is None:
             continue
-        for box in r.boxes:
-            cls_id = int(box.cls.item())
-            cls_name = model.names[cls_id]
-            conf_score = float(box.conf.item())
-            x1, y1, x2, y2 = [float(v) for v in box.xyxy[0].cpu().numpy()]
+        for i in range(len(obb)):
+            cls_name = model.names[int(obb.cls[i].item())]
+            # L'OBB est le détecteur UNIQUE : mobilier + ouvertures (Door/Window/
+            # french_door/sliding_door). Le split furniture/openings se fait côté
+            # appelant. .xyxy = AABB de la boîte pivotée (compat placement/overlay).
+            x1, y1, x2, y2 = [float(v) for v in obb.xyxy[i].cpu().numpy()]
+            corners = obb.xyxyxyxy[i].cpu().numpy()          # (4, 2) coins pivotés
             out.append({
                 "class_name": cls_name,
-                "confidence": conf_score,
+                "confidence": float(obb.conf[i].item()),
                 "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                # orientation conservée pour usage futur (placement/overlay pivoté)
+                "corners": [[float(x), float(y)] for x, y in corners],
+                "angle": float(obb.xywhr[i][4].item()),       # radians
             })
     return out
 
@@ -435,197 +492,6 @@ def run_ocr_raw(image_bytes: bytes, preprocess: bool) -> list[dict]:
     img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     engine = load_paddleocr_engine()
     return engine.read(img, preprocess=preprocess)
-
-
-def _polygon_centroid(pts: np.ndarray) -> tuple[int, int]:
-    M = cv2.moments(pts.reshape(-1, 1, 2))
-    if M["m00"] == 0:
-        return int(pts[:, 0].mean()), int(pts[:, 1].mean())
-    return int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
-
-
-def _draw_label_box(canvas, text, x, y, bg_color, border_color=None):
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.6
-    thickness = 1
-    (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
-    pad_x, pad_y = 6, 4
-    x0 = max(0, x - tw // 2 - pad_x)
-    y0 = max(0, y - th // 2 - pad_y)
-    x1 = x0 + tw + 2 * pad_x
-    y1 = y0 + th + 2 * pad_y + baseline
-    cv2.rectangle(canvas, (x0, y0), (x1, y1), bg_color, thickness=-1)
-    cv2.rectangle(canvas, (x0, y0), (x1, y1),
-                  border_color or (255, 255, 255), thickness=2 if border_color else 1)
-    cv2.putText(canvas, text, (x0 + pad_x, y1 - pad_y - baseline),
-                font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
-
-
-def render_overlay_ocr_only(
-    image_bgr: np.ndarray,
-    ocr_rooms: list[dict],
-    ocr_hits_all: list[dict] | None = None,
-    show_ocr_labels: bool = True,
-    show_ocr_boxes: bool = False,
-) -> np.ndarray:
-    """Overlay minimaliste : image originale + bboxes/labels OCR.
-
-    Utilisé quand la segmentation est OFF (MVP OCR-first).
-
-    Args:
-        show_ocr_labels: dessine bbox colorée + label pour chaque pièce OCR
-                         identifiée (ex: 'Kitchen (Cuisine)')
-        show_ocr_boxes: dessine toutes les bboxes OCR brutes en vert fin,
-                        y compris celles non matchées (utile pour debug)
-    """
-    blended = image_bgr.copy()
-
-    # Pass 1 : labels par pièce OCR (bbox colorée + texte)
-    if show_ocr_labels:
-        for r in ocr_rooms:
-            bbox = r.get("bbox", [])
-            if not bbox or len(bbox) < 3:
-                continue
-            cid = r["c2_class_id"]
-            color = tuple(int(c) for c in PALETTE[cid])
-            pts = np.array(bbox, dtype=np.int32)
-            cv2.polylines(blended, [pts], True, color, thickness=2,
-                          lineType=cv2.LINE_AA)
-            x_min = int(min(p[0] for p in bbox))
-            y_min = int(min(p[1] for p in bbox))
-            label = f"{r['c2_class']} ({r['raw_text']})"
-            _draw_label_box(blended, label, x_min + 50,
-                            max(15, y_min - 5), color)
-
-    # Pass 2 : toutes les bboxes OCR brutes (vert fin, debug)
-    if show_ocr_boxes and ocr_hits_all:
-        for h in ocr_hits_all:
-            bbox = h.get("bbox")
-            if not bbox or len(bbox) < 3:
-                continue
-            pts = np.array(bbox, dtype=np.int32)
-            cv2.polylines(blended, [pts], True, OCR_BOX_COLOR_BGR,
-                          thickness=1, lineType=cv2.LINE_AA)
-            x, y = int(bbox[0][0]), int(bbox[0][1])
-            text = h.get("text", "")[:30]
-            cv2.putText(blended, text, (x, max(0, y - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, OCR_BOX_COLOR_BGR, 1,
-                        cv2.LINE_AA)
-
-    return blended
-
-
-def render_overlay(
-    image_bgr: np.ndarray,
-    rooms: list[RoomDetection],
-    threshold: float,
-    allowed_class_ids: set[int],
-    fusion_records: list[dict] | None = None,
-    show_ocr_boxes: bool = False,
-    ocr_hits_all: list[dict] | None = None,
-    simplify_epsilon_pct: float = 0.0,
-    axis_align_tolerance_deg: float | None = None,
-    wall_lines: list[tuple[int, int, int, int]] | None = None,
-    wall_snap_angle_deg: float = 10.0,
-    wall_snap_dist_px: float = 25.0,
-    show_wall_lines: bool = False,
-) -> np.ndarray:
-    """Render filtered rooms on top of the original image.
-
-    If fusion_records is provided, conflicts (OCR class ≠ model class) are
-    drawn with a red outline + ⚠ prefix in the label.
-
-    simplify_epsilon_pct / axis_align_tolerance_deg control the polygon
-    post-processing for cleaner visuals (Douglas-Peucker + axis snap).
-    """
-    overlay = image_bgr.copy()
-
-    # Build conflict lookup
-    conflict_room_ids: set[str] = set()
-    ocr_class_by_room: dict[str, int | None] = {}
-    if fusion_records:
-        for rec in fusion_records:
-            ocr_class_by_room[rec["room"].id] = rec.get("ocr_class_id")
-            if rec.get("conflict"):
-                conflict_room_ids.add(rec["room"].id)
-
-    visible = [
-        r for r in rooms
-        if r.confidence >= threshold and r.type_id in allowed_class_ids
-    ]
-    visible.sort(key=lambda r: -r.area_pixels)
-
-    # Pre-simplify polygons once (used in both fill + outline passes)
-    polygons_simplified: dict[str, np.ndarray] = {}
-    any_postprocess = (
-        simplify_epsilon_pct > 0 or axis_align_tolerance_deg or wall_lines
-    )
-    for r in visible:
-        if any_postprocess:
-            poly = postprocess_polygon(
-                r.polygon,
-                simplify_epsilon_pct=simplify_epsilon_pct,
-                axis_align_tolerance_deg=axis_align_tolerance_deg,
-                wall_lines=wall_lines,
-                wall_snap_angle_deg=wall_snap_angle_deg,
-                wall_snap_dist_px=wall_snap_dist_px,
-            )
-        else:
-            poly = r.polygon
-        polygons_simplified[r.id] = np.array(poly, dtype=np.int32)
-
-    # Pass 1: filled polygons (model class color)
-    for r in visible:
-        color = tuple(int(c) for c in PALETTE[r.type_id])
-        pts = polygons_simplified[r.id]
-        cv2.fillPoly(overlay, [pts], color)
-
-    blended = cv2.addWeighted(overlay, ALPHA, image_bgr, 1 - ALPHA, 0)
-
-    # Pass 2: outlines + labels
-    for r in visible:
-        color = tuple(int(c) for c in PALETTE[r.type_id])
-        pts = polygons_simplified[r.id]
-
-        is_conflict = r.id in conflict_room_ids
-        outline_color = CONFLICT_COLOR_BGR if is_conflict else color
-        outline_th = 4 if is_conflict else 2
-        cv2.polylines(blended, [pts], True, outline_color,
-                      thickness=outline_th, lineType=cv2.LINE_AA)
-
-        cx, cy = _polygon_centroid(pts)
-        if is_conflict:
-            ocr_cid = ocr_class_by_room.get(r.id)
-            ocr_name = CLASS_NAMES[ocr_cid] if ocr_cid is not None else "?"
-            label = f"⚠ {r.type} {r.confidence:.2f} | OCR:{ocr_name}"
-            _draw_label_box(blended, label, cx, cy, CONFLICT_COLOR_BGR,
-                            border_color=(255, 255, 255))
-        else:
-            label = f"{r.type} {r.confidence:.2f}"
-            _draw_label_box(blended, label, cx, cy, color)
-
-    # Optional: draw all OCR bboxes (green, thin)
-    if show_ocr_boxes and ocr_hits_all:
-        for h in ocr_hits_all:
-            bbox = h.get("bbox")
-            if not bbox or len(bbox) < 3:
-                continue
-            pts = np.array(bbox, dtype=np.int32)
-            cv2.polylines(blended, [pts], True, OCR_BOX_COLOR_BGR,
-                          thickness=1, lineType=cv2.LINE_AA)
-            x, y = int(bbox[0][0]), int(bbox[0][1])
-            cv2.putText(blended, h.get("room_type", "?"), (x, max(0, y - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, OCR_BOX_COLOR_BGR, 1,
-                        cv2.LINE_AA)
-
-    # Optional: draw detected wall lines (magenta, thick) — drawn last so they
-    # remain visible over the room overlays.
-    if show_wall_lines and wall_lines:
-        for x1, y1, x2, y2 in wall_lines:
-            cv2.line(blended, (x1, y1), (x2, y2),
-                     WALL_LINE_COLOR_BGR, thickness=3, lineType=cv2.LINE_AA)
-
-    return blended
 
 
 _EQUIP_TYPE_TO_DEVIS_LABEL: dict[str, str] = {
@@ -827,70 +693,6 @@ def _make_smart_placer(
     return placer
 
 
-def _bedroom_debug_records(seg_result, df_devis, pastilles_by_room, raw_furniture, doors):
-    """Détails géométriques par chambre, pour le panneau debug."""
-    from src.planrec.placement.contracts import Detection, RoomContext
-    from src.planrec.placement.resolver import place_room
-    from src.planrec.placement import geometry as _geo
-    if seg_result is None:
-        return []
-    counts_by_room = {}
-    for li in df_devis.index:
-        room = str(df_devis.at[li, "Pièce"])
-        label = str(df_devis.at[li, "Équipement"])
-        equip = _DEVIS_LABEL_TO_EQUIP_TYPE.get(label)
-        if equip is None:
-            continue
-        counts_by_room.setdefault(room, {})[equip] = int(df_devis.at[li, "Qté"])
-    furn = [Detection(b["class_name"], (int(b["x1"]), int(b["y1"]), int(b["x2"]), int(b["y2"])), b["confidence"]) for b in (raw_furniture or [])]
-    openings = [Detection(d["class_name"], (int(d["x1"]), int(d["y1"]), int(d["x2"]), int(d["y2"])), d["confidence"]) for d in (doors or [])]
-    records = []
-    for room_label, center in pastilles_by_room.items():
-        seg_room = _match_seg_room(seg_result, center)
-        if seg_room is None or seg_room.type != "BedRoom":
-            continue
-        poly = [(int(p[0]), int(p[1])) for p in seg_room.polygon]
-        # Filtre mobilier/ouvertures à CETTE pièce (idem _build_bedroom_layout_index)
-        _contour = np.array(poly, np.int32)
-
-        def _inside(det):
-            cx = (det.bbox[0] + det.bbox[2]) / 2.0
-            cy = (det.bbox[1] + det.bbox[3]) / 2.0
-            return cv2.pointPolygonTest(_contour, (cx, cy), False) >= 0
-
-        furn_room = [d for d in furn if _inside(d)]
-        open_room = [d for d in openings if _inside(d)]
-        ctx = RoomContext(room_type="BedRoom", polygon=poly,
-                          furniture=furn_room, openings=open_room, wall_lines=[])
-        # géométrie clé
-        edges = _geo.room_edges(poly)
-        bed = max((d for d in furn_room if d.cls in {"Bed", "Double Bed", "Single Bed"}),
-                  key=lambda d: d.confidence, default=None)
-        head = None
-        bloques = None
-        if bed is not None:
-            hw = _geo.bed_head_wall(bed.bbox, edges)
-            head = {"a": hw.a, "b": hw.b, "orientation": hw.orientation}
-            bloques = [{"a": e.a, "b": e.b, "orientation": e.orientation}
-                       for e in _geo.bed_blocked_long_walls(bed.bbox, edges, hw)]
-        placed = place_room(ctx, counts_by_room.get(room_label, {}))
-        records.append({
-            "chambre": room_label,
-            "polygone_bbox": [min(p[0] for p in poly), min(p[1] for p in poly),
-                              max(p[0] for p in poly), max(p[1] for p in poly)],
-            "n_sommets_polygone": len(poly),
-            "lit_bbox": list(bed.bbox) if bed else None,
-            "lit_largeur_hauteur": ([bed.bbox[2]-bed.bbox[0], bed.bbox[3]-bed.bbox[1]] if bed else None),
-            "mur_tete_de_lit": head,
-            "grands_cotes_bloques": bloques,
-            "counts": counts_by_room.get(room_label, {}),
-            "equipements_places": [
-                {"type": p.equip_key, "x": p.x, "y": p.y,
-                 "uncertain": p.uncertain, "reason": p.reason} for p in placed],
-        })
-    return records
-
-
 def main():
     st.set_page_config(
         page_title="batIA — Détection de pièces",
@@ -908,7 +710,6 @@ def main():
     show_doors = False
     show_windows = False
     show_walls_overlay = False
-    show_placement_debug = False
     with st.sidebar:
         st.header("Plan d'entrée")
 
@@ -1053,10 +854,6 @@ def main():
             help="Superpose les segments de murs (masque Wall du modèle) sur "
                  "le plan en overlay SVG magenta. Indépendant du snap-to-walls.",
             disabled=not enable_segmentation,
-        )
-        show_placement_debug = st.checkbox(
-            "🔬 Debug placement (chambres)", value=False,
-            help="Affiche la géométrie utilisée par le moteur de placement.",
         )
         wall_algorithm = st.selectbox(
             "Algorithme d'extraction de lignes",
@@ -1593,31 +1390,9 @@ def main():
         _surface_by_pid: dict[str, float] = st.session_state.get(
             f"surface_by_pid_{img_hash}", {},
         )
-        rooms_input: list[dict] = []
-        for _idx, _row in df.iterrows():
-            if not _row.get("Inclure", False):
-                continue
-            _label = _row.get("Type")
-            if not _label or _label not in DEVIS_LABEL_TO_PARAMS:
-                continue
-            _c2_class, _forced_hint = DEVIS_LABEL_TO_PARAMS[_label]
-            _pid = _row.get("_pastille_id")
-            _pid_str = (
-                str(_pid) if _pid is not None and not pd.isna(_pid) else None
-            )
-            _surface = float(_row.get("Surface (m²)") or 0.0)
-            if _pid_str and _pid_str in _surface_by_pid:
-                _surface = _surface_by_pid[_pid_str]
-            rooms_input.append({
-                # room_id = pid (si dispo) → permet à generate_tableau de
-                # mapper room → label pastille via room_labels.
-                "id": _pid_str or f"row_{_idx + 1:03d}",
-                "c2_class": _c2_class,
-                "surface_m2": _surface if _surface > 0 else None,
-                "ocr_hint": _forced_hint or _row.get(
-                    "Notes / texte OCR", "",
-                ),
-            })
+        rooms_input, _ = _editor_to_rooms_input(
+            df, use_pastille_id=True, surface_by_pid=_surface_by_pid,
+        )
         if rooms_input:
             st.session_state[f"devis_global_{img_hash}"] = (
                 compute_devis_global(rooms_input, handicap=devis_handicap)
@@ -1915,10 +1690,14 @@ def main():
             )
         else:
             raw_boxes = run_yolo_brique_a(img_bytes, yolo_conf_threshold)
-            # Stocke les boxes BRUTES (non filtrées par yolo_allowed_classes)
-            # pour le moteur de placement chambre : le Bed peut être décoché
-            # par l'utilisateur dans l'overlay visuel, mais le placement en a
-            # besoin. yolo_boxes (filtré) ne convient donc pas comme source.
+            # L'OBB est le détecteur UNIQUE (mobilier + ouvertures) → split par classe.
+            raw_furniture = [b for b in raw_boxes
+                             if b["class_name"] not in YOLO_OBB_OPENING_CLASSES]
+            raw_openings = [b for b in raw_boxes
+                            if b["class_name"] in YOLO_OBB_OPENING_CLASSES]
+            # Boxes BRUTES mobilier (non filtrées par yolo_allowed_classes) pour le
+            # placement chambre : le Bed peut être décoché à l'overlay mais le
+            # placement en a besoin.
             st.session_state[f"yolo_raw_boxes_{img_hash}"] = [
                 {
                     "class_name": b["class_name"],
@@ -1926,17 +1705,20 @@ def main():
                     "x2": int(b["x2"]), "y2": int(b["y2"]),
                     "confidence": float(b["confidence"]),
                 }
-                for b in raw_boxes
+                for b in raw_furniture
             ]
-            # Détection portes/fenêtres (modèle séparé) — alimente le placement
-            # intelligent. Checkpoint .pt gitignored : skip discret si absent
-            # (pas de crash), le placement retombera sur sa dégradation porte.
-            if Path(YOLO_DOORS_CHECKPOINT).exists():
-                st.session_state[f"doors_{img_hash}"] = run_yolo_doors(
-                    img_bytes, yolo_conf_threshold,
-                )
-            else:
-                st.session_state[f"doors_{img_hash}"] = []
+            # Ouvertures depuis l'OBB (remplace l'ancien modèle portes dédié
+            # v3_doors_windows) → alimente le placement (openings) ET l'overlay.
+            st.session_state[f"doors_{img_hash}"] = [
+                {
+                    "class_name": b["class_name"],
+                    "x1": int(b["x1"]), "y1": int(b["y1"]),
+                    "x2": int(b["x2"]), "y2": int(b["y2"]),
+                    "confidence": float(b["confidence"]),
+                }
+                for b in raw_openings
+            ]
+            # Overlay mobilier (filtré par les cases à cocher classes)
             yolo_boxes = [
                 {
                     "class_name": b["class_name"],
@@ -1947,22 +1729,25 @@ def main():
                         b["class_name"], "rgb(255,0,255)",
                     ),
                 }
-                for b in raw_boxes
+                for b in raw_furniture
                 if b["class_name"] in yolo_allowed_classes
             ]
-            # Overlay portes/fenêtres — réutilise le même rendu SVG rect que
-            # les meubles YOLO, mais couleurs distinctes + labels FR.
-            _doors_det = st.session_state.get(f"doors_{img_hash}", [])
-            _OPENING_LABELS = {"door": "Porte", "window": "Fenêtre"}
-            _OPENING_COLORS = {
-                "door": "rgb(46, 204, 113)",
-                "window": "rgb(52, 152, 219)",
+            # Overlay ouvertures — labels FR + couleurs, toggles show_doors/windows.
+            # Fenêtre → show_windows ; Porte/Porte-fenêtre/Baie vitrée → show_doors.
+            _OPENING_LABELS = {
+                "Door": "Porte", "Window": "Fenêtre",
+                "french_door": "Porte-fenêtre", "sliding_door": "Baie vitrée",
             }
-            for _d in _doors_det:
+            _OPENING_COLORS = {
+                "Door": "rgb(46, 204, 113)", "Window": "rgb(52, 152, 219)",
+                "french_door": "rgb(155, 89, 182)", "sliding_door": "rgb(241, 196, 15)",
+            }
+            for _d in raw_openings:
                 _cls = _d["class_name"]
-                if _cls == "door" and not show_doors:
+                is_window = _cls == "Window"
+                if is_window and not show_windows:
                     continue
-                if _cls == "window" and not show_windows:
+                if not is_window and not show_doors:
                     continue
                 yolo_boxes.append({
                     "class_name": _OPENING_LABELS.get(_cls, _cls),
@@ -2019,31 +1804,9 @@ def main():
         _src_rooms_pids: list[str | None] = []
         _src_df = st.session_state.get(editor_key)
         if _src_df is not None and len(_src_df) > 0:
-            for _idx, _row in _src_df.iterrows():
-                if not _row.get("Inclure", False):
-                    continue
-                _label = _row.get("Type")
-                if not _label or _label not in DEVIS_LABEL_TO_PARAMS:
-                    continue
-                _c2_class, _forced_hint = DEVIS_LABEL_TO_PARAMS[_label]
-                _pid = _row.get("_pastille_id")
-                _pid_str = (
-                    str(_pid) if _pid is not None and not pd.isna(_pid)
-                    else None
-                )
-                # Priorité : user-set > editor > None
-                _surface = float(_row.get("Surface (m²)") or 0.0)
-                if _pid_str and _pid_str in _surface_by_pid:
-                    _surface = _surface_by_pid[_pid_str]
-                _src_rooms_input.append({
-                    "id": f"room_{_idx + 1:03d}",
-                    "c2_class": _c2_class,
-                    "surface_m2": _surface if _surface > 0 else None,
-                    "ocr_hint": _forced_hint or _row.get(
-                        "Notes / texte OCR", "",
-                    ),
-                })
-                _src_rooms_pids.append(_pid_str)
+            _src_rooms_input, _src_rooms_pids = _editor_to_rooms_input(
+                _src_df, use_pastille_id=False, surface_by_pid=_surface_by_pid,
+            )
         else:
             for _r in ocr_rooms:
                 _label_fr = c2_class_to_devis_label(
@@ -2209,7 +1972,7 @@ def main():
             # Push les Qté recalculées vers les widget-states (ex. surface
             # séjour → nb prises recomputé). cf _push_qty_widget_states.
             _push_qty_widget_states(_df_devis)
-            # Persiste pour le panneau debug placement (scope outer).
+            # Persiste pour la reconciliation Qté (ancres room, cf plus bas).
             st.session_state[f"pastilles_by_room_{img_hash}"] = _pastilles_by_room
             if _old_ids != _new_ids:
                 st.session_state[f"_eq_just_populated_{img_hash}"] = True
@@ -2228,34 +1991,6 @@ def main():
         if not _wall_overlay_lines:
             _wall_overlay_lines = extract_lines_from_image(image_bgr)
         st.caption(f"🧱 Murs overlay : {len(_wall_overlay_lines)} segments")
-
-    # Panneau debug placement (chambres) — récupère df_devis / pastilles depuis
-    # la session (ils ne sont définis qu'à l'intérieur du bloc devis ci-dessus).
-    if show_placement_debug:
-        with st.expander("🔬 Debug placement (chambres)", expanded=True):
-            _raw_furn_dbg = st.session_state.get(f"yolo_raw_boxes_{img_hash}", [])
-            _doors_dbg = st.session_state.get(f"doors_{img_hash}", [])
-            st.write({
-                "murs_overlay_actif": bool(show_walls_overlay),
-                "segments_murs_extraits": len(_wall_overlay_lines),
-                "n_furniture_brut": len(_raw_furn_dbg),
-                "n_portes_fenetres": len(_doors_dbg),
-            })
-            try:
-                _df_devis_dbg = st.session_state.get(f"devis_lines_{img_hash}")
-                _pastilles_dbg = st.session_state.get(
-                    f"pastilles_by_room_{img_hash}", {})
-                if _df_devis_dbg is None or not _pastilles_dbg:
-                    st.info(
-                        "Génère le devis (et active la segmentation) pour "
-                        "peupler les détails de placement.")
-                else:
-                    _recs = _bedroom_debug_records(
-                        result if enable_segmentation else None,
-                        _df_devis_dbg, _pastilles_dbg, _raw_furn_dbg, _doors_dbg)
-                    st.json(_recs)
-            except Exception as _e:
-                st.warning(f"debug indisponible: {_e}")
 
     # On envoie TOUJOURS l'état complet à React (source de vérité Python).
     # L'affichage est contrôlé via equip_visible_types : la liste vide
@@ -2620,13 +2355,6 @@ def main():
                 _rebuild_devis_global_from_editor()
                 st.rerun()
 
-    # Debug expander (utile pendant le dev, à retirer en prod)
-    with st.expander("🔍 Debug pastilles canvas (Phase 2)"):
-        st.write(f"**Pastilles en session_state** : {len(st.session_state.get(pastilles_state_key, []))}")
-        if canvas_state is not None:
-            st.write(f"**Dernier canvas_state** : {len(canvas_state.get('pastilles', []))} pastilles")
-        st.json(st.session_state.get(pastilles_state_key, []))
-
     # --- Éditeur de pièces (caché par défaut, accessible via expander) ---
     # V1.2 : section devenue rarement utile depuis le drag-drop. Conservée
     # pour cas avancés (changement de type d'une pièce mal détectée par OCR,
@@ -2709,48 +2437,7 @@ def main():
             if st.button("💡 Générer devis", key=f"{editor_key}_gen",
                          type="primary"):
                 st.session_state[devis_state_key] = True
-                dl_key = f"devis_lines_{img_hash}"
-                manual_backup_key = f"{dl_key}_manual_backup"
-                if dl_key in st.session_state:
-                    existing_devis = st.session_state[dl_key]
-                    if "_manual" in existing_devis.columns:
-                        manual_rows: list[dict] = []
-                        for idx in existing_devis.index:
-                            if not bool(existing_devis.loc[idx, "_manual"]):
-                                continue
-                            rid = int(existing_devis.loc[idx, "_id"])
-                            backup_ids = []
-                            if "_equip_ids" in existing_devis.columns:
-                                backup_ids = list(
-                                    existing_devis.loc[idx, "_equip_ids"] or []
-                                )
-                            manual_rows.append({
-                                "Pièce": st.session_state.get(
-                                    f"{dl_key}_piece_{rid}",
-                                    str(existing_devis.loc[idx, "Pièce"]),
-                                ),
-                                "Équipement": st.session_state.get(
-                                    f"{dl_key}_eq_{rid}",
-                                    str(existing_devis.loc[idx, "Équipement"]),
-                                ),
-                                "Qté": int(st.session_state.get(
-                                    f"{dl_key}_qty_{rid}",
-                                    int(existing_devis.loc[idx, "Qté"]),
-                                )),
-                                "Prix HT (€)": float(st.session_state.get(
-                                    f"{dl_key}_ht_{rid}",
-                                    float(existing_devis.loc[idx, "Prix HT (€)"]),
-                                )),
-                                "_equip_ids": backup_ids,
-                            })
-                        if manual_rows:
-                            st.session_state[manual_backup_key] = manual_rows
-                keys_to_del = [
-                    k for k in list(st.session_state.keys())
-                    if k.startswith(dl_key) and k != manual_backup_key
-                ]
-                for k in keys_to_del:
-                    del st.session_state[k]
+                _trigger_devis_regen()
                 st.rerun()
         with col_reset:
             if st.button(
@@ -2889,23 +2576,7 @@ def main():
 
         # Construit rooms_input depuis le DataFrame édité (uniquement les lignes
         # cochées avec un Type valide)
-        rooms_input: list[dict] = []
-        for idx, row in edited_df.iterrows():
-            if not row.get("Inclure", False):
-                continue
-            label = row.get("Type")
-            if not label or label not in DEVIS_LABEL_TO_PARAMS:
-                continue
-            c2_class, forced_hint = DEVIS_LABEL_TO_PARAMS[label]
-            surface = float(row.get("Surface (m²)") or 0.0)
-            rooms_input.append({
-                "id": f"room_{idx + 1:03d}",
-                "c2_class": c2_class,
-                "surface_m2": surface if surface > 0 else None,
-                # Si label='WC', on force ocr_hint='WC' pour que le moteur NFC
-                # applique les règles WC (allégées) au lieu de SDB
-                "ocr_hint": forced_hint or row.get("Notes / texte OCR", ""),
-            })
+        rooms_input, _ = _editor_to_rooms_input(edited_df, use_pastille_id=False)
 
         if not rooms_input:
             st.warning(

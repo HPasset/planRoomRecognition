@@ -38,6 +38,7 @@ FR_TO_C2: dict[str, int] = {
     "palier": CLASS_ID["Entry"],
     "cellier": CLASS_ID["Storage"],
     "buanderie": CLASS_ID["Storage"],
+    "atelier": CLASS_ID["Storage"],
     "dressing": CLASS_ID["Storage"],
     "garage": CLASS_ID["Garage"],
     "balcon": CLASS_ID["Outdoor"],

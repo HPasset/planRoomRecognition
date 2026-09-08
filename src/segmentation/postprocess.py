@@ -5,7 +5,7 @@ import numpy as np
 from pycocotools import mask as mask_utils
 
 from src.segmentation.classes import CLASS_NAMES, ROOM_CLASS_IDS, CLASS_ID
-from src.segmentation.preprocess import LetterboxInfo, unletterbox_polygon, unletterbox_mask
+from src.segmentation.preprocess import LetterboxInfo, unletterbox_mask
 from src.segmentation.schema import RoomDetection, WallsOutput
 
 

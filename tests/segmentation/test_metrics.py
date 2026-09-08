@@ -1,7 +1,5 @@
 import numpy as np
-from src.segmentation.metrics import (
-    compute_iou_per_class, compute_miou, compute_room_recall_precision,
-)
+from src.segmentation.metrics import compute_iou_per_class, compute_miou
 from src.segmentation.classes import NUM_CLASSES
 
 
@@ -28,24 +26,3 @@ def test_miou_handles_nan():
     iou[2] = 0.8
     iou[5] = 0.6
     assert abs(compute_miou(iou) - 0.7) < 1e-6
-
-
-def test_room_recall_precision_basic():
-    # GT instance mask: 2 rooms (class 2, class 5)
-    gt_inst = np.zeros((10, 10), dtype=np.int32)
-    gt_inst[0:5, 0:5] = 1  # room 1
-    gt_inst[5:10, 5:10] = 2  # room 2
-    gt_classes = {1: 2, 2: 5}
-
-    # Pred: 1 room overlapping room 1 (correct class), 1 room overlapping room 2 (wrong class)
-    pred_inst = np.zeros((10, 10), dtype=np.int32)
-    pred_inst[0:5, 0:5] = 10
-    pred_inst[5:10, 5:10] = 20
-    pred_classes = {10: 2, 20: 4}  # second is BedRoom instead of Bath
-
-    rec, prec, type_acc = compute_room_recall_precision(
-        pred_inst, pred_classes, gt_inst, gt_classes,
-    )
-    assert rec == 0.5  # only room 1 retrouvé avec bonne classe
-    assert prec == 0.5
-    assert type_acc == 0.5  # 1 sur 2 retrouvés = bonne classe

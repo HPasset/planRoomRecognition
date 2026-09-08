@@ -1,19 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -c ':*)",
-      "Bash(.venv/Scripts/python -c ':*)",
-      "Bash(.venv/Scripts/python -c \"import cairosvg; print\\('cairosvg OK'\\)\")",
-      "Bash(.venv/Scripts/python -c \"import svglib; print\\('svglib OK'\\)\")",
-      "Bash(.venv/Scripts/python -c \"from PIL import Image; print\\('PIL OK'\\)\")",
-      "Bash(.venv/Scripts/pip install:*)",
-      "Bash(where inkscape:*)",
-      "Bash(.venv/Scripts/python -c \"import skia; print\\('skia OK'\\)\")",
-      "Bash(.venv/Scripts/python -c \"import wand; print\\('wand OK'\\)\")",
-      "Bash(.venv/Scripts/python scripts/cubicasa5k_export_yolo.py --root data/raw/cubicasa5k/cubicasa5k/high_quality_architectural --out data/processed/cubicasa5k_yolo_v2_test --val_ratio 0.1 --max_aspect_diff 0.20)",
       "Read(//tmp/**)",
-      "Bash(ls data/processed/cubicasa5k_yolo_v2_test/labels/train/*.txt)",
-      "Bash(.venv/Scripts/python scripts/overlay_svg_boxes.py --labels data/processed/cubicasa5k_yolo_v2_test/labels/val/1.txt --classes data/processed/cubicasa5k_yolo_v2_test/../manual_annot_yolo/classes.txt --image data/processed/cubicasa5k_yolo_v2_test/images/val/1.png --out data/interim/overlay/cubicasa5k_v2_1_labels.png)"
+      "Bash(ls data/processed/cubicasa5k_yolo_v2_test/labels/train/*.txt)"
     ]
   }
 }

@@ -227,9 +227,3 @@ def get_equipments_state(at):
         return at.session_state[key]
     except KeyError:
         return None
-
-
-def enable_equipments_toggle(at):
-    """No-op : depuis V1.1 les équipements sont auto-affichés (pas de toggle).
-    Conservé pour rétrocompatibilité des tests E1-E6."""
-    return at

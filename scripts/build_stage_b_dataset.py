@@ -72,64 +72,70 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fr_root", required=True,
                     help="FR panoptic root (output of cvat_to_panoptic.py)")
-    ap.add_argument("--cc_root", required=True,
-                    help="CubiCasa panoptic root")
+    ap.add_argument("--aux_root", required=True,
+                    help="Auxiliary bulk panoptic root (MSD, CubiCasa, …)")
+    ap.add_argument("--aux_prefix", default="cc",
+                    help="id prefix + origin tag for the aux source (e.g. 'msd', 'cc')")
+    ap.add_argument("--aux_oversample", type=int, default=1,
+                    help="Oversample weight for aux in dataset.yaml (fr is ×8)")
     ap.add_argument("--out", required=True,
                     help="Output dir for combined Stage B dataset")
     args = ap.parse_args()
 
+    aux = args.aux_prefix
     fr_root = Path(args.fr_root).resolve()
-    cc_root = Path(args.cc_root).resolve()
+    aux_root = Path(args.aux_root).resolve()
     out = Path(args.out).resolve()
+    test_aux = f"test_{aux}"
 
-    for root in (fr_root, cc_root):
+    for root in (fr_root, aux_root):
         if not (root / "splits.json").is_file():
             raise SystemExit(f"splits.json not found in {root}")
 
     fr_splits = json.loads((fr_root / "splits.json").read_text())
-    cc_splits = json.loads((cc_root / "splits.json").read_text())
+    aux_splits = json.loads((aux_root / "splits.json").read_text())
 
-    print(f"FR  source: train={len(fr_splits['train'])} "
+    print(f"FR   source: train={len(fr_splits['train'])} "
           f"val={len(fr_splits['val'])} test={len(fr_splits['test'])}")
-    print(f"CC  source: train={len(cc_splits['train'])} "
-          f"val={len(cc_splits['val'])} test={len(cc_splits['test'])}")
+    print(f"{aux.upper():<4} source: train={len(aux_splits['train'])} "
+          f"val={len(aux_splits['val'])} test={len(aux_splits['test'])}")
 
     out.mkdir(parents=True, exist_ok=True)
 
     splits_out: dict[str, list[str]] = {
-        "train": [], "val": [], "test_fr": [], "test_cc": [],
+        "train": [], "val": [], "test_fr": [], test_aux: [],
     }
     origins: dict[str, str] = {}
 
-    # --- train: FR train ∪ CC train ---
+    # --- train: FR train ∪ AUX train ---
     fr_train = _symlink_split(fr_root, "train", out, "train",
                               fr_splits["train"], "fr")
-    cc_train = _symlink_split(cc_root, "train", out, "train",
-                              cc_splits["train"], "cc")
-    splits_out["train"] = fr_train + cc_train
+    aux_train = _symlink_split(aux_root, "train", out, "train",
+                               aux_splits["train"], aux)
+    splits_out["train"] = fr_train + aux_train
     for sid in fr_train: origins[sid] = "fr"
-    for sid in cc_train: origins[sid] = "cc"
+    for sid in aux_train: origins[sid] = aux
 
-    # --- val: FR val ∪ CC val (mixed, used for early stopping) ---
+    # --- val: FR val ∪ AUX val (mixed, used for early stopping) ---
     fr_val = _symlink_split(fr_root, "val", out, "val",
                             fr_splits["val"], "fr")
-    cc_val = _symlink_split(cc_root, "val", out, "val",
-                            cc_splits["val"], "cc")
-    splits_out["val"] = fr_val + cc_val
+    aux_val = _symlink_split(aux_root, "val", out, "val",
+                             aux_splits["val"], aux)
+    splits_out["val"] = fr_val + aux_val
     for sid in fr_val: origins[sid] = "fr"
-    for sid in cc_val: origins[sid] = "cc"
+    for sid in aux_val: origins[sid] = aux
 
-    # --- test_fr: FR test only (MVP metric) ---
+    # --- test_fr: FR test only (MVP metric, frozen hold-out) ---
     fr_test = _symlink_split(fr_root, "test", out, "test_fr",
                              fr_splits["test"], "fr")
     splits_out["test_fr"] = fr_test
     for sid in fr_test: origins[sid] = "fr"
 
-    # --- test_cc: CC test only (sanity check) ---
-    cc_test = _symlink_split(cc_root, "test", out, "test_cc",
-                             cc_splits["test"], "cc")
-    splits_out["test_cc"] = cc_test
-    for sid in cc_test: origins[sid] = "cc"
+    # --- test_<aux>: AUX test only (sanity check) ---
+    aux_test = _symlink_split(aux_root, "test", out, test_aux,
+                              aux_splits["test"], aux)
+    splits_out[test_aux] = aux_test
+    for sid in aux_test: origins[sid] = aux
 
     # Write splits + origins
     (out / "splits.json").write_text(json.dumps(splits_out, indent=2))
@@ -140,27 +146,28 @@ def main():
         f"path: {out.as_posix()}\n"
         f"num_classes: {NUM_CLASSES}\n"
         "names:\n" + "\n".join(f"  - {n}" for n in CLASS_NAMES) + "\n"
-        "splits: [train, val, test_fr, test_cc]\n"
-        "source: FR_annotated + CubiCasa5K (Stage B combined)\n"
+        f"splits: [train, val, test_fr, {test_aux}]\n"
+        f"source: FR_annotated + {aux.upper()} (Stage B combined)\n"
         "oversampling:\n"
         "  fr: 8\n"
-        "  cc: 1\n"
+        f"  {aux}: {args.aux_oversample}\n"
     )
     (out / "dataset.yaml").write_text(yaml_text)
 
     n_train_fr = sum(1 for s in splits_out["train"] if origins[s] == "fr")
-    n_train_cc = sum(1 for s in splits_out["train"] if origins[s] == "cc")
-    fr_contribution = n_train_fr * 8 / (n_train_fr * 8 + n_train_cc) * 100
+    n_train_aux = sum(1 for s in splits_out["train"] if origins[s] == aux)
+    denom = n_train_fr * 8 + n_train_aux * args.aux_oversample
+    fr_contribution = n_train_fr * 8 / denom * 100 if denom else 0.0
 
     print(f"\n✓ Stage B dataset built at {out}")
     print(f"  train    : {len(splits_out['train'])} "
-          f"(fr={n_train_fr}, cc={n_train_cc}) "
-          f"→ FR contribution after ×8 oversampling: {fr_contribution:.1f}%")
+          f"(fr={n_train_fr}, {aux}={n_train_aux}) "
+          f"→ FR contribution (fr×8 / {aux}×{args.aux_oversample}): {fr_contribution:.1f}%")
     print(f"  val      : {len(splits_out['val'])} "
           f"(fr={sum(1 for s in splits_out['val'] if origins[s] == 'fr')}, "
-          f"cc={sum(1 for s in splits_out['val'] if origins[s] == 'cc')})")
+          f"{aux}={sum(1 for s in splits_out['val'] if origins[s] == aux)})")
     print(f"  test_fr  : {len(splits_out['test_fr'])} (MVP metric)")
-    print(f"  test_cc  : {len(splits_out['test_cc'])} (sanity check)")
+    print(f"  {test_aux:<8}: {len(splits_out[test_aux])} (sanity check)")
 
 
 if __name__ == "__main__":

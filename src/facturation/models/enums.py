@@ -28,7 +28,6 @@ class DevisStatut(str, enum.Enum):
     ENVOYE = "envoye"
     ACCEPTE = "accepte"
     REFUSE = "refuse"
-    EXPIRE = "expire"
 
 
 class FactureType(str, enum.Enum):

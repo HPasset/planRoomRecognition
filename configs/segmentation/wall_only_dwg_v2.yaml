@@ -32,20 +32,16 @@ optimizer:
   grad_clip_norm: 1.0
 
 scheduler:
-  type: cosine
   warmup_steps: 100  # 105 train / batch 4 = ~26 steps/epoch → warmup ~4 epochs
 
 training:
   epochs: 40
   early_stop_patience: 8
   mixed_precision: "no"
-  oversample_rare_classes: false
 
 logging:
   tracker: wandb
   project: batia-segmentation
-  log_image_count: 5
 
 checkpoint:
   output_dir: /runs/wall_only_dwg_v2
-  save_every_n_epochs: 1     # save+commit après chaque epoch (resume safe)

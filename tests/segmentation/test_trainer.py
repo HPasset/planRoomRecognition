@@ -44,13 +44,13 @@ def _make_config(root: Path, ckpt_dir: Path) -> TrainingConfig:
             lr_backbone=1e-5, lr_head=1e-4, weight_decay=0.05,
             grad_accumulation=1, grad_clip_norm=0.01,
         ),
-        scheduler=SchedulerConfig(type="constant", warmup_steps=0),
+        scheduler=SchedulerConfig(warmup_steps=0),
         training=TrainingPhaseConfig(
             epochs=1, early_stop_patience=0,
-            mixed_precision="no", oversample_rare_classes=False,
+            mixed_precision="no",
         ),
-        logging=LoggingConfig(tracker="none", project="test", log_image_count=0),
-        checkpoint=CheckpointConfig(output_dir=str(ckpt_dir), save_every_n_epochs=1),
+        logging=LoggingConfig(tracker="none", project="test"),
+        checkpoint=CheckpointConfig(output_dir=str(ckpt_dir)),
     )
 
 

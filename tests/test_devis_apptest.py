@@ -20,7 +20,6 @@ from conftest import (
     find_button_by_label,
     find_selectboxes_by_label,
     get_equipments_state,
-    enable_equipments_toggle,
 )
 
 
@@ -1292,7 +1291,6 @@ def test_E1_generer_devis_creates_equipments(patch_pipeline):
     patch_pipeline()
     at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
     at.run()
-    enable_equipments_toggle(at)
 
     find_button_by_label(at, "générer devis").click()
     at.run()
@@ -1340,7 +1338,6 @@ def test_E2_palette_drag_in_increments_devis_qty(patch_pipeline):
     patch_pipeline()
     at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
     at.run()
-    enable_equipments_toggle(at)
     find_button_by_label(at, "générer devis").click()
     at.run()
 
@@ -1361,13 +1358,18 @@ def test_E2_palette_drag_in_increments_devis_qty(patch_pipeline):
         "color": "rgb(255, 112, 67)",
     }
     at.session_state[f"equipments_state_{img_hash}"] = current + [new_inst]
-    # Simulate Python sync incrementing the line Qté
+    # Simulate Python sync incrementing the line Qté. Le widget Qté est
+    # unidirectionnel : le bloc de sync canvas pousse AUSSI `qty_{rid}` (cf
+    # _push_qty_widget_states), sinon _apply_qty_change réécrirait df depuis
+    # le widget périmé. On reproduit ce push pour rester fidèle au vrai flux.
     df = at.session_state[f"devis_lines_{img_hash}"]
     df.at[cuisine_prise_idx, "Qté"] = qty_before + 1
     ids = list(df.at[cuisine_prise_idx, "_equip_ids"] or [])
     ids.append(new_inst["id"])
     df.at[cuisine_prise_idx, "_equip_ids"] = ids
     at.session_state[f"devis_lines_{img_hash}"] = df
+    _rid = int(df.at[cuisine_prise_idx, "_id"])
+    at.session_state[f"devis_lines_{img_hash}_qty_{_rid}"] = qty_before + 1
     at.run()
 
     df_after = get_devis_df(at)
@@ -1380,7 +1382,6 @@ def test_E3_equipment_removal_decrements_devis_qty(patch_pipeline):
     patch_pipeline()
     at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
     at.run()
-    enable_equipments_toggle(at)
     find_button_by_label(at, "générer devis").click()
     at.run()
 
@@ -1402,6 +1403,9 @@ def test_E3_equipment_removal_decrements_devis_qty(patch_pipeline):
     df.at[cuisine_prise_idx, "_equip_ids"] = new_ids
     df.at[cuisine_prise_idx, "Qté"] = qty_before - 1
     at.session_state[f"devis_lines_{img_hash}"] = df
+    # Widget Qté unidirectionnel : pousser aussi `qty_{rid}` (cf E2).
+    _rid = int(df.at[cuisine_prise_idx, "_id"])
+    at.session_state[f"devis_lines_{img_hash}_qty_{_rid}"] = qty_before - 1
     at.run()
 
     df_after = get_devis_df(at)
@@ -1414,7 +1418,6 @@ def test_E4_devis_line_removal_cleans_equipments(patch_pipeline):
     patch_pipeline()
     at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
     at.run()
-    enable_equipments_toggle(at)
     find_button_by_label(at, "générer devis").click()
     at.run()
 
@@ -1447,7 +1450,6 @@ def test_E5_pastille_removal_cleans_equipments(patch_pipeline):
     patch_pipeline()
     at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
     at.run()
-    enable_equipments_toggle(at)
     find_button_by_label(at, "générer devis").click()
     at.run()
 
@@ -1479,7 +1481,6 @@ def test_E6_smart_placement_inside_image_bbox(patch_pipeline):
     patch_pipeline()
     at = AppTest.from_file(APP_FILE, default_timeout=TIMEOUT)
     at.run()
-    enable_equipments_toggle(at)
     find_button_by_label(at, "générer devis").click()
     at.run()
 

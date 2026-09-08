@@ -164,6 +164,10 @@ def main():
     ap.add_argument("--val_ratio", type=float, default=0.14,
                     help="Fraction for validation (default 0.14 → 15 plans on 110)")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--splits_json", default=None,
+                    help="Reuse an existing splits.json (assign each plan to its "
+                         "split BY NAME). Freezes the held-out test set across "
+                         "re-exports — ignores --train_ratio/--val_ratio/--seed.")
     args = ap.parse_args()
 
     coco_path = Path(args.coco_json)
@@ -192,20 +196,41 @@ def main():
         for sub in ("images", "semantic", "instance"):
             (out / sub / split).mkdir(parents=True, exist_ok=True)
 
-    # Deterministic split
     images = sorted(coco["images"], key=lambda i: i["id"])
-    rng = random.Random(args.seed)
-    rng.shuffle(images)
 
-    n = len(images)
-    n_train = int(n * args.train_ratio)
-    n_val = int(n * args.val_ratio)
-    train_imgs = images[:n_train]
-    val_imgs = images[n_train:n_train + n_val]
-    test_imgs = images[n_train + n_val:]
-    splits_map = {"train": train_imgs, "val": val_imgs, "test": test_imgs}
-
-    print(f"\nSplits: train={len(train_imgs)} val={len(val_imgs)} test={len(test_imgs)}")
+    if args.splits_json:
+        # Freeze split BY NAME from an existing splits.json (keeps the held-out
+        # test set identical across re-exports → comparable metrics).
+        ref = json.loads(Path(args.splits_json).read_text())
+        stem_to_split = {stem: sp for sp, stems in ref.items() for stem in stems}
+        splits_map = {"train": [], "val": [], "test": []}
+        unassigned = []
+        for img in images:
+            sp = stem_to_split.get(Path(img["file_name"]).stem)
+            if sp is None:
+                unassigned.append(Path(img["file_name"]).stem)
+            else:
+                splits_map[sp].append(img)
+        if unassigned:
+            print(f"⚠ {len(unassigned)} plan(s) absent(s) de {args.splits_json} "
+                  f"(non assignés, ignorés): {unassigned[:5]}{'...' if len(unassigned) > 5 else ''}")
+        print(f"\nSplits (figés depuis {args.splits_json}): "
+              f"train={len(splits_map['train'])} val={len(splits_map['val'])} "
+              f"test={len(splits_map['test'])}")
+    else:
+        # Deterministic random split
+        rng = random.Random(args.seed)
+        rng.shuffle(images)
+        n = len(images)
+        n_train = int(n * args.train_ratio)
+        n_val = int(n * args.val_ratio)
+        splits_map = {
+            "train": images[:n_train],
+            "val": images[n_train:n_train + n_val],
+            "test": images[n_train + n_val:],
+        }
+        print(f"\nSplits: train={len(splits_map['train'])} "
+              f"val={len(splits_map['val'])} test={len(splits_map['test'])}")
 
     splits_log = {"train": [], "val": [], "test": []}
     total_counts = {"rooms": 0, "walls": 0, "background": 0,

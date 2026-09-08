@@ -2,12 +2,6 @@ from __future__ import annotations
 from decimal import Decimal
 
 
-def test_compute_ligne_amounts():
-    from src.facturation.services.totals import compute_ligne_montant
-    assert compute_ligne_montant(Decimal("10"), Decimal("25.00")) == Decimal("250.00")
-    assert compute_ligne_montant(Decimal("3"), Decimal("3.333")) == Decimal("10.00")
-
-
 def test_compute_facture_totals_simple():
     from src.facturation.services.totals import compute_facture_totals
     from src.facturation.models import FactureLigne, CategorieTVA, UniteFacturation

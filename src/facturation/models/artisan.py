@@ -83,11 +83,6 @@ class Artisan(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    @property
-    def siren(self) -> str:
-        """SIREN = 9 premiers chiffres du SIRET."""
-        return self.siret[:9]
-
     def __init__(self, **kwargs):
         if "siret" in kwargs:
             kwargs["siret"] = _validate_siret(kwargs["siret"])

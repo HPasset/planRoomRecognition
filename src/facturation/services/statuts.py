@@ -64,13 +64,3 @@ def mark_envoyee(session: Session, facture_id: str) -> Facture:
     log_audit(session, f.artisan_id, "Facture", f.id, ActionAudit.ENVOI,
               details={"numero": f.numero})
     return f
-
-
-def list_factures_with_retard(session: Session, artisan_id: str) -> list[tuple[Facture, int]]:
-    """Retourne [(facture, jours_retard), ...] pour les factures en cours."""
-    factures = (session.query(Facture)
-                .filter(Facture.artisan_id == artisan_id,
-                        Facture.statut.in_([s.value for s in _STATUTS_EN_COURS]))
-                .order_by(Facture.date_echeance.asc())
-                .all())
-    return [(f, jours_de_retard(f)) for f in factures]

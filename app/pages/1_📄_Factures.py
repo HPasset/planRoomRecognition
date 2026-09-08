@@ -99,7 +99,7 @@ try:
                             emit_facture(session, f.id)
                             st.success("Facture émise + Factur-X généré")
                             st.rerun()
-                        except (ValueError, Exception) as e:
+                        except Exception as e:
                             st.error(f"Erreur : {e}")
 
                 if statut_val == "emise":

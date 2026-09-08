@@ -22,10 +22,6 @@ def save_devis_from_payload(session: Session, **fields) -> DevisDB:
     return d
 
 
-def get_devis(session: Session, devis_id: str) -> Optional[DevisDB]:
-    return session.get(DevisDB, devis_id)
-
-
 def list_devis(session: Session, artisan_id: str,
                statut: Optional[DevisStatut] = None) -> list[DevisDB]:
     q = (session.query(DevisDB)

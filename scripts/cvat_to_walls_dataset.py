@@ -102,6 +102,11 @@ def main():
                     help="Dossier d'export CVAT dézippé")
     ap.add_argument("--out", type=Path, required=True,
                     help="Dossier de sortie au format dwg_walls")
+    ap.add_argument("--source-images", type=Path, default=None,
+                    help="Dossier alternatif où chercher les images sources "
+                         "si le ZIP CVAT n'inclut pas JPEGImages/ "
+                         "(cas free tier app.cvat.ai sans 'Save images'). "
+                         "Le matching se fait par stem de filename.")
     ap.add_argument("--id-prefix", type=str, default="fr_",
                     help="Préfixe d'ID (utile pour distinguer la source)")
     ap.add_argument("--split-mode", choices=["stratified", "all-train"],
@@ -118,7 +123,9 @@ def main():
         print("\nWorkflow attendu :")
         print("  1. Annoter les plans dans CVAT (project batia-walls-fr)")
         print("  2. Project Actions → Export project dataset")
-        print("  3. Format = 'Segmentation mask 1.1', coche 'Save images'")
+        print("  3. Format = 'Segmentation mask 1.1'")
+        print("     - Cloud free : DÉCOCHE 'Save images' puis utilise --source-images")
+        print("     - Self-hosted / Paid : coche 'Save images' (tout dans le ZIP)")
         print("  4. Download ZIP, dézipper dans ce chemin")
         print("  5. Relancer ce script")
         sys.exit(1)
@@ -137,10 +144,30 @@ def main():
         print(f"Sous-dossier task détecté : {cvat_root.name}")
 
     labelmap_path = cvat_root / "labelmap.txt"
-    images_dir = cvat_root / "JPEGImages"
+    cvat_images_dir = cvat_root / "JPEGImages"
     masks_dir = cvat_root / "SegmentationClass"
-    if not images_dir.exists() or not masks_dir.exists():
-        print(f"ERROR: JPEGImages/ ou SegmentationClass/ absent dans {cvat_root}")
+
+    if not masks_dir.exists():
+        print(f"ERROR: SegmentationClass/ absent dans {cvat_root}")
+        sys.exit(1)
+
+    # Détermine d'où viennent les images sources :
+    #   1. --source-images si fourni
+    #   2. sinon JPEGImages/ dans l'export CVAT
+    #   3. sinon erreur (cas free tier sans 'Save images' coché)
+    if args.source_images is not None:
+        if not args.source_images.exists():
+            print(f"ERROR: --source-images n'existe pas : {args.source_images}")
+            sys.exit(1)
+        images_dir = args.source_images
+        print(f"Images sources : {images_dir} (via --source-images)")
+    elif cvat_images_dir.exists():
+        images_dir = cvat_images_dir
+        print(f"Images sources : {images_dir} (depuis JPEGImages/ du ZIP)")
+    else:
+        print(f"ERROR: JPEGImages/ absent dans {cvat_root} ET pas de --source-images.")
+        print("  Cas typique : export CVAT cloud free tier sans 'Save images'.")
+        print("  Utilise --source-images <dossier> avec les PNG sources.")
         sys.exit(1)
 
     # Output

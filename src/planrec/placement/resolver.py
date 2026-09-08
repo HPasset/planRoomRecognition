@@ -74,7 +74,7 @@ def place_room(ctx: RoomContext, counts: dict[str, int]) -> list[PlacedEquipment
     door = _find(ctx.openings, {"door", "Door", "Single Door", "Double Door"})
 
     head_wall = g.bed_head_wall(bed.bbox, edges) if bed else None
-    door_wall = g.edge_of(door.bbox, edges) if door else None
+    door_wall = g.nearest_edge(door.bbox, edges) if door else None
 
     # Lit « une place » en coin : un (ou deux) grand côté plaqué à un mur. Le
     # placement des chevets bascule alors sur le côté accessible (cf _resolve_rule).

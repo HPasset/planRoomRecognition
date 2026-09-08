@@ -57,6 +57,7 @@ _ROOM_ALIASES = {
         "abri de jardin", "abri jardin", "abris de jardin",
     ],
     "buanderie": ["buanderie", "lingerie"],
+    "atelier": ["atelier"],
     "dressing": ["dressing", "dress"],
     "garage": ["garage"],
     "balcon": ["balcon", "loggia"],
@@ -321,6 +322,59 @@ def merge_multiline_aliases(items: list[dict], proximity_factor: float = 2.5) ->
     return new_items
 
 
+def _cluster_keep_best(
+    items: list[dict],
+    group_key,
+    threshold_fn,
+) -> list[dict]:
+    """Regroupe `items` par `group_key(item)` (items sans clé = ignorés), puis
+    dans chaque groupe trie par confidence DESC et clusterise par proximité de
+    centroïde bbox (distance < threshold_fn(item, cluster_head)). Garde le 1er
+    (donc le plus confiant) de chaque cluster."""
+    if not items:
+        return items
+
+    by_key: dict[str, list[dict]] = {}
+    for item in items:
+        key = group_key(item)
+        if not key:
+            continue
+        by_key.setdefault(key, []).append(item)
+
+    out: list[dict] = []
+    for key, group in by_key.items():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        # Trie par confidence DESC pour donner la priorité aux items sûrs
+        group_sorted = sorted(group, key=lambda h: -float(h.get("confidence", 0)))
+        # Clusters de proximité géographique
+        clusters: list[list[dict]] = []
+        for item in group_sorted:
+            bbox = item.get("bbox", [])
+            if not bbox or len(bbox) < 3:
+                clusters.append([item])
+                continue
+            cx, cy = _bbox_centroid(bbox)
+            placed = False
+            for cluster in clusters:
+                head_bbox = cluster[0].get("bbox", [])
+                if not head_bbox or len(head_bbox) < 3:
+                    continue
+                head_cx, head_cy = _bbox_centroid(head_bbox)
+                dist = ((cx - head_cx) ** 2 + (cy - head_cy) ** 2) ** 0.5
+                if dist < threshold_fn(item, cluster[0]):
+                    cluster.append(item)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([item])
+        # Garde le 1er (plus confiant) de chaque cluster
+        for cluster in clusters:
+            out.append(cluster[0])
+    return out
+
+
 def deduplicate_hits(items: list[dict],
                       distance_threshold: float = 50.0) -> list[dict]:
     """Déduplique les hits OCR identiques (même texte normalisé + position proche).
@@ -339,48 +393,11 @@ def deduplicate_hits(items: list[dict],
     Returns:
         Liste dédupliquée.
     """
-    if not items:
-        return items
-
-    by_norm: dict[str, list[dict]] = {}
-    for hit in items:
-        norm = normalize_text(hit.get("text", ""))
-        if not norm:
-            continue
-        by_norm.setdefault(norm, []).append(hit)
-
-    out: list[dict] = []
-    for norm, hits in by_norm.items():
-        if len(hits) == 1:
-            out.append(hits[0])
-            continue
-        # Trie par confidence DESC pour donner la priorité aux hits sûrs
-        hits_sorted = sorted(hits, key=lambda h: -float(h.get("confidence", 0)))
-        # Clusters de proximité géographique
-        clusters: list[list[dict]] = []
-        for hit in hits_sorted:
-            bbox = hit.get("bbox", [])
-            if not bbox or len(bbox) < 3:
-                clusters.append([hit])
-                continue
-            cx, cy = _bbox_centroid(bbox)
-            placed = False
-            for cluster in clusters:
-                head_bbox = cluster[0].get("bbox", [])
-                if not head_bbox or len(head_bbox) < 3:
-                    continue
-                head_cx, head_cy = _bbox_centroid(head_bbox)
-                dist = ((cx - head_cx) ** 2 + (cy - head_cy) ** 2) ** 0.5
-                if dist < distance_threshold:
-                    cluster.append(hit)
-                    placed = True
-                    break
-            if not placed:
-                clusters.append([hit])
-        # Garde le 1er (plus confiant) de chaque cluster
-        for cluster in clusters:
-            out.append(cluster[0])
-    return out
+    return _cluster_keep_best(
+        items,
+        group_key=lambda h: normalize_text(h.get("text", "")),
+        threshold_fn=lambda item, head: distance_threshold,
+    )
 
 
 def deduplicate_detections_by_room_type(
@@ -417,56 +434,19 @@ def deduplicate_detections_by_room_type(
     Returns:
         Liste dédupliquée — garde le plus confiant de chaque cluster.
     """
-    if not detections:
-        return detections
+    def _threshold(item: dict, head: dict) -> float:
+        # Utilise text_height (= min dim du bbox) au lieu de height pour être
+        # robuste aux textes verticaux (remappés du multi-rotation). Seuil
+        # adaptatif : max(plancher, k × hauteur moyenne texte).
+        avg_h = (_bbox_text_height(item.get("bbox", []))
+                 + _bbox_text_height(head.get("bbox", []))) / 2.0
+        return max(min_distance_threshold_px, height_multiplier * avg_h)
 
-    by_type: dict[str, list[dict]] = {}
-    for det in detections:
-        rt = det.get("room_type")
-        if not rt:
-            continue
-        by_type.setdefault(rt, []).append(det)
-
-    out: list[dict] = []
-    for room_type, dets in by_type.items():
-        if len(dets) == 1:
-            out.append(dets[0])
-            continue
-        dets_sorted = sorted(
-            dets, key=lambda d: -float(d.get("confidence", 0))
-        )
-        clusters: list[list[dict]] = []
-        for det in dets_sorted:
-            bbox = det.get("bbox", [])
-            if not bbox or len(bbox) < 3:
-                clusters.append([det])
-                continue
-            cx, cy = _bbox_centroid(bbox)
-            # Utilise text_height (= min dim du bbox) au lieu de height
-            # pour être robuste aux textes verticaux (remappés du multi-rotation)
-            h_det = _bbox_text_height(bbox)
-            placed = False
-            for cluster in clusters:
-                head_bbox = cluster[0].get("bbox", [])
-                if not head_bbox or len(head_bbox) < 3:
-                    continue
-                head_cx, head_cy = _bbox_centroid(head_bbox)
-                head_h = _bbox_text_height(head_bbox)
-                # Seuil adaptatif : max(plancher, k × hauteur moyenne texte)
-                avg_h = (h_det + head_h) / 2.0
-                threshold = max(
-                    min_distance_threshold_px, height_multiplier * avg_h,
-                )
-                dist = ((cx - head_cx) ** 2 + (cy - head_cy) ** 2) ** 0.5
-                if dist < threshold:
-                    cluster.append(det)
-                    placed = True
-                    break
-            if not placed:
-                clusters.append([det])
-        for cluster in clusters:
-            out.append(cluster[0])
-    return out
+    return _cluster_keep_best(
+        detections,
+        group_key=lambda d: d.get("room_type"),
+        threshold_fn=_threshold,
+    )
 
 
 def postprocess_ocr_items(items, confidence_min: float = 0.35,

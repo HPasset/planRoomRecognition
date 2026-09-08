@@ -28,23 +28,19 @@ optimizer:
   grad_clip_norm: 0.01
 
 scheduler:
-  type: cosine
   warmup_steps: 1000
 
 training:
   epochs: 80
   early_stop_patience: 10
   mixed_precision: bf16
-  oversample_rare_classes: true
 
 logging:
   tracker: wandb
   project: batia-segmentation
-  log_image_count: 5
 
 checkpoint:
   output_dir: runs/segmentation/stage_a_test
-  save_every_n_epochs: 10
 """
 
 
@@ -78,13 +74,4 @@ def test_early_stop_patience_exceeds_epochs_rejected(tmp_path: Path):
     # early_stop_patience: 10 in VALID_YAML, now > epochs: 5
     _write_yaml(p, bad)
     with pytest.raises(ValueError, match="early_stop_patience"):
-        load_config(p)
-
-
-def test_save_every_n_exceeds_epochs_rejected(tmp_path: Path):
-    p = tmp_path / "config.yaml"
-    bad = VALID_YAML.replace("save_every_n_epochs: 10", "save_every_n_epochs: 200")
-    # 200 > epochs: 80 in VALID_YAML
-    _write_yaml(p, bad)
-    with pytest.raises(ValueError, match="save_every_n_epochs"):
         load_config(p)

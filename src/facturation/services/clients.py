@@ -1,8 +1,6 @@
 """CRUD Client : create, list, get, update, delete."""
 from __future__ import annotations
 
-from typing import Optional
-
 from sqlalchemy.orm import Session
 
 from src.facturation.models import Client
@@ -21,10 +19,6 @@ def list_clients(session: Session, artisan_id: str) -> list[Client]:
             .filter(Client.artisan_id == artisan_id)
             .order_by(Client.nom_ou_raison.asc())
             .all())
-
-
-def get_client(session: Session, client_id: str) -> Optional[Client]:
-    return session.get(Client, client_id)
 
 
 def update_client(session: Session, client_id: str, **fields) -> Client:

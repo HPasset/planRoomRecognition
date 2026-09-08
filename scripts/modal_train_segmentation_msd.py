@@ -93,7 +93,7 @@ def check_dataset() -> dict:
 
 @app.function(
     image=image,
-    gpu="A10G",
+    gpu="A100",
     volumes={"/data": dataset_volume, "/runs": runs_volume},
     timeout=3600 * 24,          # Stage A long (80 epochs) ; auto-resume si dépassé
     secrets=[modal.Secret.from_name("wandb-secret")],

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterator
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
@@ -30,14 +29,14 @@ def get_db_url() -> str:
     return f"sqlite:///{db_path}"
 
 
-def make_engine(url: str | None = None, echo: bool = False) -> Engine:
+def make_engine(url: str | None = None) -> Engine:
     """Crée l'engine SQLAlchemy.
 
     WAL mode + foreign_keys=ON pour SQLite : concurrence amicale et FK actives.
     """
     url = url or get_db_url()
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    engine = create_engine(url, echo=echo, connect_args=connect_args, future=True)
+    engine = create_engine(url, connect_args=connect_args, future=True)
 
     if url.startswith("sqlite"):
         @event.listens_for(engine, "connect")
@@ -80,16 +79,6 @@ def reset_engine() -> None:
         _engine.dispose()
     _engine = None
     _SessionLocal = None
-
-
-def get_session() -> Iterator[Session]:
-    """Context generator pour Streamlit / scripts. À utiliser avec `with`."""
-    SessionLocal = get_session_factory()
-    session = SessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 def init_db() -> None:

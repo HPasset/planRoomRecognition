@@ -121,6 +121,26 @@ def test_render_html_table_contains_breaker_amps_and_section():
     assert "6 mm²" in html or "6.0 mm²" in html or "6.0mm" in html
 
 
+def test_wrap_label_breaks_on_hyphen_for_long_hyphenated_words():
+    """'Sèche-serviettes' (16 chars, sans espace) doit se découper sur le
+    trait d'union pour éviter le débord visuel du module SVG (60 px). Sinon
+    on retombe sur l'overflow gracieux (mot seul sur sa ligne) qui dépasse."""
+    from src.planrec.tableau_renderer import _wrap_label
+    assert _wrap_label("Sèche-serviettes") == ["Sèche-", "serviettes"]
+
+
+def test_wrap_label_preserves_hyphenated_short_label():
+    """'Sèche-serv.' (11 chars) — déjà court, doit aussi se découper proprement."""
+    from src.planrec.tableau_renderer import _wrap_label
+    assert _wrap_label("Sèche-serv.") == ["Sèche-", "serv."]
+
+
+def test_wrap_label_unchanged_for_space_separated():
+    """Sanity : la régression hyphen n'affecte pas le wrap normal sur espaces."""
+    from src.planrec.tableau_renderer import _wrap_label
+    assert _wrap_label("Chauffage Chambre 1") == ["Chauffage", "Chambre 1"]
+
+
 def test_export_pdf_returns_valid_bytes():
     """export_pdf retourne des bytes parseables comme PDF."""
     from src.planrec.tableau_renderer import export_pdf

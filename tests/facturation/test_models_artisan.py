@@ -26,7 +26,6 @@ def test_artisan_creation_minimale(db_session):
     db_session.refresh(artisan)
 
     assert artisan.id is not None
-    assert artisan.siren == "123456789"
     assert artisan.forme_juridique == FormeJuridique.EI
 
 

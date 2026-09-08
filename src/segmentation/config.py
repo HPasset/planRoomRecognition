@@ -31,15 +31,13 @@ class OptimizerConfig(BaseModel):
 
 
 class SchedulerConfig(BaseModel):
-    type: Literal["cosine", "polynomial", "constant"] = "cosine"
     warmup_steps: int = Field(ge=0, le=10000)
 
 
 class TrainingPhaseConfig(BaseModel):
     epochs: int = Field(ge=1, le=500)
     early_stop_patience: int = Field(ge=0, le=50)
-    mixed_precision: Literal["bf16", "fp16", "no"] = "bf16"
-    oversample_rare_classes: bool = True
+    mixed_precision: Literal["bf16", "no"] = "bf16"
     # Path to a Stage A checkpoint. Loaded ONLY when no local resume checkpoint
     # exists in <output_dir>/checkpoints — pure weights init, optimizer/scheduler
     # start fresh.
@@ -47,14 +45,12 @@ class TrainingPhaseConfig(BaseModel):
 
 
 class LoggingConfig(BaseModel):
-    tracker: Literal["wandb", "tensorboard", "none"] = "wandb"
+    tracker: Literal["wandb", "none"] = "wandb"
     project: str = "batia-segmentation"
-    log_image_count: int = Field(ge=0, le=50)
 
 
 class CheckpointConfig(BaseModel):
     output_dir: str
-    save_every_n_epochs: int = Field(ge=1, le=100)
 
 
 class TrainingConfig(BaseModel):
@@ -73,11 +69,6 @@ class TrainingConfig(BaseModel):
         if self.training.early_stop_patience > self.training.epochs:
             raise ValueError(
                 f"early_stop_patience ({self.training.early_stop_patience}) "
-                f"must be <= epochs ({self.training.epochs})"
-            )
-        if self.checkpoint.save_every_n_epochs > self.training.epochs:
-            raise ValueError(
-                f"save_every_n_epochs ({self.checkpoint.save_every_n_epochs}) "
                 f"must be <= epochs ({self.training.epochs})"
             )
         return self
